@@ -13,6 +13,115 @@ export interface CrawlOptions {
   maxPages?: number;
   timeoutMs?: number;
   viewport?: Viewport;
+  /** Number of CMS collection pages to sample per collection (default 5) */
+  cmsSamples?: number;
+  /** When true, crawl all CMS collection pages instead of sampling */
+  fullCrawl?: boolean;
+  /** Platform-specific CMS URL pattern (from PlatformAdapter.getCMSPattern()) */
+  cmsPattern?: RegExp | null;
+}
+
+// ---------------------------------------------------------------------------
+// CMS collection detection (exported for testing)
+// ---------------------------------------------------------------------------
+
+export interface CMSCollection {
+  /** URL path prefix, e.g. "/blog" */
+  prefix: string;
+  /** All discovered URLs belonging to this collection */
+  urls: string[];
+}
+
+/**
+ * Extract the collection prefix from a URL.
+ * A CMS collection page typically has a 2+ segment path like `/blog/my-post`.
+ * Returns the first path segment (e.g. "/blog") or `null` for root/single-segment.
+ */
+export function getCollectionPrefix(url: string): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+    // Remove trailing slash for consistent parsing
+    const cleaned = pathname.endsWith("/") && pathname !== "/"
+      ? pathname.slice(0, -1)
+      : pathname;
+    const segments = cleaned.split("/").filter(Boolean);
+    // Need at least 2 segments: /collection/item
+    if (segments.length < 2) return null;
+    return `/${segments[0]}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Detect CMS collections from a list of URLs.
+ *
+ * Groups URLs by their first path segment (for paths with 2+ segments).
+ * Optionally filters by a platform-specific CMS pattern (e.g. Webflow w-dyn URLs).
+ * Only groups with `minSize` or more URLs are considered collections.
+ */
+export function detectCMSCollections(
+  urls: string[],
+  cmsPattern?: RegExp | null,
+  minSize = 2,
+): CMSCollection[] {
+  const groups = new Map<string, string[]>();
+
+  for (const url of urls) {
+    // If a cmsPattern is provided, only consider URLs that match it
+    if (cmsPattern) {
+      try {
+        const pathname = new URL(url).pathname;
+        if (!cmsPattern.test(pathname)) continue;
+      } catch {
+        continue;
+      }
+    }
+
+    const prefix = getCollectionPrefix(url);
+    if (!prefix) continue;
+
+    const existing = groups.get(prefix);
+    if (existing) {
+      existing.push(url);
+    } else {
+      groups.set(prefix, [url]);
+    }
+  }
+
+  const collections: CMSCollection[] = [];
+  for (const [prefix, groupUrls] of groups) {
+    if (groupUrls.length >= minSize) {
+      collections.push({ prefix, urls: groupUrls });
+    }
+  }
+
+  return collections;
+}
+
+/**
+ * Sample a subset of URLs from a CMS collection.
+ * Always includes the first URL (as the "template") plus up to
+ * `sampleSize - 1` additional random items from the rest.
+ */
+export function sampleCollectionUrls(
+  urls: string[],
+  sampleSize: number,
+): string[] {
+  if (urls.length <= sampleSize) return [...urls];
+
+  // First URL is the "template" representative
+  const template = urls[0];
+  const rest = urls.slice(1);
+
+  // Deterministic-ish shuffle using Fisher-Yates, then take sampleSize - 1
+  const shuffled = [...rest];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  return [template, ...shuffled.slice(0, sampleSize - 1)];
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +391,43 @@ export async function crawl(
     }
   }
 
+  // ----- Phase 3b: CMS collection sampling ------------------------------------
+  const cmsSamples = options.cmsSamples ?? 5;
+  const fullCrawl = options.fullCrawl ?? false;
+
+  if (!fullCrawl) {
+    const collections = detectCMSCollections(
+      queue,
+      options.cmsPattern,
+    );
+
+    if (collections.length > 0) {
+      // Build a set of URLs to keep (non-collection URLs + sampled URLs)
+      const collectionUrls = new Set<string>();
+      for (const col of collections) {
+        for (const u of col.urls) {
+          collectionUrls.add(u);
+        }
+      }
+
+      // Keep all non-collection URLs
+      const keptUrls = queue.filter((u) => !collectionUrls.has(u));
+
+      // Add sampled URLs from each collection
+      for (const col of collections) {
+        const sampled = sampleCollectionUrls(col.urls, cmsSamples);
+        console.log(
+          `[crawler] Detected CMS collection ${col.prefix}/ with ~${col.urls.length} pages, sampling ${sampled.length}`,
+        );
+        keptUrls.push(...sampled);
+      }
+
+      // Replace queue contents
+      queue.length = 0;
+      queue.push(...keptUrls);
+    }
+  }
+
   const snapshots: PageSnapshot[] = [];
 
   const ownBrowser = !browser;
@@ -290,6 +436,9 @@ export async function crawl(
   }
 
   // ----- Phase 4: BFS crawl ---------------------------------------------------
+  // Track per-collection visit counts for BFS-discovered CMS pages
+  const collectionVisits = new Map<string, number>();
+
   let context: BrowserContext | undefined;
   try {
     context = await browser.newContext({
@@ -300,6 +449,33 @@ export async function crawl(
     while (queue.length > 0 && snapshots.length < maxPages) {
       const url = queue.shift()!;
       if (visited.has(url)) continue;
+
+      // CMS sampling guard — skip if we've hit the sample limit for this collection
+      if (!fullCrawl) {
+        const prefix = getCollectionPrefix(url);
+        if (prefix) {
+          const count = collectionVisits.get(prefix) ?? 0;
+          if (count >= cmsSamples) {
+            visited.add(url);
+            continue;
+          }
+          if (count === 0) {
+            // Log first encounter of a new collection during BFS
+            // (count of remaining queued URLs with this prefix is approximate)
+            const queuedCount = queue.filter((u) => {
+              const p = getCollectionPrefix(u);
+              return p === prefix;
+            }).length + 1; // +1 for current URL
+            if (queuedCount >= 2) {
+              console.log(
+                `[crawler] Detected CMS collection ${prefix}/ with ~${queuedCount} pages, sampling ${Math.min(queuedCount, cmsSamples)}`,
+              );
+            }
+          }
+          collectionVisits.set(prefix, count + 1);
+        }
+      }
+
       visited.add(url);
 
       const page = await context.newPage();

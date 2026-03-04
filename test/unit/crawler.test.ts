@@ -2,6 +2,7 @@ import {
   describe,
   it,
   expect,
+  vi,
   beforeAll,
   afterAll,
 } from "vitest";
@@ -17,6 +18,9 @@ import {
   isSitemapIndex,
   parseRobotsTxt,
   isAllowedByRobots,
+  getCollectionPrefix,
+  detectCMSCollections,
+  sampleCollectionUrls,
   crawl,
 } from "../../src/core/crawler.js";
 import { LocalFileStore } from "../../src/store/files.js";
@@ -723,5 +727,326 @@ describe("crawl (sitemap index)", () => {
     expect(snapshots).toHaveLength(5);
     const paths = snapshots.map((s) => new URL(s.url).pathname).sort();
     expect(paths).toEqual(["/", "/idx-1", "/idx-2", "/idx-3", "/idx-4"]);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// getCollectionPrefix — pure function tests
+// ---------------------------------------------------------------------------
+
+describe("getCollectionPrefix", () => {
+  it("returns prefix for 2-segment paths", () => {
+    expect(getCollectionPrefix("http://example.com/blog/my-post")).toBe("/blog");
+  });
+
+  it("returns prefix for 3+ segment paths", () => {
+    expect(getCollectionPrefix("http://example.com/team/engineering/alice")).toBe("/team");
+  });
+
+  it("returns null for root path", () => {
+    expect(getCollectionPrefix("http://example.com/")).toBeNull();
+  });
+
+  it("returns null for single-segment paths", () => {
+    expect(getCollectionPrefix("http://example.com/about")).toBeNull();
+  });
+
+  it("handles trailing slashes", () => {
+    expect(getCollectionPrefix("http://example.com/blog/post/")).toBe("/blog");
+  });
+
+  it("returns null for invalid URLs", () => {
+    expect(getCollectionPrefix("not a url")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectCMSCollections — pure function tests
+// ---------------------------------------------------------------------------
+
+describe("detectCMSCollections", () => {
+  it("groups 50 /blog/* URLs into one collection", () => {
+    const urls = Array.from({ length: 50 }, (_, i) =>
+      `http://example.com/blog/post-${i + 1}`,
+    );
+    const collections = detectCMSCollections(urls);
+    expect(collections).toHaveLength(1);
+    expect(collections[0].prefix).toBe("/blog");
+    expect(collections[0].urls).toHaveLength(50);
+  });
+
+  it("groups multiple collections separately", () => {
+    const urls = [
+      "http://example.com/blog/post-1",
+      "http://example.com/blog/post-2",
+      "http://example.com/blog/post-3",
+      "http://example.com/team/alice",
+      "http://example.com/team/bob",
+      "http://example.com/team/charlie",
+    ];
+    const collections = detectCMSCollections(urls);
+    expect(collections).toHaveLength(2);
+    const prefixes = collections.map((c) => c.prefix).sort();
+    expect(prefixes).toEqual(["/blog", "/team"]);
+  });
+
+  it("ignores single-segment paths (non-collection pages)", () => {
+    const urls = [
+      "http://example.com/about",
+      "http://example.com/contact",
+      "http://example.com/blog/post-1",
+      "http://example.com/blog/post-2",
+    ];
+    const collections = detectCMSCollections(urls);
+    expect(collections).toHaveLength(1);
+    expect(collections[0].prefix).toBe("/blog");
+  });
+
+  it("requires minSize URLs to form a collection (default 2)", () => {
+    const urls = [
+      "http://example.com/blog/only-one-post",
+    ];
+    const collections = detectCMSCollections(urls);
+    expect(collections).toHaveLength(0);
+  });
+
+  it("respects custom minSize", () => {
+    const urls = [
+      "http://example.com/blog/post-1",
+      "http://example.com/blog/post-2",
+    ];
+    expect(detectCMSCollections(urls, null, 3)).toHaveLength(0);
+    expect(detectCMSCollections(urls, null, 2)).toHaveLength(1);
+  });
+
+  it("filters by cmsPattern when provided", () => {
+    const urls = [
+      "http://example.com/blog/post-1",
+      "http://example.com/blog/post-2",
+      "http://example.com/team/alice",
+      "http://example.com/team/bob",
+    ];
+    // Only match /blog/* paths
+    const collections = detectCMSCollections(urls, /^\/blog\//);
+    expect(collections).toHaveLength(1);
+    expect(collections[0].prefix).toBe("/blog");
+  });
+
+  it("returns empty when cmsPattern matches no URLs", () => {
+    const urls = [
+      "http://example.com/blog/post-1",
+      "http://example.com/blog/post-2",
+    ];
+    const collections = detectCMSCollections(urls, /^\/products\//);
+    expect(collections).toHaveLength(0);
+  });
+
+  it("works with null cmsPattern (same as no pattern)", () => {
+    const urls = [
+      "http://example.com/blog/post-1",
+      "http://example.com/blog/post-2",
+    ];
+    const collections = detectCMSCollections(urls, null);
+    expect(collections).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sampleCollectionUrls — pure function tests
+// ---------------------------------------------------------------------------
+
+describe("sampleCollectionUrls", () => {
+  it("returns all URLs when count <= sampleSize", () => {
+    const urls = ["http://example.com/blog/a", "http://example.com/blog/b"];
+    const sampled = sampleCollectionUrls(urls, 5);
+    expect(sampled).toHaveLength(2);
+    expect(sampled).toEqual(urls);
+  });
+
+  it("returns exactly sampleSize URLs when collection is larger", () => {
+    const urls = Array.from({ length: 50 }, (_, i) =>
+      `http://example.com/blog/post-${i + 1}`,
+    );
+    const sampled = sampleCollectionUrls(urls, 5);
+    expect(sampled).toHaveLength(5);
+  });
+
+  it("always includes the first URL as template", () => {
+    const urls = Array.from({ length: 50 }, (_, i) =>
+      `http://example.com/blog/post-${i + 1}`,
+    );
+    const sampled = sampleCollectionUrls(urls, 5);
+    expect(sampled[0]).toBe("http://example.com/blog/post-1");
+  });
+
+  it("returns unique URLs (no duplicates)", () => {
+    const urls = Array.from({ length: 50 }, (_, i) =>
+      `http://example.com/blog/post-${i + 1}`,
+    );
+    const sampled = sampleCollectionUrls(urls, 5);
+    const unique = new Set(sampled);
+    expect(unique.size).toBe(5);
+  });
+
+  it("all sampled URLs come from the original set", () => {
+    const urls = Array.from({ length: 50 }, (_, i) =>
+      `http://example.com/blog/post-${i + 1}`,
+    );
+    const urlSet = new Set(urls);
+    const sampled = sampleCollectionUrls(urls, 5);
+    for (const s of sampled) {
+      expect(urlSet.has(s)).toBe(true);
+    }
+  });
+
+  it("returns exactly 1 URL when sampleSize is 1", () => {
+    const urls = Array.from({ length: 10 }, (_, i) =>
+      `http://example.com/blog/post-${i + 1}`,
+    );
+    const sampled = sampleCollectionUrls(urls, 1);
+    expect(sampled).toHaveLength(1);
+    expect(sampled[0]).toBe("http://example.com/blog/post-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// crawl — integration test with CMS collection sampling
+// ---------------------------------------------------------------------------
+
+describe("crawl (CMS sampling)", () => {
+  let server: Server;
+  let port: number;
+  let tmpDir: string;
+  let browser: Browser;
+
+  beforeAll(async () => {
+    // Build fixture: root links to /about + 20 blog posts + 10 team pages
+    const pages: Record<string, string> = {};
+
+    const blogLinks = Array.from({ length: 20 }, (_, i) =>
+      `<a href="/blog/post-${i + 1}">Post ${i + 1}</a>`,
+    ).join("\n");
+    const teamLinks = Array.from({ length: 10 }, (_, i) =>
+      `<a href="/team/member-${i + 1}">Member ${i + 1}</a>`,
+    ).join("\n");
+
+    pages["/"] = `<!DOCTYPE html><html><head><title>CMS Root</title></head><body>
+      <a href="/about">About</a>
+      ${blogLinks}
+      ${teamLinks}
+    </body></html>`;
+    pages["/about"] = `<!DOCTYPE html><html><head><title>About</title></head><body><h1>About</h1></body></html>`;
+
+    for (let i = 1; i <= 20; i++) {
+      pages[`/blog/post-${i}`] = `<!DOCTYPE html><html><head><title>Post ${i}</title></head><body><h1>Post ${i}</h1></body></html>`;
+    }
+    for (let i = 1; i <= 10; i++) {
+      pages[`/team/member-${i}`] = `<!DOCTYPE html><html><head><title>Member ${i}</title></head><body><h1>Member ${i}</h1></body></html>`;
+    }
+
+    server = createServer((req, res) => {
+      const url = req.url ?? "/";
+      if (pages[url]) {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(pages[url]);
+      } else {
+        res.writeHead(404);
+        res.end("Not Found");
+      }
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const addr = server.address();
+    port = typeof addr === "object" && addr ? addr.port : 0;
+
+    tmpDir = mkdtempSync(join(tmpdir(), "wcag-cms-test-"));
+    browser = await chromium.launch({ headless: true });
+  }, 30_000);
+
+  afterAll(async () => {
+    await browser?.close();
+    server?.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 15_000);
+
+  it("samples CMS collections, limiting per-collection page count", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const fileStore = new LocalFileStore(tmpDir);
+    const snapshots = await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-cms-sample",
+        fileStore,
+        maxPages: 100,
+        timeoutMs: 10_000,
+        cmsSamples: 3,
+      },
+      browser,
+    );
+
+    // Should have: root + /about + 3 blog + 3 team = 8 max
+    // (BFS-discovered collection URLs are also capped)
+    const paths = snapshots.map((s) => new URL(s.url).pathname);
+    const blogPages = paths.filter((p) => p.startsWith("/blog/"));
+    const teamPages = paths.filter((p) => p.startsWith("/team/"));
+
+    expect(blogPages.length).toBeLessThanOrEqual(3);
+    expect(teamPages.length).toBeLessThanOrEqual(3);
+    expect(paths).toContain("/");
+    expect(paths).toContain("/about");
+
+    // Verify logging output
+    const logCalls = logSpy.mock.calls.map((c) => c[0] as string);
+    const cmsLogs = logCalls.filter((msg) =>
+      msg.includes("[crawler] Detected CMS collection"),
+    );
+    expect(cmsLogs.length).toBeGreaterThanOrEqual(1);
+
+    logSpy.mockRestore();
+  }, 30_000);
+
+  it("crawls all CMS pages when fullCrawl is true", async () => {
+    const fileStore = new LocalFileStore(tmpDir);
+    const snapshots = await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-cms-full",
+        fileStore,
+        maxPages: 100,
+        timeoutMs: 10_000,
+        fullCrawl: true,
+      },
+      browser,
+    );
+
+    // With fullCrawl, all pages should be visited: root + about + 20 blog + 10 team = 32
+    expect(snapshots).toHaveLength(32);
+  }, 60_000);
+
+  it("logs detection message with collection prefix and page count", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const fileStore = new LocalFileStore(tmpDir);
+    await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-cms-log",
+        fileStore,
+        maxPages: 100,
+        timeoutMs: 10_000,
+        cmsSamples: 5,
+      },
+      browser,
+    );
+
+    const logCalls = logSpy.mock.calls.map((c) => c[0] as string);
+    const blogLog = logCalls.find((msg) => msg.includes("/blog/"));
+    expect(blogLog).toBeDefined();
+    expect(blogLog).toMatch(/Detected CMS collection \/blog\//);
+    expect(blogLog).toMatch(/sampling \d+/);
+
+    logSpy.mockRestore();
   }, 30_000);
 });
