@@ -1,0 +1,7 @@
+node_modules/
+dist/
+wcag-data/
+.env
+*.tgz
+coverage/
+.DS_Store

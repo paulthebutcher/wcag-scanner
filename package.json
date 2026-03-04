@@ -1,0 +1,36 @@
+{
+  "name": "wcag-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AI-powered WCAG AA compliance engine with platform-specific remediation",
+  "bin": {
+    "wcag": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/cli/index.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@axe-core/playwright": "^4.10.0",
+    "better-sqlite3": "^11.0.0",
+    "commander": "^12.0.0",
+    "playwright": "^1.48.0",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}
