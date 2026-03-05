@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext } from "playwright";
 import { randomUUID } from "node:crypto";
 import type { PageSnapshot, Viewport } from "../types.js";
 import type { FileStore } from "../store/files.js";
+import type { ProgressReporter } from "./progress.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -19,6 +20,8 @@ export interface CrawlOptions {
   fullCrawl?: boolean;
   /** Platform-specific CMS URL pattern (from PlatformAdapter.getCMSPattern()) */
   cmsPattern?: RegExp | null;
+  /** Progress reporter (optional — if omitted, no progress is reported) */
+  reporter?: ProgressReporter;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,8 +419,9 @@ export async function crawl(
       // Add sampled URLs from each collection
       for (const col of collections) {
         const sampled = sampleCollectionUrls(col.urls, cmsSamples);
-        console.log(
-          `[crawler] Detected CMS collection ${col.prefix}/ with ~${col.urls.length} pages, sampling ${sampled.length}`,
+        options.reporter?.complete(
+          "crawl",
+          `CMS collection ${col.prefix}/ (~${col.urls.length} pages), sampling ${sampled.length}`,
         );
         keptUrls.push(...sampled);
       }
@@ -467,8 +471,9 @@ export async function crawl(
               return p === prefix;
             }).length + 1; // +1 for current URL
             if (queuedCount >= 2) {
-              console.log(
-                `[crawler] Detected CMS collection ${prefix}/ with ~${queuedCount} pages, sampling ${Math.min(queuedCount, cmsSamples)}`,
+              options.reporter?.complete(
+                "crawl",
+                `CMS collection ${prefix}/ (~${queuedCount} pages), sampling ${Math.min(queuedCount, cmsSamples)}`,
               );
             }
           }
@@ -477,6 +482,8 @@ export async function crawl(
       }
 
       visited.add(url);
+
+      options.reporter?.update("crawl", `Discovering pages... ${snapshots.length} found`);
 
       const page = await context.newPage();
       try {
@@ -526,7 +533,7 @@ export async function crawl(
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[crawler] Skipping ${url}: ${msg}`);
+        options.reporter?.warn("crawl", `Skipping ${url}: ${msg}`);
       } finally {
         await page.close();
       }

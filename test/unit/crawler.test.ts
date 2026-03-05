@@ -24,6 +24,22 @@ import {
   crawl,
 } from "../../src/core/crawler.js";
 import { LocalFileStore } from "../../src/store/files.js";
+import type { ProgressReporter } from "../../src/core/progress.js";
+
+/** Collects all reporter calls for assertion in tests */
+class CollectingReporter implements ProgressReporter {
+  calls: { method: string; phase: string; message: string }[] = [];
+
+  update(phase: string, message: string): void {
+    this.calls.push({ method: "update", phase, message });
+  }
+  complete(phase: string, message: string): void {
+    this.calls.push({ method: "complete", phase, message });
+  }
+  warn(phase: string, message: string): void {
+    this.calls.push({ method: "warn", phase, message });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // normalizeUrl — pure function tests
@@ -462,7 +478,7 @@ describe("crawl (link-following)", () => {
     const slowAddr = slowServer.address();
     const slowPort = typeof slowAddr === "object" && slowAddr ? slowAddr.port : 0;
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const reporter = new CollectingReporter();
 
     const fileStore = new LocalFileStore(tmpDir);
     const snapshots = await crawl(
@@ -472,16 +488,16 @@ describe("crawl (link-following)", () => {
         fileStore,
         maxPages: 50,
         timeoutMs: 2_000,
+        reporter,
       },
       browser,
     );
 
     expect(snapshots).toHaveLength(1);
-    expect(warnSpy).toHaveBeenCalled();
-    const warnMsg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(warnMsg).toContain("[crawler] Skipping");
+    const warnCalls = reporter.calls.filter((c) => c.method === "warn");
+    expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+    expect(warnCalls[0].message).toContain("Skipping");
 
-    warnSpy.mockRestore();
     slowServer.close();
   }, 30_000);
 });
@@ -971,7 +987,7 @@ describe("crawl (CMS sampling)", () => {
   }, 15_000);
 
   it("samples CMS collections, limiting per-collection page count", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const reporter = new CollectingReporter();
 
     const fileStore = new LocalFileStore(tmpDir);
     const snapshots = await crawl(
@@ -982,6 +998,7 @@ describe("crawl (CMS sampling)", () => {
         maxPages: 100,
         timeoutMs: 10_000,
         cmsSamples: 3,
+        reporter,
       },
       browser,
     );
@@ -997,14 +1014,11 @@ describe("crawl (CMS sampling)", () => {
     expect(paths).toContain("/");
     expect(paths).toContain("/about");
 
-    // Verify logging output
-    const logCalls = logSpy.mock.calls.map((c) => c[0] as string);
-    const cmsLogs = logCalls.filter((msg) =>
-      msg.includes("[crawler] Detected CMS collection"),
+    // Verify CMS collection detection was reported
+    const cmsLogs = reporter.calls.filter((c) =>
+      c.message.includes("CMS collection"),
     );
     expect(cmsLogs.length).toBeGreaterThanOrEqual(1);
-
-    logSpy.mockRestore();
   }, 30_000);
 
   it("crawls all CMS pages when fullCrawl is true", async () => {
@@ -1025,8 +1039,8 @@ describe("crawl (CMS sampling)", () => {
     expect(snapshots).toHaveLength(32);
   }, 60_000);
 
-  it("logs detection message with collection prefix and page count", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("reports detection message with collection prefix and page count", async () => {
+    const reporter = new CollectingReporter();
 
     const fileStore = new LocalFileStore(tmpDir);
     await crawl(
@@ -1037,16 +1051,14 @@ describe("crawl (CMS sampling)", () => {
         maxPages: 100,
         timeoutMs: 10_000,
         cmsSamples: 5,
+        reporter,
       },
       browser,
     );
 
-    const logCalls = logSpy.mock.calls.map((c) => c[0] as string);
-    const blogLog = logCalls.find((msg) => msg.includes("/blog/"));
+    const blogLog = reporter.calls.find((c) => c.message.includes("/blog/"));
     expect(blogLog).toBeDefined();
-    expect(blogLog).toMatch(/Detected CMS collection \/blog\//);
-    expect(blogLog).toMatch(/sampling \d+/);
-
-    logSpy.mockRestore();
+    expect(blogLog!.message).toMatch(/CMS collection \/blog\//);
+    expect(blogLog!.message).toMatch(/sampling \d+/);
   }, 30_000);
 });

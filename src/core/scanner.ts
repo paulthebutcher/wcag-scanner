@@ -27,6 +27,8 @@ import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
 import { createFindings } from "./evidence.js";
 import { WebflowAdapter } from "../adapters/webflow.js";
+import type { ProgressReporter } from "./progress.js";
+import { ScanProgressReporter } from "./progress.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,6 +42,8 @@ export interface ScanOptions {
   /** Which check tiers to run (default: [1]) */
   tiers?: number[];
   viewport?: Viewport;
+  /** Progress reporter for CLI output. Defaults to ScanProgressReporter (stderr). */
+  reporter?: ProgressReporter;
 }
 
 export interface ScanResult {
@@ -158,6 +162,7 @@ export async function scan(
   const scanId = randomUUID();
   const tiers = options.tiers ?? [1];
   const viewport = options.viewport ?? { width: 1280, height: 800, deviceScaleFactor: 1 };
+  const reporter = options.reporter ?? new ScanProgressReporter();
 
   // --- Setup ----------------------------------------------------------------
   const dbPath = join(options.dataDir, "wcag.db");
@@ -182,16 +187,17 @@ export async function scan(
 
   try {
     // --- Phase 1: Crawl -------------------------------------------------------
-    console.log(`[scan] Starting crawl of ${options.url}`);
+    reporter.update("crawl", `Discovering pages at ${options.url}...`);
     pageSnapshots = await crawl(options.url, {
       scanSessionId: scanId,
       fileStore,
       maxPages: options.maxPages ?? 50,
       cmsSamples: options.cmsSamples ?? 5,
       viewport,
+      reporter,
     });
 
-    console.log(`[scan] Crawled ${pageSnapshots.length} page(s)`);
+    reporter.complete("crawl", `Discovered ${pageSnapshots.length} page(s)`);
 
     // Persist page snapshots
     for (const snapshot of pageSnapshots) {
@@ -204,12 +210,12 @@ export async function scan(
       scanSession.platform = platform;
       scanSession.platform_detected_via = detected_via;
       updateScanSession(db, scanId, { platform, platform_detected_via: detected_via });
-      console.log(`[scan] Detected platform: ${platform} (via ${detected_via})`);
+      reporter.complete("platform", `Detected: ${platform} (via ${detected_via})`);
     }
 
     // --- Phase 3: Tier 1 — axe-core checks ------------------------------------
     if (tiers.includes(1)) {
-      console.log("[scan] Running Tier 1: axe-core checks");
+      reporter.update("axe", "Running axe-core checks...");
 
       const ownBrowser = !browser;
       if (!browser) {
@@ -271,12 +277,13 @@ export async function scan(
               allCriterionResults.push(cr);
             }
 
-            console.log(
-              `[scan] ${snapshot.url}: ${axeOutput.violations.length} violation(s), ${axeOutput.incomplete.length} incomplete, ${axeOutput.passes.length} passed criteria`,
+            reporter.update(
+              "axe",
+              `${snapshot.url}: ${axeOutput.violations.length} violation(s), ${axeOutput.incomplete.length} incomplete, ${axeOutput.passes.length} passed`,
             );
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.warn(`[scan] axe-core failed for ${snapshot.url}: ${msg}`);
+            reporter.warn("axe", `Failed for ${snapshot.url}: ${msg}`);
           } finally {
             await page.close();
           }
@@ -285,6 +292,8 @@ export async function scan(
         if (context) await context.close();
         if (ownBrowser && browser) await browser.close();
       }
+
+      reporter.complete("axe", `Checked ${pageSnapshots.length} page(s), ${allFindings.length} finding(s)`);
     }
 
     // --- Phase 4: Compute summary ---------------------------------------------
@@ -295,7 +304,7 @@ export async function scan(
     scanSession.completed_at = new Date().toISOString();
     updateScanSession(db, scanId, { completed_at: scanSession.completed_at });
 
-    console.log(`[scan] Scan complete: ${allFindings.length} finding(s)`);
+    reporter.complete("scan", `Complete: ${allFindings.length} finding(s)`);
 
     return {
       scanSession,

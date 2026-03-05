@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { scan } from "../../core/scanner.js";
+import { ScanProgressReporter, QuietProgressReporter } from "../../core/progress.js";
 import type { ScanSummary } from "../../types.js";
 
 // ---------------------------------------------------------------------------
@@ -54,12 +55,14 @@ export function createScanCommand(): Command {
     .option("--tiers <list>", "Comma-separated check tiers to run", "1")
     .option("--cms-samples <n>", "CMS collection pages to sample per collection", "5")
     .option("--data-dir <path>", "Data directory for results", "./wcag-data")
+    .option("--quiet", "Suppress progress output, only print results")
     .action(async (url: string, opts: Record<string, string>) => {
       const maxPages = parseInt(opts["maxPages"], 10);
       const cmsSamples = parseInt(opts["cmsSamples"], 10);
       const outputFormat = opts["output"] as "json" | "table";
       const tiers = opts["tiers"].split(",").map((t) => parseInt(t.trim(), 10));
       const dataDir = opts["dataDir"];
+      const quiet = "quiet" in opts;
 
       if (isNaN(maxPages) || maxPages <= 0) {
         console.error("Error: --max-pages must be a positive integer");
@@ -77,6 +80,10 @@ export function createScanCommand(): Command {
         return;
       }
 
+      const reporter = quiet
+        ? new QuietProgressReporter()
+        : new ScanProgressReporter();
+
       try {
         const result = await scan({
           url,
@@ -84,15 +91,17 @@ export function createScanCommand(): Command {
           maxPages,
           cmsSamples,
           tiers,
+          reporter,
         });
 
-        // Always output scan ID
-        console.log(result.scanSession.id);
+        // Results go to stdout (allows piping)
+        // Always output scan ID first
+        process.stdout.write(result.scanSession.id + "\n");
 
         if (outputFormat === "json") {
-          console.log(JSON.stringify(result.summary, null, 2));
+          process.stdout.write(JSON.stringify(result.summary, null, 2) + "\n");
         } else {
-          console.log(formatTable(result.summary, result.scanSession.id));
+          process.stdout.write(formatTable(result.summary, result.scanSession.id) + "\n");
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
