@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// TODO: C1-13 — wire up commander
 import { Command } from "commander";
+import { createScanCommand } from "./commands/scan.js";
 
 const program = new Command();
 
@@ -9,6 +9,8 @@ program
   .description("AI-powered WCAG AA compliance engine")
   .version("0.1.0");
 
-// TODO: add scan, report, review commands
+program.addCommand(createScanCommand());
+
+// TODO: add report, review commands
 
 program.parse();
