@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html data-wf-site="64a1b2c3d4e5f6" data-wf-page="64a1b2c3d4e5fa">
+<!-- VIOLATION: missing lang attribute (WCAG 3.1.1) -->
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="Webflow">
+  <title>Portfolio — Acme Design Studio</title>
+</head>
+<body class="body portfolio-body">
+  <!-- Navbar with Dropdown -->
+  <div data-collapse="medium" data-animation="default" data-duration="400" role="banner" class="w-nav navbar navbar-dark">
+    <div class="w-container nav-container">
+      <a href="/" class="w-nav-brand brand">
+        <!-- VIOLATION: image without alt (WCAG 1.1.1) -->
+        <img src="/images/logo-white.svg" class="brand-image">
+      </a>
+      <nav role="navigation" class="w-nav-menu nav-menu">
+        <a href="/" class="w-nav-link nav-link">Home</a>
+        <div data-hover="true" data-delay="0" class="w-dropdown nav-dropdown">
+          <div class="w-dropdown-toggle nav-dropdown-toggle" aria-haspopup="menu" aria-expanded="false" role="button" tabindex="0">
+            <div class="w-icon-dropdown-toggle"></div>
+            <div>Work</div>
+          </div>
+          <nav class="w-dropdown-list nav-dropdown-list" role="menu">
+            <a href="/portfolio" class="w-dropdown-link dropdown-link" tabindex="0" role="menuitem">Portfolio</a>
+            <a href="/case-studies" class="w-dropdown-link dropdown-link" tabindex="0" role="menuitem">Case Studies</a>
+          </nav>
+        </div>
+        <a href="/about" class="w-nav-link nav-link">About</a>
+        <a href="/contact" class="w-nav-link nav-link">Contact</a>
+      </nav>
+      <div class="w-nav-button menu-button" aria-label="menu" role="button" tabindex="0">
+        <div class="w-icon-nav-menu"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Portfolio Header -->
+  <section class="portfolio-header wf-section">
+    <div class="w-container">
+      <h1 class="page-heading">Our Work</h1>
+      <!-- VIOLATION: low contrast (WCAG 1.4.3) -->
+      <p class="page-subheading" style="color: #bbbbbb; background-color: #ffffff;">
+        Browse our latest projects and case studies.
+      </p>
+    </div>
+  </section>
+
+  <!-- Portfolio Filter Tabs -->
+  <section class="portfolio-filter wf-section">
+    <div class="w-container">
+      <div class="w-tabs portfolio-tabs" data-current="Tab 1" data-easing="ease">
+        <div class="w-tab-menu portfolio-tab-menu" role="tablist">
+          <a data-w-tab="Tab 1" class="w-tab-link w--current portfolio-tab" role="tab" aria-selected="true" tabindex="0">All</a>
+          <a data-w-tab="Tab 2" class="w-tab-link portfolio-tab" role="tab" aria-selected="false" tabindex="-1">Web Design</a>
+          <a data-w-tab="Tab 3" class="w-tab-link portfolio-tab" role="tab" aria-selected="false" tabindex="-1">Branding</a>
+          <a data-w-tab="Tab 4" class="w-tab-link portfolio-tab" role="tab" aria-selected="false" tabindex="-1">Development</a>
+        </div>
+        <div class="w-tab-content">
+          <div data-w-tab="Tab 1" class="w-tab-pane w--tab-active" role="tabpanel">
+            <!-- Portfolio Grid -->
+            <div class="w-layout-grid portfolio-grid">
+              <div class="portfolio-item">
+                <a href="/portfolio/project-alpha" class="portfolio-link w-inline-block">
+                  <img src="/images/portfolio/alpha.jpg" alt="Project Alpha — E-commerce website redesign" class="portfolio-image" sizes="(max-width: 479px) 92vw, (max-width: 767px) 46vw, 30vw">
+                  <div class="portfolio-overlay">
+                    <h3 class="portfolio-title">Project Alpha</h3>
+                    <p class="portfolio-category">Web Design</p>
+                  </div>
+                </a>
+              </div>
+              <div class="portfolio-item">
+                <a href="/portfolio/project-beta" class="portfolio-link w-inline-block">
+                  <!-- VIOLATION: non-descriptive alt text (not caught by axe, but semantic) -->
+                  <img src="/images/portfolio/beta.jpg" alt="image" class="portfolio-image">
+                  <div class="portfolio-overlay">
+                    <h3 class="portfolio-title">Project Beta</h3>
+                    <p class="portfolio-category">Branding</p>
+                  </div>
+                </a>
+              </div>
+              <div class="portfolio-item">
+                <a href="/portfolio/project-gamma" class="portfolio-link w-inline-block">
+                  <img src="/images/portfolio/gamma.jpg" alt="Project Gamma — Mobile app interface design" class="portfolio-image">
+                  <div class="portfolio-overlay">
+                    <h3 class="portfolio-title">Project Gamma</h3>
+                    <p class="portfolio-category">Development</p>
+                  </div>
+                </a>
+              </div>
+              <div class="portfolio-item">
+                <a href="/portfolio/project-delta" class="portfolio-link w-inline-block">
+                  <img src="/images/portfolio/delta.jpg" alt="Project Delta — SaaS dashboard with analytics" class="portfolio-image">
+                  <div class="portfolio-overlay">
+                    <h3 class="portfolio-title">Project Delta</h3>
+                    <p class="portfolio-category">Web Design</p>
+                  </div>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="cta-section wf-section">
+    <div class="w-container cta-container">
+      <h2 class="cta-heading">Ready to Start Your Project?</h2>
+      <p class="cta-text">Let's discuss how we can bring your vision to life.</p>
+      <a href="/contact" class="w-button cta-button">Get in Touch</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer wf-section">
+    <div class="w-container">
+      <div class="w-row footer-row">
+        <div class="w-col w-col-6">
+          <p class="footer-copyright">© 2024 Acme Design Studio</p>
+        </div>
+        <div class="w-col w-col-6">
+          <div class="social-links footer-social">
+            <!-- VIOLATION: links without accessible names (WCAG 2.4.4 / 4.1.2) -->
+            <a href="https://dribbble.com/acme" class="w-inline-block social-link">
+              <img src="/images/dribbble.svg" class="social-icon">
+            </a>
+            <a href="https://behance.net/acme" class="w-inline-block social-link">
+              <img src="/images/behance.svg" class="social-icon">
+            </a>
+            <a href="https://instagram.com/acme" class="w-inline-block social-link" aria-label="Follow us on Instagram">
+              <img src="/images/instagram.svg" alt="" class="social-icon">
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://d3e54v103j8qbb.cloudfront.net/js/jquery-3.5.1.min.dc5e7f18c8.js"></script>
+  <script src="https://assets.website-files.com/js/webflow.js"></script>
+</body>
+</html>

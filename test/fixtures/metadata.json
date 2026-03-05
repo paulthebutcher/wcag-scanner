@@ -1,0 +1,42 @@
+{
+  "webflow-landing": {
+    "url": "https://acme-corp.webflow.io/",
+    "title": "Acme Corp — Premium Solutions",
+    "platform": "webflow",
+    "platform_detected_via": "meta_generator",
+    "has_violations": true,
+    "violation_types": ["missing-alt", "low-contrast", "empty-link"],
+    "has_navigation": true,
+    "has_form": false
+  },
+  "webflow-contact-form": {
+    "url": "https://acme-corp.webflow.io/contact",
+    "title": "Contact Us — Acme Corp",
+    "platform": "webflow",
+    "platform_detected_via": "meta_generator",
+    "has_violations": true,
+    "violation_types": ["missing-label", "low-contrast"],
+    "has_navigation": true,
+    "has_form": true
+  },
+  "webflow-blog-post": {
+    "url": "https://acme-corp.webflow.io/blog/understanding-web-accessibility",
+    "title": "Understanding Web Accessibility — Acme Blog",
+    "platform": "webflow",
+    "platform_detected_via": "meta_generator",
+    "has_violations": false,
+    "violation_types": [],
+    "has_navigation": true,
+    "has_form": false
+  },
+  "webflow-portfolio": {
+    "url": "https://acme-design.webflow.io/portfolio",
+    "title": "Portfolio — Acme Design Studio",
+    "platform": "webflow",
+    "platform_detected_via": "meta_generator",
+    "has_violations": true,
+    "violation_types": ["missing-lang", "missing-alt", "low-contrast", "missing-link-name"],
+    "has_navigation": true,
+    "has_form": false
+  }
+}
