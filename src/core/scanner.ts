@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type {
   ScanSession,
   ScanSummary,
   Finding,
+  CheckResult,
   CriterionResult,
   PageSnapshot,
   Platform,
@@ -13,6 +14,7 @@ import type {
   ConfidenceCounts,
   CategoryCounts,
   PlatformAdapter,
+  DetectedBy,
 } from "../types.js";
 import { openDatabase } from "../store/db.js";
 import {
@@ -21,14 +23,29 @@ import {
   insertPageSnapshot,
   upsertScanSummary,
   upsertCriterionResult,
+  updateFinding,
 } from "../store/db.js";
 import { LocalFileStore } from "../store/files.js";
 import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
 import { createFindings } from "./evidence.js";
+import { analyze } from "./analyzer.js";
+import { scoreConfidence } from "./confidence.js";
 import { WebflowAdapter } from "../adapters/webflow.js";
 import type { ProgressReporter } from "./progress.js";
 import { ScanProgressReporter } from "./progress.js";
+// Behavioral checks (Tier 2)
+import { runKeyboardChecks, runTrapChecks } from "../checks/behavioral/keyboard.js";
+import { runFocusVisibleChecks } from "../checks/behavioral/focus-visible.js";
+import { runSkipNavChecks } from "../checks/behavioral/skip-nav.js";
+import { runFocusOrderChecks } from "../checks/behavioral/focus-order.js";
+import { runModalChecks } from "../checks/behavioral/modal.js";
+// Semantic checks (Tier 3)
+import { runAltTextChecks } from "../checks/semantic/alt-text.js";
+import { runLinkTextChecks } from "../checks/semantic/link-text.js";
+import { runHeadingChecks } from "../checks/semantic/headings.js";
+import { runConsistentNavChecks } from "../checks/semantic/consistent-nav.js";
+import { createPromptRunner, type PromptRunner } from "./prompt-runner.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +61,12 @@ export interface ScanOptions {
   viewport?: Viewport;
   /** Progress reporter for CLI output. Defaults to ScanProgressReporter (stderr). */
   reporter?: ProgressReporter;
+  /** Anthropic API key (required for Tier 3 semantic checks) */
+  apiKey?: string;
+  /** Prompt runner concurrency (default: 5) */
+  concurrency?: number;
+  /** Inject a PromptRunner for testing */
+  promptRunner?: PromptRunner;
 }
 
 export interface ScanResult {
@@ -141,17 +164,100 @@ function estimateEffort(findings: Finding[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Analyze + score a batch of findings
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the analysis and confidence scoring pipeline on check results,
+ * creating findings with populated Analysis and Confidence sub-entities.
+ */
+async function processCheckResults(
+  checkResults: CheckResult[],
+  options: {
+    scanId: string;
+    pageSnapshotId: string;
+    platform: Platform;
+    failureType: string;
+    fullPageScreenshot: Buffer | null;
+    db: ReturnType<typeof openDatabase>;
+    fileStore: LocalFileStore;
+  },
+): Promise<Finding[]> {
+  if (checkResults.length === 0) return [];
+
+  // 1. Create findings with stub analysis/confidence
+  const findings = await createFindings(checkResults, {
+    scanSessionId: options.scanId,
+    pageSnapshotId: options.pageSnapshotId,
+    interactionStateId: null,
+    platform: options.platform,
+    failureType: options.failureType,
+    fullPageScreenshot: options.fullPageScreenshot,
+    boundingBox: null,
+    db: options.db,
+    fileStore: options.fileStore,
+  });
+
+  // 2. Populate Analysis and Confidence for each finding
+  for (let i = 0; i < findings.length; i++) {
+    const finding = findings[i];
+    const checkResult = checkResults[i];
+
+    try {
+      // Run analyzer
+      const analysis = analyze(checkResult);
+      finding.analysis = analysis;
+
+      // Run confidence scoring (needs populated analysis)
+      const confidence = scoreConfidence(finding);
+      finding.confidence = confidence;
+
+      // Persist updated analysis + confidence
+      updateFinding(options.db, finding.id, { analysis, confidence });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[scanner] Analysis/scoring failed for ${finding.id}: ${msg}`);
+      // Leave stub analysis/confidence in place — finding still valid
+    }
+  }
+
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
+// CriterionResult helpers
+// ---------------------------------------------------------------------------
+
+function makeCriterionResult(
+  scanId: string,
+  criterion: string,
+  status: "passed" | "not_tested",
+  testedBy: DetectedBy,
+  summary: string,
+): CriterionResult {
+  return {
+    scan_session_id: scanId,
+    wcag_criterion: criterion,
+    status,
+    tested_by: testedBy,
+    evidence_summary: summary,
+    finding_ids: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main scan function
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full Cycle 1 scan pipeline:
- * 1. Crawl pages
+ * Run the full scan pipeline:
+ * 1. Crawl pages → PageSnapshot[]
  * 2. Detect platform
- * 3. Run axe-core (Tier 1) on each page
- * 4. Create Findings from violations
- * 5. Store CriterionResults from passes
- * 6. Compute and store ScanSummary
+ * 3. Tier 1: axe-core automated checks
+ * 4. Tier 2: Playwright behavioral checks (keyboard, focus, skip nav, modals)
+ * 5. Tier 3: Claude API semantic checks (alt text, link text, headings, consistent nav)
+ * 6. Analyze and score all findings
+ * 7. Compute and store ScanSummary
  *
  * An external `browser` can be injected for testing.
  */
@@ -213,21 +319,28 @@ export async function scan(
       reporter.complete("platform", `Detected: ${platform} (via ${detected_via})`);
     }
 
-    // --- Phase 3: Tier 1 — axe-core checks ------------------------------------
-    if (tiers.includes(1)) {
-      reporter.update("axe", "Running axe-core checks...");
+    // --- Browser setup (shared by Tier 1 and Tier 2) --------------------------
+    const needsBrowser = tiers.includes(1) || tiers.includes(2);
+    const ownBrowser = needsBrowser && !browser;
+    if (needsBrowser && !browser) {
+      browser = await chromium.launch({ headless: true });
+    }
 
-      const ownBrowser = !browser;
-      if (!browser) {
-        browser = await chromium.launch({ headless: true });
-      }
-
-      let context: BrowserContext | undefined;
-      try {
+    let context: BrowserContext | undefined;
+    try {
+      if (needsBrowser && browser) {
         context = await browser.newContext({
           viewport: { width: viewport.width, height: viewport.height },
           deviceScaleFactor: viewport.deviceScaleFactor,
         });
+      }
+
+      // Collect axe-flagged selectors per page for Tier 3 deduplication
+      const axeFlaggedByPage = new Map<string, Set<string>>();
+
+      // --- Phase 3: Tier 1 — axe-core checks ----------------------------------
+      if (tiers.includes(1) && context) {
+        reporter.update("axe", "Running axe-core checks...");
 
         for (const snapshot of pageSnapshots) {
           const page = await context.newPage();
@@ -239,16 +352,21 @@ export async function scan(
             // Take full-page screenshot for evidence cropping
             const fullScreenshot = await page.screenshot({ fullPage: true });
 
+            // Track axe-flagged selectors for this page
+            const flagged = new Set<string>();
+            for (const cr of axeOutput.violations) {
+              flagged.add(cr.element_selector);
+            }
+            axeFlaggedByPage.set(snapshot.id, flagged);
+
             // Create findings from violations
             if (axeOutput.violations.length > 0) {
-              const findings = await createFindings(axeOutput.violations, {
-                scanSessionId: scanId,
+              const findings = await processCheckResults(axeOutput.violations, {
+                scanId,
                 pageSnapshotId: snapshot.id,
-                interactionStateId: null,
                 platform: scanSession.platform,
                 failureType: "axe_violation",
                 fullPageScreenshot: fullScreenshot,
-                boundingBox: null, // axe doesn't provide bounding boxes
                 db,
                 fileStore,
               });
@@ -257,14 +375,12 @@ export async function scan(
 
             // Create findings from incomplete (needs_review)
             if (axeOutput.incomplete.length > 0) {
-              const incompleteFindings = await createFindings(axeOutput.incomplete, {
-                scanSessionId: scanId,
+              const incompleteFindings = await processCheckResults(axeOutput.incomplete, {
+                scanId,
                 pageSnapshotId: snapshot.id,
-                interactionStateId: null,
                 platform: scanSession.platform,
                 failureType: "axe_incomplete",
                 fullPageScreenshot: fullScreenshot,
-                boundingBox: null,
                 db,
                 fileStore,
               });
@@ -288,15 +404,229 @@ export async function scan(
             await page.close();
           }
         }
-      } finally {
-        if (context) await context.close();
-        if (ownBrowser && browser) await browser.close();
+
+        reporter.complete("axe", `Checked ${pageSnapshots.length} page(s), ${allFindings.length} finding(s)`);
       }
 
-      reporter.complete("axe", `Checked ${pageSnapshots.length} page(s), ${allFindings.length} finding(s)`);
+      // --- Phase 4: Tier 2 — Behavioral checks --------------------------------
+      if (tiers.includes(2) && context) {
+        reporter.update("behavioral", "Running behavioral checks...");
+        let behavioralCount = 0;
+
+        for (const snapshot of pageSnapshots) {
+          const page = await context.newPage();
+          try {
+            await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
+            const fullScreenshot = await page.screenshot({ fullPage: true });
+
+            const pageResults: CheckResult[] = [];
+
+            // 2a: Keyboard reachability + trap checks
+            try {
+              const { results: keyboardResults, tabSequence } = await runKeyboardChecks(page);
+              pageResults.push(...keyboardResults);
+
+              // 2b: Focus visible (needs tab sequence from keyboard check)
+              try {
+                const focusResults = await runFocusVisibleChecks(page, tabSequence);
+                pageResults.push(...focusResults);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                reporter.warn("behavioral", `Focus visible failed for ${snapshot.url}: ${msg}`);
+              }
+
+              // 2c: Focus order (needs tab sequence)
+              try {
+                const orderResults = runFocusOrderChecks(tabSequence);
+                pageResults.push(...orderResults);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                reporter.warn("behavioral", `Focus order failed for ${snapshot.url}: ${msg}`);
+              }
+
+              // Create passing criterion results for keyboard if no violations
+              if (keyboardResults.length === 0) {
+                const passCr = makeCriterionResult(scanId, "2.1.1", "passed", "playwright",
+                  `All ${tabSequence.focusStops.length} interactive elements reachable via keyboard`);
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Keyboard checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 2d: Keyboard traps
+            try {
+              const trapResults = await runTrapChecks(page);
+              pageResults.push(...trapResults);
+              if (trapResults.length === 0) {
+                const passCr = makeCriterionResult(scanId, "2.1.2", "passed", "playwright",
+                  "No keyboard traps detected");
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Trap checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 2e: Skip navigation
+            try {
+              const skipResults = await runSkipNavChecks(page);
+              pageResults.push(...skipResults);
+              if (skipResults.length === 0) {
+                const passCr = makeCriterionResult(scanId, "2.4.1", "passed", "playwright",
+                  "Working skip navigation link found");
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Skip nav checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 2f: Modal focus management
+            try {
+              const { results: modalResults } = await runModalChecks(page);
+              pageResults.push(...modalResults);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Modal checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // Process all behavioral results through evidence → analyzer → confidence
+            if (pageResults.length > 0) {
+              const findings = await processCheckResults(pageResults, {
+                scanId,
+                pageSnapshotId: snapshot.id,
+                platform: scanSession.platform,
+                failureType: "behavioral",
+                fullPageScreenshot: fullScreenshot,
+                db,
+                fileStore,
+              });
+              allFindings.push(...findings);
+              behavioralCount += findings.length;
+            }
+
+            reporter.update("behavioral", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("behavioral", `Failed for ${snapshot.url}: ${msg}`);
+          } finally {
+            await page.close();
+          }
+        }
+
+        reporter.complete("behavioral", `Behavioral checks complete: ${behavioralCount} finding(s)`);
+      }
+
+      // --- Phase 5: Tier 3 — Semantic checks -----------------------------------
+      if (tiers.includes(3)) {
+        reporter.update("semantic", "Running semantic checks...");
+        let semanticCount = 0;
+
+        // Create or use injected PromptRunner
+        const runner = options.promptRunner ?? (() => {
+          const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+          if (!apiKey) {
+            reporter.warn("semantic", "Skipping Tier 3: no ANTHROPIC_API_KEY available");
+            return null;
+          }
+          return createPromptRunner(apiKey, { concurrency: options.concurrency ?? 5 });
+        })();
+
+        if (runner) {
+          for (const snapshot of pageSnapshots) {
+            const dom = snapshot.full_dom;
+            const pageResults: CheckResult[] = [];
+
+            // 3a: Alt text quality
+            try {
+              const axeFlagged = axeFlaggedByPage.get(snapshot.id) ?? new Set();
+              const altResults = await runAltTextChecks(dom, runner, {
+                axeFlaggedSelectors: axeFlagged,
+              });
+              pageResults.push(...altResults);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Alt text checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 3b: Link text quality
+            try {
+              const linkResults = await runLinkTextChecks(dom, runner);
+              pageResults.push(...linkResults);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Link text checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 3c: Heading structure
+            try {
+              const headingResults = await runHeadingChecks(dom, snapshot.title, runner);
+              pageResults.push(...headingResults);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Heading checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // Process semantic results
+            if (pageResults.length > 0) {
+              const findings = await processCheckResults(pageResults, {
+                scanId,
+                pageSnapshotId: snapshot.id,
+                platform: scanSession.platform,
+                failureType: "semantic",
+                fullPageScreenshot: null,
+                db,
+                fileStore,
+              });
+              allFindings.push(...findings);
+              semanticCount += findings.length;
+            }
+
+            reporter.update("semantic", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+          }
+
+          // 3d: Consistent navigation (cross-page comparison)
+          if (pageSnapshots.length > 1) {
+            try {
+              const navResults = await runConsistentNavChecks(pageSnapshots, runner);
+              if (navResults.length > 0) {
+                const findings = await processCheckResults(navResults, {
+                  scanId,
+                  pageSnapshotId: pageSnapshots[0].id,
+                  platform: scanSession.platform,
+                  failureType: "semantic",
+                  fullPageScreenshot: null,
+                  db,
+                  fileStore,
+                });
+                allFindings.push(...findings);
+                semanticCount += findings.length;
+              } else {
+                const passCr = makeCriterionResult(scanId, "3.2.3", "passed", "claude_api",
+                  "Navigation is consistent across all tested pages");
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Consistent nav checks failed: ${msg}`);
+            }
+          }
+
+          reporter.complete("semantic", `Semantic checks complete: ${semanticCount} finding(s)`);
+        }
+      }
+    } finally {
+      if (context) await context.close();
+      if (ownBrowser && browser) await browser.close();
     }
 
-    // --- Phase 4: Compute summary ---------------------------------------------
+    // --- Phase 6: Compute summary ---------------------------------------------
     const summary = computeSummary(scanId, allFindings, allCriterionResults);
     upsertScanSummary(db, summary);
 

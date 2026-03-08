@@ -441,6 +441,304 @@ describe("scan (integration)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// scan() — Tier 2 behavioral integration tests
+// ---------------------------------------------------------------------------
+
+describe("scan — Tier 2 behavioral", () => {
+  let browser: Browser;
+  let tmpDir: string;
+  let server: http.Server;
+  let baseUrl: string;
+
+  // HTML with keyboard-accessible elements and a button that IS reachable
+  const KEYBOARD_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Keyboard Test</title>
+</head>
+<body>
+  <a href="#main" class="skip-link" style="position:absolute;top:-100px;">Skip to main</a>
+  <nav><a href="/">Home</a> <a href="/about">About</a></nav>
+  <main id="main">
+    <h1>Keyboard Test Page</h1>
+    <button>Click Me</button>
+    <a href="/contact">Contact</a>
+  </main>
+</body>
+</html>`;
+
+  beforeEach(async () => {
+    tmpDir = join(tmpdir(), `wcag-tier2-test-${randomUUID()}`);
+    mkdirSync(tmpDir, { recursive: true });
+    browser = await chromium.launch({ headless: true });
+
+    server = http.createServer((_req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(KEYBOARD_HTML);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        if (addr && typeof addr === "object") {
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+        }
+        resolve();
+      });
+    });
+  });
+
+  afterEach(async () => {
+    await browser.close();
+    server.close();
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("runs Tier 2 behavioral checks and populates analysis/confidence", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [2] },
+      browser,
+    );
+
+    // Should have at least crawled the page
+    expect(result.pageSnapshots.length).toBeGreaterThanOrEqual(1);
+    expect(result.scanSession.completed_at).toBeTruthy();
+    expect(result.summary).toBeDefined();
+
+    // Behavioral findings (if any) should have analysis populated
+    for (const f of result.findings) {
+      expect(f.evidence.detected_by).toBe("playwright");
+      expect(f.analysis.method).toBe("rule_based");
+      expect(f.analysis.reasoning).toBeTruthy();
+      expect(f.analysis.impact_description).toBeTruthy();
+      expect(f.analysis.affected_users.length).toBeGreaterThan(0);
+      expect(f.confidence.basis).toBeTruthy();
+      expect(f.confidence.score).toBeGreaterThan(0);
+    }
+  });
+
+  it("creates criterion results for Tier 2 behavioral passes", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [2] },
+      browser,
+    );
+
+    // Should have some passed criterion results from behavioral checks
+    const behavioralPasses = result.criterionResults.filter(
+      (cr) => cr.tested_by === "playwright" && cr.status === "passed",
+    );
+    // Our fixture has skip link and no traps, so at least those should pass
+    expect(behavioralPasses.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scan() — Tier selection (--tiers flag)
+// ---------------------------------------------------------------------------
+
+describe("scan — tier selection", () => {
+  let browser: Browser;
+  let tmpDir: string;
+  let server: http.Server;
+  let baseUrl: string;
+
+  const SIMPLE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Simple Page</title></head>
+<body><h1>Simple</h1><a href="/">Home</a></body>
+</html>`;
+
+  beforeEach(async () => {
+    tmpDir = join(tmpdir(), `wcag-tiers-test-${randomUUID()}`);
+    mkdirSync(tmpDir, { recursive: true });
+    browser = await chromium.launch({ headless: true });
+
+    server = http.createServer((_req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(SIMPLE_HTML);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        if (addr && typeof addr === "object") {
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+        }
+        resolve();
+      });
+    });
+  });
+
+  afterEach(async () => {
+    await browser.close();
+    server.close();
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("runs only specified tiers", async () => {
+    // Run with no tiers (empty) — should still crawl but produce no findings
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [] },
+      browser,
+    );
+
+    expect(result.pageSnapshots.length).toBeGreaterThanOrEqual(1);
+    expect(result.findings.length).toBe(0);
+    expect(result.summary.total_findings).toBe(0);
+  });
+
+  it("runs Tier 1 and Tier 2 together", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1, 2] },
+      browser,
+    );
+
+    expect(result.pageSnapshots.length).toBeGreaterThanOrEqual(1);
+    expect(result.scanSession.completed_at).toBeTruthy();
+    // All findings should have populated analysis
+    for (const f of result.findings) {
+      expect(f.analysis.reasoning).toBeTruthy();
+      expect(f.confidence.score).toBeGreaterThan(0);
+    }
+  });
+
+  it("handles partial failures gracefully", async () => {
+    // Run with a non-existent tier (e.g., 99) — should silently skip
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1, 99] },
+      browser,
+    );
+
+    expect(result.scanSession.completed_at).toBeTruthy();
+    expect(result.summary).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scan() — analysis and confidence population
+// ---------------------------------------------------------------------------
+
+describe("scan — analysis and confidence pipeline", () => {
+  let browser: Browser;
+  let tmpDir: string;
+  let server: http.Server;
+  let baseUrl: string;
+
+  // Fixture with violations that will trigger analysis
+  const VIOLATIONS_HTML = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Test</title></head>
+<body>
+  <img src="photo.jpg">
+  <a href="/page"></a>
+  <h1>Title</h1>
+</body>
+</html>`;
+
+  beforeEach(async () => {
+    tmpDir = join(tmpdir(), `wcag-pipeline-test-${randomUUID()}`);
+    mkdirSync(tmpDir, { recursive: true });
+    browser = await chromium.launch({ headless: true });
+
+    server = http.createServer((_req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(VIOLATIONS_HTML);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        if (addr && typeof addr === "object") {
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+        }
+        resolve();
+      });
+    });
+  });
+
+  afterEach(async () => {
+    await browser.close();
+    server.close();
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("populates analysis with reasoning for axe-core findings", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1] },
+      browser,
+    );
+
+    // Should have findings from missing lang, missing alt, empty link
+    expect(result.findings.length).toBeGreaterThan(0);
+
+    for (const f of result.findings) {
+      // Analysis should be populated (not empty stub)
+      expect(f.analysis.method).toBe("rule_based");
+      expect(f.analysis.reasoning.length).toBeGreaterThan(0);
+      expect(f.analysis.impact_description.length).toBeGreaterThan(0);
+      expect(f.analysis.affected_users.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("populates confidence with definitive tier for axe-core findings", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1] },
+      browser,
+    );
+
+    for (const f of result.findings) {
+      // axe-core violations should be definitive
+      expect(f.confidence.tier).toBe("definitive");
+      expect(f.confidence.score).toBeGreaterThanOrEqual(0.95);
+      expect(f.confidence.basis).toContain("axe-core");
+      expect(f.confidence.false_positive_risk).toBe("low");
+    }
+  });
+
+  it("persists analysis and confidence to database", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1] },
+      browser,
+    );
+
+    const dbPath = join(tmpDir, "wcag.db");
+    const db = openDatabase(dbPath);
+
+    for (const f of result.findings) {
+      const row = db.prepare("SELECT analysis, confidence FROM findings WHERE id = ?").get(f.id) as {
+        analysis: string;
+        confidence: string;
+      };
+      expect(row).toBeDefined();
+
+      const analysis = JSON.parse(row.analysis);
+      expect(analysis.reasoning.length).toBeGreaterThan(0);
+      expect(analysis.impact_description.length).toBeGreaterThan(0);
+
+      const confidence = JSON.parse(row.confidence);
+      expect(confidence.tier).toBe("definitive");
+      expect(confidence.score).toBeGreaterThanOrEqual(0.95);
+    }
+
+    db.close();
+  });
+
+  it("summary reflects confidence counts from scored findings", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1] },
+      browser,
+    );
+
+    // All axe findings → definitive
+    expect(result.summary.by_confidence.definitive).toBe(result.findings.length);
+    expect(result.summary.by_confidence.high).toBe(0);
+    expect(result.summary.by_confidence.moderate).toBe(0);
+    expect(result.summary.by_confidence.needs_review).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createScanCommand — CLI unit tests
 // ---------------------------------------------------------------------------
 
