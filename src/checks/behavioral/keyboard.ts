@@ -380,3 +380,399 @@ export async function runKeyboardChecks(
 
   return { results, tabSequence };
 }
+
+// ---------------------------------------------------------------------------
+// Keyboard trap detection (C2-02)
+// ---------------------------------------------------------------------------
+
+/** A detected keyboard trap — focus cycles within a subset of elements */
+export interface KeyboardTrap {
+  /** Elements in the focus cycle */
+  elementsInCycle: { selector: string; tagName: string; role: string | null }[];
+  /** Number of Tab presses before the trap was detected */
+  tabsBeforeDetected: number;
+  /** The selector of the container element (if identifiable) */
+  containerSelector: string | null;
+  /** Whether this appears to be a custom widget, dropdown, or iframe */
+  trapContext: "custom_widget" | "dropdown" | "iframe" | "unknown";
+}
+
+export interface TrapDetectionResult {
+  /** Detected keyboard traps */
+  traps: KeyboardTrap[];
+  /** Total Tab presses performed during detection */
+  totalTabs: number;
+}
+
+export interface TrapCheckOptions {
+  /** Maximum Tab presses per element to detect a trap. Default: 50 */
+  maxTabsPerElement?: number;
+  /** Elements to specifically test for trapping. Default: auto-detect */
+  targetSelectors?: string[];
+}
+
+/** Selectors for elements likely to contain keyboard traps */
+const TRAP_CANDIDATE_SELECTORS = [
+  // Custom widgets
+  '[role="dialog"]:not([aria-modal="true"])',
+  '[role="menu"]',
+  '[role="listbox"]',
+  '[role="tree"]',
+  '[role="tabpanel"]',
+  '[role="toolbar"]',
+  // Dropdown menus
+  '.dropdown',
+  '.w-dropdown',
+  '[data-dropdown]',
+  'details',
+  // Embedded content
+  'iframe',
+  'object',
+  'embed',
+  // Common custom widget patterns
+  '[data-widget]',
+  '.custom-select',
+  '.accordion',
+  '.carousel',
+  '.slider',
+  '.modal:not([aria-modal="true"])',
+  '.popup',
+  '.tooltip[tabindex]',
+].join(', ');
+
+/**
+ * Detect keyboard traps on a page.
+ *
+ * Tests each candidate element by:
+ * 1. Focusing the first tabbable child
+ * 2. Pressing Tab repeatedly
+ * 3. Checking if focus stays within the element's subtree
+ *
+ * A trap is detected when focus cycles within a subset of elements
+ * without being able to escape. Does NOT flag elements with
+ * `role="dialog"` and `aria-modal="true"` (intentional focus trapping).
+ */
+export async function detectKeyboardTraps(
+  page: Page,
+  options?: TrapCheckOptions,
+): Promise<TrapDetectionResult> {
+  const maxTabsPerElement = options?.maxTabsPerElement ?? 50;
+  const traps: KeyboardTrap[] = [];
+  let totalTabs = 0;
+
+  // Find candidate elements to test
+  const candidateSelectors = options?.targetSelectors ?? await findTrapCandidates(page);
+
+  for (const containerSelector of candidateSelectors) {
+    const result = await testElementForTrap(page, containerSelector, maxTabsPerElement);
+    totalTabs += result.tabsUsed;
+
+    if (result.trap) {
+      traps.push(result.trap);
+    }
+  }
+
+  return { traps, totalTabs };
+}
+
+/**
+ * Find elements on the page that are candidates for keyboard trap testing.
+ */
+async function findTrapCandidates(page: Page): Promise<string[]> {
+  return page.evaluate((selector) => {
+    const elements = document.querySelectorAll(selector);
+    const selectors: string[] = [];
+
+    for (const el of elements) {
+      // Skip modal dialogs with intentional focus trapping
+      if (
+        el.getAttribute("role") === "dialog" &&
+        el.getAttribute("aria-modal") === "true"
+      ) {
+        continue;
+      }
+
+      // Skip hidden elements
+      const style = window.getComputedStyle(el as HTMLElement);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+
+      // Build a selector for this element
+      let sel: string;
+      if (el.id) {
+        sel = `#${CSS.escape(el.id)}`;
+      } else {
+        const parts: string[] = [];
+        let current: Element | null = el;
+        while (current && current !== document.documentElement) {
+          let part = current.tagName.toLowerCase();
+          if (current.id) {
+            parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
+            break;
+          }
+          const parent: Element | null = current.parentElement;
+          if (parent) {
+            const currentTag = current.tagName;
+            const siblings = Array.from(parent.children).filter(
+              (c: Element) => c.tagName === currentTag,
+            );
+            if (siblings.length > 1) {
+              const index = siblings.indexOf(current) + 1;
+              part += `:nth-of-type(${index})`;
+            }
+          }
+          parts.unshift(part);
+          current = parent;
+        }
+        sel = parts.join(" > ");
+      }
+
+      selectors.push(sel);
+    }
+
+    return selectors;
+  }, TRAP_CANDIDATE_SELECTORS);
+}
+
+/**
+ * Test a single element for a keyboard trap by tabbing through its children.
+ */
+async function testElementForTrap(
+  page: Page,
+  containerSelector: string,
+  maxTabs: number,
+): Promise<{ trap: KeyboardTrap | null; tabsUsed: number }> {
+  let tabsUsed = 0;
+
+  // Check if the element exists and has tabbable children
+  const containerHandle = await page.$(containerSelector);
+  if (!containerHandle) {
+    return { trap: null, tabsUsed: 0 };
+  }
+
+  // Determine the trap context
+  const trapContext = await containerHandle.evaluate((el) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "iframe" || tag === "object" || tag === "embed") return "iframe";
+    const role = el.getAttribute("role");
+    if (role === "menu" || role === "listbox" || el.classList.contains("dropdown") ||
+        el.classList.contains("w-dropdown") || el.hasAttribute("data-dropdown") ||
+        tag === "details") return "dropdown";
+    return "custom_widget";
+  }) as KeyboardTrap["trapContext"];
+
+  // For iframes, test by focusing the iframe and trying to Tab out
+  if (trapContext === "iframe") {
+    const trap = await testIframeForTrap(page, containerSelector, containerHandle, maxTabs);
+    await containerHandle.dispose();
+    return { trap, tabsUsed: maxTabs };
+  }
+
+  // Find the first tabbable element inside the container
+  const firstTabbable = await page.evaluate((sel) => {
+    const container = document.querySelector(sel);
+    if (!container) return null;
+
+    const tabbable = container.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+      'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+
+    if (tabbable.length === 0) return null;
+
+    // Focus the first tabbable element
+    (tabbable[0] as HTMLElement).focus();
+    return true;
+  }, containerSelector);
+
+  await containerHandle.dispose();
+
+  if (!firstTabbable) {
+    return { trap: null, tabsUsed: 0 };
+  }
+
+  // Now tab through and track if focus stays inside the container
+  const focusedInContainer: Map<string, { tagName: string; role: string | null }> = new Map();
+  let consecutiveInsideCount = 0;
+  let cycleDetected = false;
+  const seenSequence: string[] = [];
+
+  for (let i = 0; i < maxTabs; i++) {
+    const info = await getFocusedElementInfo(page);
+    tabsUsed++;
+
+    if (!info) {
+      // Focus left the page — not trapped
+      break;
+    }
+
+    // Check if focused element is inside the container
+    const isInside = await page.evaluate(
+      ({ sel, focusedSel }) => {
+        const container = document.querySelector(sel);
+        const focused = document.querySelector(focusedSel);
+        if (!container || !focused) return false;
+        return container.contains(focused);
+      },
+      { sel: containerSelector, focusedSel: info.selector },
+    );
+
+    if (isInside) {
+      consecutiveInsideCount++;
+      focusedInContainer.set(info.selector, {
+        tagName: info.tagName,
+        role: info.role,
+      });
+      seenSequence.push(info.selector);
+
+      // Check for cycle: if we've seen the same sequence of selectors repeat
+      if (seenSequence.length >= 4) {
+        const cycleLen = detectCycleInSequence(seenSequence);
+        if (cycleLen > 0 && cycleLen < seenSequence.length) {
+          cycleDetected = true;
+          break;
+        }
+      }
+    } else {
+      // Focus escaped the container — not trapped
+      break;
+    }
+
+    await page.keyboard.press("Tab");
+  }
+
+  if (cycleDetected && focusedInContainer.size >= 1) {
+    const elementsInCycle = Array.from(focusedInContainer.entries()).map(
+      ([selector, info]) => ({
+        selector,
+        tagName: info.tagName,
+        role: info.role,
+      }),
+    );
+
+    return {
+      trap: {
+        elementsInCycle,
+        tabsBeforeDetected: tabsUsed,
+        containerSelector,
+        trapContext,
+      },
+      tabsUsed,
+    };
+  }
+
+  return { trap: null, tabsUsed };
+}
+
+/**
+ * Test an iframe for keyboard trapping.
+ */
+async function testIframeForTrap(
+  page: Page,
+  containerSelector: string,
+  handle: ElementHandle,
+  maxTabs: number,
+): Promise<KeyboardTrap | null> {
+  // Focus the iframe
+  try {
+    await handle.focus();
+  } catch {
+    return null;
+  }
+
+  // Tab within the iframe and check if focus can escape
+  for (let i = 0; i < maxTabs; i++) {
+    await page.keyboard.press("Tab");
+
+    const isStillInIframe = await page.evaluate((sel) => {
+      const iframe = document.querySelector(sel);
+      const active = document.activeElement;
+      if (!iframe || !active) return false;
+      return active === iframe || iframe.contains(active);
+    }, containerSelector);
+
+    if (!isStillInIframe) {
+      // Focus escaped — not trapped
+      return null;
+    }
+  }
+
+  // If we exhausted maxTabs and focus is still in the iframe, it's a trap
+  const outerHtml = await handle.evaluate((el) => {
+    const html = (el as HTMLElement).outerHTML;
+    return html.length > 500 ? html.slice(0, 500) + "..." : html;
+  });
+
+  return {
+    elementsInCycle: [{
+      selector: containerSelector,
+      tagName: "iframe",
+      role: null,
+    }],
+    tabsBeforeDetected: maxTabs,
+    containerSelector,
+    trapContext: "iframe",
+  };
+}
+
+/**
+ * Detect a repeating cycle in a sequence of selectors.
+ * Returns the cycle length if found, 0 otherwise.
+ */
+function detectCycleInSequence(sequence: string[]): number {
+  const len = sequence.length;
+
+  // Try cycle lengths from 1 to half the sequence length
+  for (let cycleLen = 1; cycleLen <= Math.floor(len / 2); cycleLen++) {
+    let isCycle = true;
+
+    // Check if the last `cycleLen` elements match the previous `cycleLen` elements
+    for (let j = 0; j < cycleLen; j++) {
+      if (sequence[len - 1 - j] !== sequence[len - 1 - cycleLen - j]) {
+        isCycle = false;
+        break;
+      }
+    }
+
+    if (isCycle) {
+      return cycleLen;
+    }
+  }
+
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Trap CheckResult generation (C2-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run keyboard trap detection and produce CheckResults.
+ *
+ * Each detected trap produces a CheckResult for WCAG 2.1.2 (No Keyboard Trap).
+ */
+export async function runTrapChecks(
+  page: Page,
+  options?: TrapCheckOptions,
+): Promise<CheckResult[]> {
+  const { traps, totalTabs } = await detectKeyboardTraps(page, options);
+
+  return traps.map((trap) => ({
+    element_selector: trap.containerSelector ?? trap.elementsInCycle[0].selector,
+    element_html: trap.elementsInCycle.map((e) => e.selector).join(", "),
+    wcag_criterion: "2.1.2",
+    detected_by: "playwright" as const,
+    raw_result: {
+      type: "keyboard_trap",
+      trapContext: trap.trapContext,
+      elementsInCycle: trap.elementsInCycle,
+      tabsBeforeDetected: trap.tabsBeforeDetected,
+      containerSelector: trap.containerSelector,
+    },
+    measured_values: {
+      elements_in_cycle: trap.elementsInCycle.length,
+      tabs_before_detected: trap.tabsBeforeDetected,
+      trap_context: trap.trapContext,
+      total_detection_tabs: totalTabs,
+    },
+  }));
+}

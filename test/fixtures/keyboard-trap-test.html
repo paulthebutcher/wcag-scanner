@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keyboard Trap Test Fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .widget { border: 2px solid #ccc; padding: 15px; margin: 20px 0; }
+    button { padding: 8px 16px; margin: 5px; }
+    input { padding: 8px; margin: 5px; }
+
+    /* Custom dropdown that traps focus */
+    .trapped-dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .trapped-dropdown .dropdown-content {
+      display: block;
+      border: 1px solid #ddd;
+      padding: 10px;
+    }
+
+    /* Modal dialog with intentional focus trapping (should NOT be flagged) */
+    .modal-overlay {
+      display: none; /* Not visible by default */
+    }
+  </style>
+</head>
+<body>
+  <h1>Keyboard Trap Test Page</h1>
+
+  <p>This page has elements that trap keyboard focus.</p>
+
+  <a href="/">Home</a>
+  <button id="btn-before">Before Widget</button>
+
+  <!-- TRAP: Custom widget that cycles focus among its children -->
+  <div class="widget" role="toolbar" id="trapped-widget">
+    <button id="tool-bold" tabindex="0"
+      onkeydown="if(event.key==='Tab'){event.preventDefault();document.getElementById(event.shiftKey?'tool-italic':'tool-italic').focus();}">
+      Bold
+    </button>
+    <button id="tool-italic" tabindex="0"
+      onkeydown="if(event.key==='Tab'){event.preventDefault();document.getElementById(event.shiftKey?'tool-bold':'tool-bold').focus();}">
+      Italic
+    </button>
+  </div>
+
+  <button id="btn-between">Between Widgets</button>
+
+  <!-- TRAP: Dropdown menu that prevents Tab from leaving -->
+  <div class="trapped-dropdown dropdown" id="trapped-dropdown">
+    <button id="dropdown-trigger" tabindex="0"
+      onkeydown="if(event.key==='Tab'){event.preventDefault();document.getElementById('dropdown-item-1').focus();}">
+      Menu
+    </button>
+    <div class="dropdown-content">
+      <a href="#" id="dropdown-item-1" tabindex="0"
+        onkeydown="if(event.key==='Tab'){event.preventDefault();document.getElementById('dropdown-item-2').focus();}">
+        Item 1
+      </a>
+      <a href="#" id="dropdown-item-2" tabindex="0"
+        onkeydown="if(event.key==='Tab'){event.preventDefault();document.getElementById('dropdown-trigger').focus();}">
+        Item 2
+      </a>
+    </div>
+  </div>
+
+  <button id="btn-after">After Widgets</button>
+
+  <!-- NOT A TRAP: Modal dialog with intentional focus trapping (aria-modal="true") -->
+  <div role="dialog" aria-modal="true" class="modal-overlay" id="modal-dialog">
+    <h2>Modal Dialog</h2>
+    <button id="modal-close">Close</button>
+    <input type="text" id="modal-input" placeholder="Enter text">
+  </div>
+
+  <!-- NOT A TRAP: Normal widget that allows Tab to escape -->
+  <div class="widget" role="toolbar" id="safe-widget">
+    <button id="safe-bold">Bold</button>
+    <button id="safe-italic">Italic</button>
+    <button id="safe-underline">Underline</button>
+  </div>
+
+  <footer>
+    <a href="/privacy">Privacy</a>
+  </footer>
+</body>
+</html>
