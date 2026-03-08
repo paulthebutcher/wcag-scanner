@@ -24,3 +24,11 @@ export {
   type NavigationMethod,
   type NavigationType,
 } from "./multiple-ways.js";
+
+export {
+  checkOnInput,
+  surfaceErrorQualityFindings,
+  evaluateErrorQuality,
+  type InputStateChange,
+  type StateChangeType,
+} from "./on-input.js";
