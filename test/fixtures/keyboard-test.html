@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keyboard Test Fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .skip-link { position: absolute; left: -9999px; }
+    .skip-link:focus { left: 10px; top: 10px; }
+    nav { background: #333; padding: 10px; }
+    nav a { color: white; margin-right: 15px; text-decoration: none; }
+    .content { margin: 20px 0; }
+    button { padding: 8px 16px; margin: 5px; }
+    input { padding: 8px; margin: 5px; }
+    /* Unreachable element: visible but uses JS onclick only, no href, not a button */
+    .fake-button {
+      display: inline-block;
+      padding: 8px 16px;
+      background: #007bff;
+      color: white;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    /* Hidden element — should NOT be flagged as unreachable */
+    .hidden-element { display: none; }
+    .visually-hidden { visibility: hidden; }
+    .zero-size { width: 0; height: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
+  <nav>
+    <a href="/">Home</a>
+    <a href="/about">About</a>
+    <a href="/contact">Contact</a>
+  </nav>
+
+  <main id="main" class="content">
+    <h1>Keyboard Navigation Test</h1>
+
+    <p>This page tests keyboard accessibility.</p>
+
+    <button id="btn-submit" type="button">Submit</button>
+    <button id="btn-cancel" type="button">Cancel</button>
+
+    <form>
+      <label for="name">Name:</label>
+      <input type="text" id="name" name="name">
+      <label for="email">Email:</label>
+      <input type="email" id="email" name="email">
+      <button type="submit">Send</button>
+    </form>
+
+    <!-- Unreachable: div with role="button" but no tabindex -->
+    <div class="fake-button" role="button" onclick="alert('clicked')">Click Me</div>
+
+    <!-- Another unreachable: span with onclick handler -->
+    <span role="link" onclick="location='/page'" style="cursor:pointer;color:blue;text-decoration:underline;">Go to Page</span>
+
+    <!-- These should NOT be flagged (hidden/disabled) -->
+    <button class="hidden-element">Hidden Button</button>
+    <button class="visually-hidden">Invisible Button</button>
+    <input type="text" disabled value="Disabled input">
+    <a href="/hidden" class="hidden-element">Hidden Link</a>
+
+    <!-- Element explicitly removed from tab order — should NOT be flagged -->
+    <button tabindex="-1">Removed from tab order</button>
+
+    <footer>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </footer>
+  </main>
+</body>
+</html>
