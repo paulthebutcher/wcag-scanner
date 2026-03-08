@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Focus Visible Test Fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; background: #ffffff; }
+
+    /* Good focus: default browser outline */
+    .good-focus {
+      padding: 8px 16px;
+      margin: 5px;
+    }
+
+    /* Bad focus: outline removed, no replacement */
+    .no-focus-indicator {
+      padding: 8px 16px;
+      margin: 5px;
+      outline: none;
+    }
+    .no-focus-indicator:focus {
+      outline: none;
+    }
+
+    /* Low contrast focus indicator */
+    .low-contrast-focus {
+      padding: 8px 16px;
+      margin: 5px;
+      outline: none;
+      background: #f0f0f0;
+    }
+    .low-contrast-focus:focus {
+      outline: 1px solid #e0e0e0; /* Very low contrast against white background */
+    }
+
+    /* Good custom focus indicator */
+    .custom-focus {
+      padding: 8px 16px;
+      margin: 5px;
+      outline: none;
+    }
+    .custom-focus:focus {
+      outline: 3px solid #0066cc; /* High contrast blue */
+      outline-offset: 2px;
+    }
+
+    nav { margin: 20px 0; }
+    nav a {
+      color: #333;
+      text-decoration: none;
+      margin-right: 15px;
+      padding: 4px 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Focus Visibility Test</h1>
+
+  <nav>
+    <a href="/" class="good-focus" id="link-good">Home</a>
+    <a href="/about" class="no-focus-indicator" id="link-no-focus">About</a>
+    <a href="/contact" class="custom-focus" id="link-custom">Contact</a>
+  </nav>
+
+  <button id="btn-default" class="good-focus">Default Button</button>
+  <button id="btn-no-focus" class="no-focus-indicator">No Focus Indicator</button>
+  <button id="btn-low-contrast" class="low-contrast-focus">Low Contrast Focus</button>
+  <button id="btn-custom" class="custom-focus">Custom Focus</button>
+
+  <input type="text" id="input-default" class="good-focus" placeholder="Default input">
+</body>
+</html>
