@@ -126,14 +126,14 @@ const CRITERION_CATEGORIES: Record<string, Category> = {
   "1.3.2": "structure",
   "1.3.3": "structure",
   "1.3.4": "structure",
-  "1.3.5": "forms",
+  "1.3.5": "structure",
   // 1.4.x — contrast / distinguishable
   "1.4.1": "contrast",
-  "1.4.2": "semantics",
+  "1.4.2": "contrast",
   "1.4.3": "contrast",
   "1.4.4": "contrast",
   "1.4.5": "contrast",
-  "1.4.10": "structure",
+  "1.4.10": "contrast",
   "1.4.11": "contrast",
   "1.4.12": "contrast",
   "1.4.13": "contrast",
@@ -146,27 +146,27 @@ const CRITERION_CATEGORIES: Record<string, Category> = {
   "2.2.2": "keyboard",
   // 2.3.x — seizures (contrast-adjacent)
   "2.3.1": "contrast",
-  // 2.4.x — navigable (keyboard/structure)
+  // 2.4.x — navigable (keyboard)
   "2.4.1": "keyboard",
-  "2.4.2": "semantics",
+  "2.4.2": "keyboard",
   "2.4.3": "keyboard",
-  "2.4.4": "semantics",
+  "2.4.4": "keyboard",
   "2.4.5": "keyboard",
-  "2.4.6": "semantics",
+  "2.4.6": "keyboard",
   "2.4.7": "keyboard",
   // 2.5.x — input modalities
   "2.5.1": "keyboard",
   "2.5.2": "keyboard",
-  "2.5.3": "aria",
+  "2.5.3": "keyboard",
   "2.5.4": "keyboard",
-  // 3.1.x — readable (semantics)
-  "3.1.1": "semantics",
-  "3.1.2": "semantics",
-  // 3.2.x — predictable (semantics)
-  "3.2.1": "semantics",
-  "3.2.2": "semantics",
-  "3.2.3": "semantics",
-  "3.2.4": "semantics",
+  // 3.1.x — readable (forms)
+  "3.1.1": "forms",
+  "3.1.2": "forms",
+  // 3.2.x — predictable (forms)
+  "3.2.1": "forms",
+  "3.2.2": "forms",
+  "3.2.3": "forms",
+  "3.2.4": "forms",
   // 3.3.x — input assistance (forms)
   "3.3.1": "forms",
   "3.3.2": "forms",
@@ -210,10 +210,26 @@ export function mapCriterionToLevel(wcagCriterion: string): WcagLevel {
 
 /**
  * Map a WCAG criterion code to its finding category.
- * Defaults to "semantics" for unknown criteria.
+ * Uses exact match first, then prefix-based fallback:
+ * 1.1.x→images, 1.3.x→structure, 1.4.x→contrast, 2.1.x→keyboard,
+ * 2.4.x→keyboard, 3.x→forms, 4.1.x→aria.
+ * Defaults to "semantics" only for truly unknown criteria.
  */
 export function mapCriterionToCategory(wcagCriterion: string): Category {
-  return CRITERION_CATEGORIES[wcagCriterion] ?? "semantics";
+  // Exact match first
+  const exact = CRITERION_CATEGORIES[wcagCriterion];
+  if (exact) return exact;
+
+  // Prefix-based fallback for unmapped criteria
+  if (wcagCriterion.startsWith("1.1.")) return "images";
+  if (wcagCriterion.startsWith("1.3.")) return "structure";
+  if (wcagCriterion.startsWith("1.4.")) return "contrast";
+  if (wcagCriterion.startsWith("2.1.")) return "keyboard";
+  if (wcagCriterion.startsWith("2.4.")) return "keyboard";
+  if (wcagCriterion.startsWith("3.")) return "forms";
+  if (wcagCriterion.startsWith("4.1.")) return "aria";
+
+  return "semantics";
 }
 
 /**

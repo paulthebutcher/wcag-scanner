@@ -106,23 +106,52 @@ describe("mapCriterionToLevel", () => {
 // ---------------------------------------------------------------------------
 
 describe("mapCriterionToCategory", () => {
-  it('maps 1.1.1 to "images"', () => {
+  it('maps 1.1.x to "images"', () => {
     expect(mapCriterionToCategory("1.1.1")).toBe("images");
   });
 
-  it('maps 2.1.1 to "keyboard"', () => {
+  it('maps 1.3.x to "structure"', () => {
+    expect(mapCriterionToCategory("1.3.1")).toBe("structure");
+    expect(mapCriterionToCategory("1.3.5")).toBe("structure");
+  });
+
+  it('maps 1.4.x to "contrast"', () => {
+    expect(mapCriterionToCategory("1.4.3")).toBe("contrast");
+    expect(mapCriterionToCategory("1.4.11")).toBe("contrast");
+  });
+
+  it('maps 2.1.x to "keyboard"', () => {
     expect(mapCriterionToCategory("2.1.1")).toBe("keyboard");
   });
 
-  it('maps 3.3.1 to "forms"', () => {
+  it('maps 2.4.x to "keyboard" (not "semantics")', () => {
+    expect(mapCriterionToCategory("2.4.2")).toBe("keyboard");
+    expect(mapCriterionToCategory("2.4.4")).toBe("keyboard");
+    expect(mapCriterionToCategory("2.4.6")).toBe("keyboard");
+    expect(mapCriterionToCategory("2.4.7")).toBe("keyboard");
+  });
+
+  it('maps 3.x to "forms"', () => {
+    expect(mapCriterionToCategory("3.1.1")).toBe("forms");
+    expect(mapCriterionToCategory("3.2.1")).toBe("forms");
     expect(mapCriterionToCategory("3.3.1")).toBe("forms");
   });
 
-  it('maps 4.1.2 to "aria"', () => {
+  it('maps 4.1.x to "aria"', () => {
     expect(mapCriterionToCategory("4.1.2")).toBe("aria");
   });
 
-  it('defaults to "semantics" for unknown criterion', () => {
+  it("uses prefix-based fallback for unmapped criteria", () => {
+    expect(mapCriterionToCategory("1.1.99")).toBe("images");
+    expect(mapCriterionToCategory("1.3.99")).toBe("structure");
+    expect(mapCriterionToCategory("1.4.99")).toBe("contrast");
+    expect(mapCriterionToCategory("2.1.99")).toBe("keyboard");
+    expect(mapCriterionToCategory("2.4.99")).toBe("keyboard");
+    expect(mapCriterionToCategory("3.5.1")).toBe("forms");
+    expect(mapCriterionToCategory("4.1.99")).toBe("aria");
+  });
+
+  it('defaults to "semantics" for truly unknown criterion', () => {
     expect(mapCriterionToCategory("99.99.99")).toBe("semantics");
   });
 });
@@ -152,6 +181,20 @@ describe("mapToSeverity", () => {
     expect(mapToSeverity("playwright", {})).toBe("major");
     expect(mapToSeverity("claude_api", {})).toBe("major");
     expect(mapToSeverity("manual", {})).toBe("major");
+  });
+
+  it("produces varied severities given mixed axe-core impacts", () => {
+    const impacts = ["minor", "moderate", "serious", "critical"] as const;
+    const expected = ["minor", "minor", "major", "critical"] as const;
+
+    const results = impacts.map((impact) =>
+      mapToSeverity("axe_core", { impact }),
+    );
+
+    expect(results).toEqual([...expected]);
+    // Verify we have at least 3 distinct severity values
+    const unique = new Set(results);
+    expect(unique.size).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -460,6 +503,68 @@ describe("createFindings", () => {
     expect(findings[0].evidence.element_selector).toBe("img.a");
     expect(findings[1].evidence.element_selector).toBe("img.b");
     expect(findings[2].evidence.element_selector).toBe("a.link");
+  });
+
+  it("produces correct varied severities from mixed axe-core impacts", async () => {
+    const results: CheckResult[] = [
+      makeCheckResult({ element_selector: "img.a", raw_result: { impact: "critical" } }),
+      makeCheckResult({ element_selector: "img.b", raw_result: { impact: "serious" } }),
+      makeCheckResult({ element_selector: "img.c", raw_result: { impact: "moderate" } }),
+      makeCheckResult({ element_selector: "img.d", raw_result: { impact: "minor" } }),
+    ];
+
+    const findings = await createFindings(results, {
+      scanSessionId,
+      pageSnapshotId,
+      interactionStateId: null,
+      platform: "webflow",
+      failureType: "test",
+      fullPageScreenshot: null,
+      boundingBox: null,
+      db,
+      fileStore,
+    });
+
+    expect(findings).toHaveLength(4);
+    expect(findings[0].severity).toBe("critical");
+    expect(findings[1].severity).toBe("major");
+    expect(findings[2].severity).toBe("minor");
+    expect(findings[3].severity).toBe("minor");
+
+    // Verify we have at least 3 distinct severities
+    const severities = new Set(findings.map((f) => f.severity));
+    expect(severities.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it("assigns correct categories for different WCAG criteria", async () => {
+    const results: CheckResult[] = [
+      makeCheckResult({ element_selector: "img.a", wcag_criterion: "1.1.1" }),
+      makeCheckResult({ element_selector: "div.b", wcag_criterion: "1.3.1" }),
+      makeCheckResult({ element_selector: "span.c", wcag_criterion: "1.4.3" }),
+      makeCheckResult({ element_selector: "a.d", wcag_criterion: "2.4.4" }),
+      makeCheckResult({ element_selector: "input.e", wcag_criterion: "3.3.1" }),
+      makeCheckResult({ element_selector: "div.f", wcag_criterion: "4.1.2" }),
+    ];
+
+    const findings = await createFindings(results, {
+      scanSessionId,
+      pageSnapshotId,
+      interactionStateId: null,
+      platform: "webflow",
+      failureType: "test",
+      fullPageScreenshot: null,
+      boundingBox: null,
+      db,
+      fileStore,
+    });
+
+    expect(findings).toHaveLength(6);
+    expect(findings[0].category).toBe("images");     // 1.1.1
+    expect(findings[1].category).toBe("structure");   // 1.3.1
+    expect(findings[2].category).toBe("contrast");    // 1.4.3
+    expect(findings[3].category).toBe("keyboard");    // 2.4.4
+    expect(findings[4].category).toBe("forms");       // 3.3.1
+    expect(findings[5].category).toBe("aria");        // 4.1.2
   });
 
   it("isolates errors — one bad result does not fail the batch", async () => {

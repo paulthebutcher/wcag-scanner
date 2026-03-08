@@ -81,18 +81,6 @@ export function getWcagCriterion(tags: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Severity mapping (exported for testing)
-// ---------------------------------------------------------------------------
-
-/**
- * Map axe-core impact to our Severity enum.
- */
-export function mapAxeImpact(impact: string | null | undefined): CheckResult["raw_result"] & { impact?: string } {
-  // We store the impact in raw_result for later use by evidence.ts mapToSeverity()
-  return { impact: impact ?? undefined };
-}
-
-// ---------------------------------------------------------------------------
 // Node → CheckResult mapping (exported for testing)
 // ---------------------------------------------------------------------------
 
