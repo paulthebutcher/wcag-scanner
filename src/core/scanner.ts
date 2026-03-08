@@ -46,6 +46,16 @@ import { runLinkTextChecks } from "../checks/semantic/link-text.js";
 import { runHeadingChecks } from "../checks/semantic/headings.js";
 import { runConsistentNavChecks } from "../checks/semantic/consistent-nav.js";
 import { createPromptRunner, type PromptRunner } from "./prompt-runner.js";
+// Form checks (Tier 4)
+import { discoverForms } from "../checks/forms/discovery.js";
+import { testFormSubmission } from "../checks/forms/submission.js";
+import type { SubmissionState } from "../checks/forms/submission.js";
+import { evaluateErrorMessages, evaluateInputPurpose } from "../checks/forms/error-evaluation.js";
+import { evaluateHighRiskForms } from "../checks/forms/high-risk.js";
+// Indicator checks (Tier 5)
+import { checkPauseStopHide, checkThreeFlashes } from "../checks/indicators/pause-stop-hide.js";
+import { checkMultipleWays, checkMotionActuation } from "../checks/indicators/multiple-ways.js";
+import { checkOnInput, surfaceErrorQualityFindings } from "../checks/indicators/on-input.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -320,7 +330,7 @@ export async function scan(
     }
 
     // --- Browser setup (shared by Tier 1 and Tier 2) --------------------------
-    const needsBrowser = tiers.includes(1) || tiers.includes(2);
+    const needsBrowser = tiers.includes(1) || tiers.includes(2) || tiers.includes(4);
     const ownBrowser = needsBrowser && !browser;
     if (needsBrowser && !browser) {
       browser = await chromium.launch({ headless: true });
@@ -621,12 +631,260 @@ export async function scan(
           reporter.complete("semantic", `Semantic checks complete: ${semanticCount} finding(s)`);
         }
       }
+
+      // --- Phase 6: Tier 4 — Form checks ----------------------------------------
+      if (tiers.includes(4)) {
+        reporter.update("forms", "Running form checks...");
+        let formCount = 0;
+
+        // Tier 4 needs a PromptRunner for error evaluation + input purpose
+        const formRunner = options.promptRunner ?? (() => {
+          const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+          if (!apiKey) {
+            reporter.warn("forms", "Skipping Tier 4 LLM checks: no ANTHROPIC_API_KEY available");
+            return null;
+          }
+          return createPromptRunner(apiKey, { concurrency: options.concurrency ?? 5 });
+        })();
+
+        // Collect all submission states for Tier 5 error quality indicators
+        const allSubmissionStates: SubmissionState[] = [];
+
+        for (const snapshot of pageSnapshots) {
+          try {
+            // 4a: Discover forms from DOM
+            const forms = discoverForms(snapshot);
+            reporter.update("forms", `${snapshot.url}: discovered ${forms.length} form(s)`);
+
+            if (forms.length === 0) continue;
+
+            // 4b: High-risk form evaluation (LLM)
+            if (formRunner) {
+              try {
+                const highRiskResults = await evaluateHighRiskForms(forms, formRunner);
+                if (highRiskResults.length > 0) {
+                  const findings = await processCheckResults(highRiskResults, {
+                    scanId,
+                    pageSnapshotId: snapshot.id,
+                    platform: scanSession.platform,
+                    failureType: "high_risk_form",
+                    fullPageScreenshot: null,
+                    db,
+                    fileStore,
+                  });
+                  allFindings.push(...findings);
+                  formCount += findings.length;
+                }
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                reporter.warn("forms", `High-risk evaluation failed for ${snapshot.url}: ${msg}`);
+              }
+            }
+
+            // 4c: Form submission + error evaluation (needs browser)
+            if (context) {
+              for (const form of forms) {
+                const page = await context.newPage();
+                try {
+                  await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
+                  const fullScreenshot = await page.screenshot({ fullPage: true });
+
+                  // Test form submission
+                  const { states, results: submissionResults } = await testFormSubmission(page, form);
+                  allSubmissionStates.push(...states);
+
+                  if (submissionResults.length > 0) {
+                    const findings = await processCheckResults(submissionResults, {
+                      scanId,
+                      pageSnapshotId: snapshot.id,
+                      platform: scanSession.platform,
+                      failureType: "form_submission",
+                      fullPageScreenshot: fullScreenshot,
+                      db,
+                      fileStore,
+                    });
+                    allFindings.push(...findings);
+                    formCount += findings.length;
+                  }
+
+                  // Error message evaluation (LLM)
+                  if (formRunner && states.length > 0) {
+                    try {
+                      const errorResults = await evaluateErrorMessages(states, formRunner);
+                      if (errorResults.length > 0) {
+                        const findings = await processCheckResults(errorResults, {
+                          scanId,
+                          pageSnapshotId: snapshot.id,
+                          platform: scanSession.platform,
+                          failureType: "error_message",
+                          fullPageScreenshot: fullScreenshot,
+                          db,
+                          fileStore,
+                        });
+                        allFindings.push(...findings);
+                        formCount += findings.length;
+                      }
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      reporter.warn("forms", `Error evaluation failed for ${snapshot.url}: ${msg}`);
+                    }
+                  }
+
+                  // Input purpose evaluation (LLM)
+                  if (formRunner) {
+                    try {
+                      const purposeResults = await evaluateInputPurpose(form, formRunner);
+                      if (purposeResults.length > 0) {
+                        const findings = await processCheckResults(purposeResults, {
+                          scanId,
+                          pageSnapshotId: snapshot.id,
+                          platform: scanSession.platform,
+                          failureType: "input_purpose",
+                          fullPageScreenshot: fullScreenshot,
+                          db,
+                          fileStore,
+                        });
+                        allFindings.push(...findings);
+                        formCount += findings.length;
+                      }
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      reporter.warn("forms", `Input purpose check failed for ${snapshot.url}: ${msg}`);
+                    }
+                  }
+
+                  // On-input state changes (3.2.2)
+                  try {
+                    const { results: onInputResults } = await checkOnInput(page, form);
+                    if (onInputResults.length > 0) {
+                      const findings = await processCheckResults(onInputResults, {
+                        scanId,
+                        pageSnapshotId: snapshot.id,
+                        platform: scanSession.platform,
+                        failureType: "on_input",
+                        fullPageScreenshot: fullScreenshot,
+                        db,
+                        fileStore,
+                      });
+                      allFindings.push(...findings);
+                      formCount += findings.length;
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    reporter.warn("forms", `On-input check failed for ${snapshot.url}: ${msg}`);
+                  }
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  reporter.warn("forms", `Form submission failed for ${snapshot.url}: ${msg}`);
+                } finally {
+                  await page.close();
+                }
+              }
+            }
+
+            reporter.update("forms", `${snapshot.url}: ${formCount} finding(s) so far`);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("forms", `Form discovery failed for ${snapshot.url}: ${msg}`);
+          }
+        }
+
+        // Error quality indicators from submission states (Tier 5 cross-reference)
+        if (allSubmissionStates.length > 0) {
+          try {
+            const qualityResults = surfaceErrorQualityFindings(allSubmissionStates);
+            if (qualityResults.length > 0) {
+              const findings = await processCheckResults(qualityResults, {
+                scanId,
+                pageSnapshotId: pageSnapshots[0].id,
+                platform: scanSession.platform,
+                failureType: "error_quality",
+                fullPageScreenshot: null,
+                db,
+                fileStore,
+              });
+              allFindings.push(...findings);
+              formCount += findings.length;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("forms", `Error quality check failed: ${msg}`);
+          }
+        }
+
+        reporter.complete("forms", `Form checks complete: ${formCount} finding(s)`);
+      }
+
+      // --- Phase 7: Tier 5 — Indicator checks -----------------------------------
+      if (tiers.includes(5)) {
+        reporter.update("indicators", "Running indicator checks...");
+        let indicatorCount = 0;
+
+        for (const snapshot of pageSnapshots) {
+          const pageResults: CheckResult[] = [];
+
+          // 5a: Pause, stop, hide (2.2.2)
+          try {
+            const pshResults = checkPauseStopHide(snapshot);
+            pageResults.push(...pshResults);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("indicators", `Pause/stop/hide failed for ${snapshot.url}: ${msg}`);
+          }
+
+          // 5b: Three flashes (2.3.1)
+          try {
+            const flashResults = checkThreeFlashes(snapshot);
+            pageResults.push(...flashResults);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("indicators", `Three flashes check failed for ${snapshot.url}: ${msg}`);
+          }
+
+          // 5c: Multiple ways (2.4.5)
+          try {
+            const mwResults = checkMultipleWays(snapshot);
+            pageResults.push(...mwResults);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("indicators", `Multiple ways check failed for ${snapshot.url}: ${msg}`);
+          }
+
+          // 5d: Motion actuation (2.5.4)
+          try {
+            const motionResults = checkMotionActuation(snapshot);
+            pageResults.push(...motionResults);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("indicators", `Motion actuation check failed for ${snapshot.url}: ${msg}`);
+          }
+
+          // Process indicator results
+          if (pageResults.length > 0) {
+            const findings = await processCheckResults(pageResults, {
+              scanId,
+              pageSnapshotId: snapshot.id,
+              platform: scanSession.platform,
+              failureType: "indicator",
+              fullPageScreenshot: null,
+              db,
+              fileStore,
+            });
+            allFindings.push(...findings);
+            indicatorCount += findings.length;
+          }
+
+          reporter.update("indicators", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+        }
+
+        reporter.complete("indicators", `Indicator checks complete: ${indicatorCount} finding(s)`);
+      }
     } finally {
       if (context) await context.close();
       if (ownBrowser && browser) await browser.close();
     }
 
-    // --- Phase 6: Compute summary ---------------------------------------------
+    // --- Phase 8: Compute summary ---------------------------------------------
     const summary = computeSummary(scanId, allFindings, allCriterionResults);
     upsertScanSummary(db, summary);
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { config as dotenvConfig } from "dotenv";
+dotenvConfig();
+
 import { Command } from "commander";
 import { createScanCommand } from "./commands/scan.js";
 import { createReportCommand } from "./commands/report.js";
