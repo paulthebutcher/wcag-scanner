@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { createScanCommand } from "./commands/scan.js";
 import { createReportCommand } from "./commands/report.js";
+import { createReviewCommand } from "./commands/review.js";
 
 const program = new Command();
 
@@ -12,7 +13,6 @@ program
 
 program.addCommand(createScanCommand());
 program.addCommand(createReportCommand());
-
-// TODO: add review command
+program.addCommand(createReviewCommand());
 
 program.parse();
