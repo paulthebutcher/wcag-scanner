@@ -1,2 +1,12 @@
-// TODO: C3-05, C3-06, C3-07
-export {};
+export {
+  checkPauseStopHide,
+  checkThreeFlashes,
+  detectCSSAnimations,
+  detectCarousels,
+  detectGIFs,
+  detectVideos,
+  findPauseMechanisms,
+  type AnimatedElement,
+  type AnimationType,
+  type PauseMechanism,
+} from "./pause-stop-hide.js";
