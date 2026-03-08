@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skip Navigation Test Fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 0; }
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      z-index: 1000;
+    }
+    .skip-link:focus {
+      left: 0;
+      background: #000;
+      color: #fff;
+      padding: 8px 16px;
+    }
+    nav { background: #333; padding: 10px; }
+    nav a { color: #fff; margin: 0 10px; }
+    main { padding: 20px; }
+    footer { background: #eee; padding: 10px; }
+  </style>
+</head>
+<body>
+  <!-- Skip navigation link targeting main content -->
+  <a href="#main-content" class="skip-link" id="skip-link">Skip to main content</a>
+
+  <nav>
+    <a href="/">Home</a>
+    <a href="/about">About</a>
+    <a href="/contact">Contact</a>
+  </nav>
+
+  <main id="main-content" tabindex="-1">
+    <h1>Page Content</h1>
+    <p>This is the main content area.</p>
+    <button id="action-btn">Action</button>
+  </main>
+
+  <footer>
+    <a href="/privacy">Privacy</a>
+  </footer>
+</body>
+</html>
