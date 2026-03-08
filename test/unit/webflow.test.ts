@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   WebflowAdapter,
   hasWebflowGenerator,
@@ -6,7 +6,18 @@ import {
   hasWebflowScripts,
   hasWebflowDomain,
   hasWebflowDataAttributes,
+  getCachedRemediation,
+  setCachedRemediation,
+  clearRemediationCache,
+  getTemplateKey,
+  getTemplateCount,
+  generateLlmRemediation,
+  verifyRemediation,
+  type RemediationOutput,
+  type VerificationOutput,
 } from "../../src/adapters/webflow.js";
+import type { Finding, PlatformFix } from "../../src/types.js";
+import type { PromptRunner, PromptResult } from "../../src/core/prompt-runner.js";
 
 // ---------------------------------------------------------------------------
 // Fixture DOMs
@@ -314,28 +325,330 @@ describe("WebflowAdapter", () => {
   // getRemediationSteps()
   // -----------------------------------------------------------------------
   describe("getRemediationSteps", () => {
-    it("returns stub PlatformFix with webflow platform", () => {
-      const mockFinding = {
-        id: "test-id",
-        page_snapshot_id: "ps-1",
-        interaction_state_id: null,
-        wcag_criterion: "1.1.1",
-        wcag_level: "A" as const,
-        severity: "major" as const,
-        category: "images" as const,
-        finding_type_hash: "abc",
-        evidence: {} as any,
-        analysis: {} as any,
-        confidence: {} as any,
-        remediation: {} as any,
-        human_review: null,
-      };
+    beforeEach(() => { clearRemediationCache(); });
 
-      const fix = adapter.getRemediationSteps(mockFinding);
+    it("returns template-based fix for missing_alt finding", () => {
+      const finding = makeFinding("1.1.1", "missing_alt", "hash-alt");
+      const fix = adapter.getRemediationSteps(finding);
       expect(fix.platform).toBe("webflow");
-      expect(fix.steps).toEqual([]);
+      expect(fix.platform_version).toBe("2024.1");
       expect(fix.generated_by).toBe("template");
-      expect(fix.platform_docs_url).toBeNull();
+      expect(fix.steps.length).toBeGreaterThan(0);
+      expect(fix.designer_path).toContain("Alt Text");
     });
+
+    it("returns template-based fix for insufficient_contrast", () => {
+      const finding = makeFinding("1.4.3", "insufficient_contrast", "hash-contrast");
+      const fix = adapter.getRemediationSteps(finding);
+      expect(fix.steps.length).toBeGreaterThan(0);
+      expect(fix.designer_path).toContain("Style panel");
+    });
+
+    it("returns generic fallback for unknown failure type", () => {
+      const finding = makeFinding("9.9.9", "unknown_failure", "hash-unknown");
+      const fix = adapter.getRemediationSteps(finding);
+      expect(fix.platform).toBe("webflow");
+      expect(fix.platform_version).toBe("2024.1");
+      expect(fix.steps.length).toBeGreaterThan(0);
+      expect(fix.steps[0]).toContain("9.9.9");
+      expect(fix.designer_path).toContain("Custom Attributes");
+    });
+
+    it("returns generic fallback when no failure_type in evidence", () => {
+      const finding = makeFinding("1.1.1", undefined, "hash-no-ft");
+      const fix = adapter.getRemediationSteps(finding);
+      expect(fix.platform).toBe("webflow");
+      expect(fix.steps[0]).toContain("1.1.1");
+    });
+
+    it("caches result by finding_type_hash", () => {
+      const finding = makeFinding("2.4.7", "no_focus_indicator", "hash-focus");
+      const fix1 = adapter.getRemediationSteps(finding);
+      const fix2 = adapter.getRemediationSteps(finding);
+      expect(fix1).toBe(fix2); // same reference from cache
+      expect(getCachedRemediation("hash-focus")).toBe(fix1);
+    });
+
+    it("returns cached result even with different finding", () => {
+      const finding1 = makeFinding("2.4.7", "no_focus_indicator", "hash-shared");
+      const fix1 = adapter.getRemediationSteps(finding1);
+
+      const finding2 = makeFinding("1.1.1", "missing_alt", "hash-shared");
+      const fix2 = adapter.getRemediationSteps(finding2);
+      expect(fix1).toBe(fix2); // same hash → same cached result
+    });
+
+    it("includes steps for skip_link template", () => {
+      const finding = makeFinding("2.4.1", "missing_skip_link", "hash-skip");
+      const fix = adapter.getRemediationSteps(finding);
+      expect(fix.steps.some(s => s.includes("Link Block"))).toBe(true);
+    });
+
+    it("includes platform_version on all returned fixes", () => {
+      const templates = [
+        makeFinding("1.1.1", "missing_alt", "h1"),
+        makeFinding("2.4.7", "no_focus_indicator", "h2"),
+        makeFinding("3.1.1", "missing_lang", "h3"),
+        makeFinding("9.9.9", "unknown", "h4"),
+      ];
+      for (const f of templates) {
+        const fix = adapter.getRemediationSteps(f);
+        expect(fix.platform_version).toBe("2024.1");
+      }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper for creating mock findings
+// ---------------------------------------------------------------------------
+
+function makeFinding(
+  criterion: string,
+  failureType: string | undefined,
+  hash: string,
+): Finding {
+  return {
+    id: `f-${hash}`,
+    page_snapshot_id: "ps-1",
+    interaction_state_id: null,
+    wcag_criterion: criterion,
+    wcag_level: "A",
+    severity: "major",
+    category: "images",
+    finding_type_hash: hash,
+    evidence: {
+      element_selector: "#el",
+      element_html: '<img src="photo.jpg">',
+      element_screenshot: "",
+      element_computed_styles: {},
+      context_screenshot: "",
+      measured_values: failureType ? { failure_type: failureType } : {},
+      keyboard_sequence: null,
+      aria_attributes: {},
+      detected_by: "axe_core",
+    },
+    analysis: {
+      method: "rule_based",
+      reasoning: "Test reasoning",
+      llm_input: null,
+      llm_output: null,
+      impact_description: "Test impact",
+      affected_users: ["screen_reader"],
+    },
+    confidence: { score: 0.95, tier: "definitive", basis: "axe", requires_human: false, false_positive_risk: "low" },
+    remediation: {
+      generic_fix: "Fix it",
+      platform_fix: { platform: "webflow", platform_version: "", steps: [], designer_path: "", screenshots: [], generated_by: "template", platform_docs_url: null },
+      code_fix: null,
+      estimated_effort: "trivial",
+      fix_verified: false,
+    },
+    human_review: null,
+  };
+}
+
+// Mock PromptRunner
+function createMockRunner(responses: Map<string, PromptResult>): PromptRunner {
+  const runPrompt = vi.fn(async (input: { template: { name: string }; userMessage: string }) => {
+    const key = input.template.name;
+    return responses.get(key) ?? { success: false, data: null, rawResponse: "", model: "test", tokensUsed: 0, latencyMs: 0, retries: 0, error: "no mock" };
+  });
+  return { runPrompt, runPrompts: vi.fn(), flushBatch: vi.fn(), getBatchQueueSize: vi.fn(() => 0), getConfig: vi.fn() } as unknown as PromptRunner;
+}
+
+// ---------------------------------------------------------------------------
+// Remediation cache tests
+// ---------------------------------------------------------------------------
+
+describe("remediation cache", () => {
+  beforeEach(() => { clearRemediationCache(); });
+
+  it("setCachedRemediation / getCachedRemediation round-trips", () => {
+    const fix: PlatformFix = {
+      platform: "webflow", platform_version: "2024.1", steps: ["Step 1"],
+      designer_path: "path", screenshots: [], generated_by: "template", platform_docs_url: null,
+    };
+    setCachedRemediation("hash-a", fix);
+    expect(getCachedRemediation("hash-a")).toBe(fix);
+  });
+
+  it("returns undefined for missing cache entry", () => {
+    expect(getCachedRemediation("nonexistent")).toBeUndefined();
+  });
+
+  it("clearRemediationCache removes all entries", () => {
+    setCachedRemediation("hash-a", {} as PlatformFix);
+    clearRemediationCache();
+    expect(getCachedRemediation("hash-a")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Template key + count tests
+// ---------------------------------------------------------------------------
+
+describe("getTemplateKey", () => {
+  it("returns criterion:failure_type for finding with failure_type", () => {
+    const f = makeFinding("1.1.1", "missing_alt", "h1");
+    expect(getTemplateKey(f)).toBe("1.1.1:missing_alt");
+  });
+
+  it("returns null when no failure_type in measured_values", () => {
+    const f = makeFinding("1.1.1", undefined, "h1");
+    expect(getTemplateKey(f)).toBeNull();
+  });
+});
+
+describe("getTemplateCount", () => {
+  it("has at least 15 templates", () => {
+    expect(getTemplateCount()).toBeGreaterThanOrEqual(15);
+  });
+
+  it("has exactly 20 templates", () => {
+    expect(getTemplateCount()).toBe(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateLlmRemediation tests
+// ---------------------------------------------------------------------------
+
+describe("generateLlmRemediation", () => {
+  beforeEach(() => { clearRemediationCache(); });
+
+  it("calls Prompt 12 and returns PlatformFix", async () => {
+    const llmResult: PromptResult<RemediationOutput> = {
+      success: true,
+      data: {
+        generic_fix: "Add alt text",
+        platform_steps: ["Step A", "Step B"],
+        designer_path: "Element Settings → Alt Text",
+        code_fix: null,
+        estimated_effort: "trivial",
+        fix_category: "attribute",
+        platform_docs_url: "https://docs.example.com",
+      },
+      rawResponse: "{}", model: "sonnet", tokensUsed: 300, latencyMs: 200, retries: 0,
+    };
+    const runner = createMockRunner(new Map([["remediation_generation", llmResult as PromptResult]]));
+
+    const finding = makeFinding("1.1.1", "missing_alt", "hash-llm-1");
+    const fix = await generateLlmRemediation(finding, runner);
+
+    expect(runner.runPrompt).toHaveBeenCalledTimes(1);
+    expect(fix.platform).toBe("webflow");
+    expect(fix.platform_version).toBe("2024.1");
+    expect(fix.generated_by).toBe("llm");
+    expect(fix.steps).toEqual(["Step A", "Step B"]);
+    expect(fix.designer_path).toBe("Element Settings → Alt Text");
+    expect(fix.platform_docs_url).toBe("https://docs.example.com");
+  });
+
+  it("caches LLM result by finding_type_hash", async () => {
+    const llmResult: PromptResult<RemediationOutput> = {
+      success: true,
+      data: {
+        generic_fix: "Fix", platform_steps: ["S1"], code_fix: null,
+        estimated_effort: "minor", fix_category: "attribute",
+      },
+      rawResponse: "{}", model: "sonnet", tokensUsed: 300, latencyMs: 200, retries: 0,
+    };
+    const runner = createMockRunner(new Map([["remediation_generation", llmResult as PromptResult]]));
+
+    const finding = makeFinding("2.4.7", "no_focus_indicator", "hash-llm-cache");
+    await generateLlmRemediation(finding, runner);
+
+    const cached = getCachedRemediation("hash-llm-cache");
+    expect(cached).toBeDefined();
+    expect(cached!.generated_by).toBe("llm");
+  });
+
+  it("returns cached LLM result without calling API", async () => {
+    setCachedRemediation("hash-llm-cached", {
+      platform: "webflow", platform_version: "2024.1", steps: ["Cached"],
+      designer_path: "cached", screenshots: [], generated_by: "llm", platform_docs_url: null,
+    });
+
+    const runner = createMockRunner(new Map());
+    const finding = makeFinding("1.1.1", "missing_alt", "hash-llm-cached");
+    const fix = await generateLlmRemediation(finding, runner);
+
+    expect(runner.runPrompt).not.toHaveBeenCalled();
+    expect(fix.steps).toEqual(["Cached"]);
+  });
+
+  it("falls back to template on LLM failure", async () => {
+    const failResult: PromptResult = {
+      success: false, data: null, rawResponse: "", model: "sonnet",
+      tokensUsed: 0, latencyMs: 0, retries: 2, error: "API error",
+    };
+    const runner = createMockRunner(new Map([["remediation_generation", failResult]]));
+
+    const finding = makeFinding("1.1.1", "missing_alt", "hash-llm-fail");
+    const fix = await generateLlmRemediation(finding, runner);
+
+    expect(fix.platform).toBe("webflow");
+    expect(fix.generated_by).toBe("template");
+    expect(fix.steps.length).toBeGreaterThan(0);
+  });
+
+  it("includes platform context in user message", async () => {
+    const llmResult: PromptResult<RemediationOutput> = {
+      success: true,
+      data: {
+        generic_fix: "Fix", platform_steps: ["S1"], code_fix: null,
+        estimated_effort: "minor", fix_category: "attribute",
+      },
+      rawResponse: "{}", model: "sonnet", tokensUsed: 300, latencyMs: 200, retries: 0,
+    };
+    const runner = createMockRunner(new Map([["remediation_generation", llmResult as PromptResult]]));
+
+    const finding = makeFinding("1.1.1", "missing_alt", "hash-llm-ctx");
+    await generateLlmRemediation(finding, runner, "## Custom Context");
+
+    const call = (runner.runPrompt as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.userMessage).toContain("## Custom Context");
+    expect(call.userMessage).toContain("1.1.1");
+    expect(call.userMessage).toContain("webflow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyRemediation tests
+// ---------------------------------------------------------------------------
+
+describe("verifyRemediation", () => {
+  it("calls Prompt 13 and returns verification result", async () => {
+    const verifyResult: PromptResult<VerificationOutput> = {
+      success: true,
+      data: {
+        fix_applied: true, violation_resolved: true, confidence: 0.95,
+        reasoning: "Alt text added correctly", remaining_issues: [], new_issues_introduced: [],
+      },
+      rawResponse: "{}", model: "sonnet", tokensUsed: 200, latencyMs: 150, retries: 0,
+    };
+    const runner = createMockRunner(new Map([["remediation_verification", verifyResult as PromptResult]]));
+
+    const finding = makeFinding("1.1.1", "missing_alt", "hash-verify");
+    const result = await verifyRemediation(finding, "Added alt text", '<img alt="Photo">', runner);
+
+    expect(result).not.toBeNull();
+    expect(result!.fix_applied).toBe(true);
+    expect(result!.violation_resolved).toBe(true);
+    expect(result!.confidence).toBe(0.95);
+  });
+
+  it("returns null on verification failure", async () => {
+    const failResult: PromptResult = {
+      success: false, data: null, rawResponse: "", model: "sonnet",
+      tokensUsed: 0, latencyMs: 0, retries: 2, error: "API error",
+    };
+    const runner = createMockRunner(new Map([["remediation_verification", failResult]]));
+
+    const finding = makeFinding("1.1.1", "missing_alt", "hash-verify-fail");
+    const result = await verifyRemediation(finding, "Added alt", '<img alt="Photo">', runner);
+
+    expect(result).toBeNull();
   });
 });
