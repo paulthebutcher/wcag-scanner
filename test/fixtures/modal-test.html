@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modal Focus Management Test Fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 20px; }
+    h1 { margin-top: 0; }
+
+    /* Modal overlay styles */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.show {
+      display: flex;
+    }
+    .modal-content {
+      background: #fff;
+      padding: 24px;
+      border-radius: 8px;
+      max-width: 500px;
+      width: 90%;
+    }
+
+    /* Good modal: traps focus, Escape closes, focus returns */
+    #good-modal-content [role="dialog"] {
+      outline: none;
+    }
+
+    /* Bad modal: no focus management at all */
+
+    /* IX2-style modal */
+    .ix2-modal-wrapper {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .ix2-modal-wrapper.show {
+      display: flex;
+    }
+
+    /* Native dialog styling */
+    dialog {
+      border: 2px solid #333;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 500px;
+    }
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    .triggers { display: flex; gap: 10px; margin: 20px 0; flex-wrap: wrap; }
+    button { padding: 8px 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Modal Test Fixture</h1>
+
+  <div class="triggers">
+    <!-- Good modal trigger: aria-haspopup, proper focus management -->
+    <button
+      id="good-trigger"
+      aria-haspopup="dialog"
+      aria-controls="good-modal"
+    >Open Good Modal</button>
+
+    <!-- Bad modal trigger: no focus management -->
+    <button
+      id="bad-trigger"
+      aria-haspopup="dialog"
+      aria-controls="bad-modal"
+    >Open Bad Modal</button>
+
+    <!-- IX2 trigger: Webflow-style with data-w-id -->
+    <button
+      id="ix2-trigger"
+      data-w-id="abc-123-ix2"
+      data-modal-trigger
+      role="button"
+    >Open IX2 Modal</button>
+
+    <!-- Native dialog trigger -->
+    <button
+      id="dialog-trigger"
+      aria-controls="native-dialog"
+    >Open Native Dialog</button>
+  </div>
+
+  <p>Some page content here. <a href="#" id="page-link">A link on the page</a>.</p>
+
+  <!-- GOOD MODAL: proper focus trap, Escape closes, focus returns -->
+  <div id="good-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Good Modal">
+    <div class="modal-content">
+      <h2>Good Modal</h2>
+      <p>This modal traps focus, closes on Escape, and returns focus.</p>
+      <input type="text" id="good-input" placeholder="Type here">
+      <button id="good-close">Close</button>
+    </div>
+  </div>
+
+  <!-- BAD MODAL: has role="dialog" but no focus management -->
+  <div id="bad-modal" class="modal-overlay" role="dialog" aria-label="Bad Modal">
+    <div class="modal-content">
+      <h2>Bad Modal</h2>
+      <p>This modal has no focus management at all.</p>
+      <input type="text" id="bad-input" placeholder="Type here">
+      <button id="bad-close">Close</button>
+    </div>
+  </div>
+
+  <!-- IX2 MODAL: Webflow-style overlay -->
+  <div class="ix2-modal-wrapper" data-w-id="modal-wrapper-ix2" role="dialog" aria-modal="true" aria-label="IX2 Modal">
+    <div class="modal-content">
+      <h2>IX2 Modal</h2>
+      <p>A Webflow IX2-style modal.</p>
+      <button id="ix2-close">Close</button>
+      <a href="#" id="ix2-link">Modal link</a>
+    </div>
+  </div>
+
+  <!-- NATIVE DIALOG -->
+  <dialog id="native-dialog">
+    <h2>Native Dialog</h2>
+    <p>This uses the HTML dialog element with showModal().</p>
+    <input type="text" id="dialog-input" placeholder="Type here">
+    <button id="dialog-close">Close Dialog</button>
+  </dialog>
+
+  <footer>
+    <a href="/privacy">Privacy</a>
+  </footer>
+
+  <script>
+    // --- Good Modal ---
+    const goodTrigger = document.getElementById('good-trigger');
+    const goodModal = document.getElementById('good-modal');
+    const goodClose = document.getElementById('good-close');
+    const goodInput = document.getElementById('good-input');
+
+    goodTrigger.addEventListener('click', () => {
+      goodModal.classList.add('show');
+      // Move focus into modal
+      goodInput.focus();
+    });
+
+    goodClose.addEventListener('click', () => {
+      goodModal.classList.remove('show');
+      goodTrigger.focus();
+    });
+
+    // Focus trapping in good modal
+    goodModal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        goodModal.classList.remove('show');
+        goodTrigger.focus();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusable = goodModal.querySelectorAll('input, button, a, [tabindex]');
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
+    // --- Bad Modal: opens but no focus management ---
+    const badTrigger = document.getElementById('bad-trigger');
+    const badModal = document.getElementById('bad-modal');
+    const badClose = document.getElementById('bad-close');
+
+    badTrigger.addEventListener('click', () => {
+      badModal.classList.add('show');
+      // NO focus movement — focus stays on trigger
+    });
+
+    badClose.addEventListener('click', () => {
+      badModal.classList.remove('show');
+      // NO focus return
+    });
+
+    // NO Escape key handler, NO focus trapping
+
+    // --- IX2 Modal ---
+    const ix2Trigger = document.getElementById('ix2-trigger');
+    const ix2Wrapper = document.querySelector('.ix2-modal-wrapper');
+    const ix2Close = document.getElementById('ix2-close');
+
+    ix2Trigger.addEventListener('click', () => {
+      ix2Wrapper.classList.add('show');
+      ix2Close.focus(); // Focus moves in
+    });
+
+    ix2Close.addEventListener('click', () => {
+      ix2Wrapper.classList.remove('show');
+      ix2Trigger.focus();
+    });
+
+    // Focus trapping in IX2 modal
+    ix2Wrapper.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ix2Wrapper.classList.remove('show');
+        ix2Trigger.focus();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusable = ix2Wrapper.querySelectorAll('button, a, input, [tabindex]');
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
+    // --- Native Dialog ---
+    const dialogTrigger = document.getElementById('dialog-trigger');
+    const nativeDialog = document.getElementById('native-dialog');
+    const dialogClose = document.getElementById('dialog-close');
+
+    dialogTrigger.addEventListener('click', () => {
+      nativeDialog.showModal(); // Native dialog handles focus trapping + Escape
+    });
+
+    dialogClose.addEventListener('click', () => {
+      nativeDialog.close();
+      dialogTrigger.focus();
+    });
+
+    // Native dialog handles Escape natively via close event
+    nativeDialog.addEventListener('close', () => {
+      dialogTrigger.focus();
+    });
+  </script>
+</body>
+</html>
