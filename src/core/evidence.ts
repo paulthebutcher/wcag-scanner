@@ -233,15 +233,27 @@ export function mapCriterionToCategory(wcagCriterion: string): Category {
 }
 
 /**
- * Map axe-core impact to our Severity enum.
- * For non-axe detections, defaults to "major".
+ * Map detection results to our Severity enum using tier-specific rules.
+ *
+ * - Tier 1 (axe-core):  violation.impact → critical/major/minor/minor
+ * - Tier 2 (behavioral): wcag_criterion → critical/major/minor per criterion
+ * - Tier 3 (semantic):   Claude confidence → major/minor/advisory
+ * - Tier 4 (forms):      failureType + issue → critical/major/minor
+ * - Tier 5 (indicators): always advisory
  */
 export function mapToSeverity(
   detectedBy: DetectedBy,
   rawResult: unknown,
+  failureType?: string,
+  wcagCriterion?: string,
 ): Severity {
-  if (detectedBy === "axe_core" && rawResult && typeof rawResult === "object") {
-    const impact = (rawResult as Record<string, unknown>).impact as string | undefined;
+  const raw = (rawResult && typeof rawResult === "object")
+    ? rawResult as Record<string, unknown>
+    : undefined;
+
+  // --- Tier 1: axe-core — use impact directly ---
+  if (detectedBy === "axe_core" && raw) {
+    const impact = raw.impact as string | undefined;
     switch (impact) {
       case "critical":
         return "critical";
@@ -255,6 +267,62 @@ export function mapToSeverity(
         return "major";
     }
   }
+
+  // --- Tier 5: indicators — always advisory ---
+  if (failureType === "indicator" || failureType === "error_quality") {
+    return "advisory";
+  }
+
+  // --- Tier 4: forms — map by failureType and issue (before Tier 2 since forms also use playwright) ---
+  if (failureType === "high_risk_form") {
+    return "critical";
+  }
+  if (failureType === "form_submission") {
+    const issue = raw?.issue as string | undefined;
+    switch (issue) {
+      case "no_errors_on_required_fields":
+      case "error_not_associated":
+      case "color_only_indicator":
+      case "error_not_visible":
+      default:
+        return "major";
+    }
+  }
+  if (failureType === "error_message") {
+    return "major";
+  }
+  if (failureType === "input_purpose" || failureType === "on_input") {
+    return "minor";
+  }
+
+  // --- Tier 3: semantic (Claude API) — use confidence ---
+  if (detectedBy === "claude_api" && raw) {
+    const confidence = raw.confidence as number | undefined;
+    if (typeof confidence === "number") {
+      if (confidence > 0.85) return "major";
+      if (confidence >= 0.65) return "minor";
+      return "advisory";
+    }
+    // Semantic checks without confidence default to minor
+    return "minor";
+  }
+
+  // --- Tier 2: behavioral (playwright) — map by criterion ---
+  if (detectedBy === "playwright" && wcagCriterion) {
+    switch (wcagCriterion) {
+      case "2.1.1": // Keyboard accessible
+      case "2.1.2": // No keyboard trap
+        return "critical";
+      case "2.4.7": // Focus visible
+      case "2.4.1": // Bypass blocks (skip nav)
+        return "major";
+      case "2.4.3": // Focus order
+        return "minor";
+      default:
+        return "major";
+    }
+  }
+
   return "major";
 }
 
@@ -476,7 +544,12 @@ export async function createFinding(
     interaction_state_id: options.interactionStateId,
     wcag_criterion: checkResult.wcag_criterion,
     wcag_level: mapCriterionToLevel(checkResult.wcag_criterion),
-    severity: mapToSeverity(checkResult.detected_by, checkResult.raw_result),
+    severity: mapToSeverity(
+      checkResult.detected_by,
+      checkResult.raw_result,
+      options.failureType,
+      checkResult.wcag_criterion,
+    ),
     category: mapCriterionToCategory(checkResult.wcag_criterion),
     finding_type_hash: computeFindingTypeHash(
       checkResult.wcag_criterion,

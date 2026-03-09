@@ -161,6 +161,7 @@ describe("mapCriterionToCategory", () => {
 // ---------------------------------------------------------------------------
 
 describe("mapToSeverity", () => {
+  // --- Tier 1: axe-core ---
   it('maps axe-core "critical" impact to "critical"', () => {
     expect(mapToSeverity("axe_core", { impact: "critical" })).toBe("critical");
   });
@@ -177,12 +178,6 @@ describe("mapToSeverity", () => {
     expect(mapToSeverity("axe_core", { impact: "minor" })).toBe("minor");
   });
 
-  it('defaults to "major" for non-axe detection methods', () => {
-    expect(mapToSeverity("playwright", {})).toBe("major");
-    expect(mapToSeverity("claude_api", {})).toBe("major");
-    expect(mapToSeverity("manual", {})).toBe("major");
-  });
-
   it("produces varied severities given mixed axe-core impacts", () => {
     const impacts = ["minor", "moderate", "serious", "critical"] as const;
     const expected = ["minor", "minor", "major", "critical"] as const;
@@ -192,9 +187,95 @@ describe("mapToSeverity", () => {
     );
 
     expect(results).toEqual([...expected]);
-    // Verify we have at least 3 distinct severity values
     const unique = new Set(results);
     expect(unique.size).toBeGreaterThanOrEqual(3);
+  });
+
+  // --- Tier 2: behavioral (playwright) ---
+  it('maps keyboard unreachable (2.1.1) to "critical"', () => {
+    expect(mapToSeverity("playwright", {}, "behavioral", "2.1.1")).toBe("critical");
+  });
+
+  it('maps keyboard trap (2.1.2) to "critical"', () => {
+    expect(mapToSeverity("playwright", {}, "behavioral", "2.1.2")).toBe("critical");
+  });
+
+  it('maps focus visible (2.4.7) to "major"', () => {
+    expect(mapToSeverity("playwright", {}, "behavioral", "2.4.7")).toBe("major");
+  });
+
+  it('maps skip nav (2.4.1) to "major"', () => {
+    expect(mapToSeverity("playwright", {}, "behavioral", "2.4.1")).toBe("major");
+  });
+
+  it('maps focus order (2.4.3) to "minor"', () => {
+    expect(mapToSeverity("playwright", {}, "behavioral", "2.4.3")).toBe("minor");
+  });
+
+  // --- Tier 3: semantic (Claude API) ---
+  it('maps high confidence (>0.85) semantic to "major"', () => {
+    expect(mapToSeverity("claude_api", { confidence: 0.9 }, "semantic", "1.1.1")).toBe("major");
+  });
+
+  it('maps medium confidence (0.65-0.85) semantic to "minor"', () => {
+    expect(mapToSeverity("claude_api", { confidence: 0.75 }, "semantic", "2.4.4")).toBe("minor");
+  });
+
+  it('maps low confidence (<0.65) semantic to "advisory"', () => {
+    expect(mapToSeverity("claude_api", { confidence: 0.5 }, "semantic", "2.4.6")).toBe("advisory");
+  });
+
+  it('maps semantic without confidence to "minor"', () => {
+    expect(mapToSeverity("claude_api", {}, "semantic", "2.4.4")).toBe("minor");
+  });
+
+  // --- Tier 4: forms ---
+  it('maps high_risk_form to "critical"', () => {
+    expect(mapToSeverity("playwright", {}, "high_risk_form", "3.3.4")).toBe("critical");
+  });
+
+  it('maps form_submission with error_not_associated to "major"', () => {
+    expect(mapToSeverity("playwright", { issue: "error_not_associated" }, "form_submission", "3.3.1")).toBe("major");
+  });
+
+  it('maps form_submission with no_errors_on_required_fields to "major"', () => {
+    expect(mapToSeverity("playwright", { issue: "no_errors_on_required_fields" }, "form_submission", "3.3.1")).toBe("major");
+  });
+
+  it('maps input_purpose to "minor"', () => {
+    expect(mapToSeverity("playwright", {}, "input_purpose", "1.3.5")).toBe("minor");
+  });
+
+  it('maps on_input to "minor"', () => {
+    expect(mapToSeverity("playwright", {}, "on_input", "3.2.2")).toBe("minor");
+  });
+
+  it('maps error_message to "major"', () => {
+    expect(mapToSeverity("playwright", {}, "error_message", "3.3.1")).toBe("major");
+  });
+
+  // --- Tier 5: indicators ---
+  it('maps indicator to "advisory"', () => {
+    expect(mapToSeverity("manual", { verdict: "needs_review" }, "indicator", "2.4.6")).toBe("advisory");
+  });
+
+  it('maps error_quality to "advisory"', () => {
+    expect(mapToSeverity("claude_api", { confidence: 0.9 }, "error_quality", "3.3.3")).toBe("advisory");
+  });
+
+  // --- Cross-tier: verify severity diversity ---
+  it("produces all four severity levels across tiers", () => {
+    const severities = new Set([
+      mapToSeverity("axe_core", { impact: "critical" }),             // critical
+      mapToSeverity("axe_core", { impact: "serious" }),              // major
+      mapToSeverity("axe_core", { impact: "moderate" }),             // minor
+      mapToSeverity("manual", {}, "indicator", "2.4.6"),             // advisory
+    ]);
+    expect(severities.size).toBe(4);
+    expect(severities).toContain("critical");
+    expect(severities).toContain("major");
+    expect(severities).toContain("minor");
+    expect(severities).toContain("advisory");
   });
 });
 
