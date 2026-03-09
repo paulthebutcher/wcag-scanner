@@ -368,7 +368,7 @@ describe("scan (integration)", () => {
     expect(result.summary).toBeDefined();
   });
 
-  it("populates criterion results for passed checks", async () => {
+  it("populates criterion results for passed and failed checks", async () => {
     const result = await scan(
       {
         url: baseUrl,
@@ -379,13 +379,28 @@ describe("scan (integration)", () => {
       browser,
     );
 
-    // The about page has a proper lang attribute, so some criteria should pass
-    // At minimum, the fixture has valid heading and link text elements
-    expect(result.criterionResults.length).toBeGreaterThanOrEqual(0);
+    // Should have criterion results from axe-core passes + reconciliation
+    expect(result.criterionResults.length).toBeGreaterThanOrEqual(1);
 
+    // All criterion results should have valid status
     for (const cr of result.criterionResults) {
-      expect(cr.status).toBe("passed");
-      expect(cr.tested_by).toBe("axe_core");
+      expect(["passed", "failed", "not_applicable", "not_tested"]).toContain(cr.status);
+    }
+
+    // Criteria with findings should be marked "failed" (reconciliation)
+    const failedCriteria = new Set(result.findings.map((f) => f.wcag_criterion));
+    for (const criterion of failedCriteria) {
+      const cr = result.criterionResults.find((r) => r.wcag_criterion === criterion);
+      if (cr) {
+        expect(cr.status).toBe("failed");
+        expect(cr.finding_ids.length).toBeGreaterThan(0);
+      }
+    }
+
+    // Criteria that only passed should still be "passed"
+    const passedResults = result.criterionResults.filter((cr) => cr.status === "passed");
+    for (const cr of passedResults) {
+      expect(failedCriteria.has(cr.wcag_criterion)).toBe(false);
     }
   });
 

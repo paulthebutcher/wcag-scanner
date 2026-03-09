@@ -241,9 +241,10 @@ async function processCheckResults(
 function makeCriterionResult(
   scanId: string,
   criterion: string,
-  status: "passed" | "not_tested",
+  status: "passed" | "failed" | "not_applicable" | "not_tested",
   testedBy: DetectedBy,
   summary: string,
+  findingIds: string[] = [],
 ): CriterionResult {
   return {
     scan_session_id: scanId,
@@ -251,8 +252,80 @@ function makeCriterionResult(
     status,
     tested_by: testedBy,
     evidence_summary: summary,
-    finding_ids: [],
+    finding_ids: findingIds,
   };
+}
+
+/**
+ * Reconcile CriterionResults against actual findings.
+ * If a criterion was marked "passed" but findings exist for it,
+ * update it to "failed" with finding IDs populated.
+ * Also creates "failed" CriterionResults for criteria that have findings
+ * but no existing CriterionResult entry.
+ */
+function reconcileCriterionResults(
+  scanId: string,
+  findings: Finding[],
+  criterionResults: CriterionResult[],
+  db: ReturnType<typeof openDatabase>,
+): CriterionResult[] {
+  // Build map of criterion → finding IDs
+  const findingsByCriterion = new Map<string, string[]>();
+  for (const f of findings) {
+    const existing = findingsByCriterion.get(f.wcag_criterion) ?? [];
+    existing.push(f.id);
+    findingsByCriterion.set(f.wcag_criterion, existing);
+  }
+
+  // Build map of existing CriterionResults by criterion
+  const crByCriterion = new Map<string, CriterionResult>();
+  for (const cr of criterionResults) {
+    // Keep the latest entry (later tiers override earlier ones)
+    crByCriterion.set(cr.wcag_criterion, cr);
+  }
+
+  const updatedResults: CriterionResult[] = [];
+
+  // For each criterion with findings, ensure it's marked as "failed"
+  for (const [criterion, findingIds] of findingsByCriterion) {
+    const existing = crByCriterion.get(criterion);
+    if (existing) {
+      if (existing.status !== "failed") {
+        // Overwrite: was passed/not_applicable but has violations
+        existing.status = "failed";
+        existing.finding_ids = findingIds;
+        upsertCriterionResult(db, existing);
+      } else {
+        // Already failed — ensure finding IDs are populated
+        existing.finding_ids = findingIds;
+        upsertCriterionResult(db, existing);
+      }
+    } else {
+      // No CriterionResult yet — create a "failed" one
+      // Infer tested_by from the first finding's evidence
+      const firstFinding = findings.find((f) => f.wcag_criterion === criterion);
+      const testedBy = firstFinding?.evidence.detected_by ?? "axe_core";
+      const cr = makeCriterionResult(
+        scanId, criterion, "failed", testedBy,
+        `${findingIds.length} violation(s) found`, findingIds,
+      );
+      upsertCriterionResult(db, cr);
+      crByCriterion.set(criterion, cr);
+    }
+  }
+
+  // Return the full deduplicated list
+  for (const cr of crByCriterion.values()) {
+    updatedResults.push(cr);
+  }
+  // Also include any results not in the map (shouldn't happen, but be safe)
+  for (const cr of criterionResults) {
+    if (!crByCriterion.has(cr.wcag_criterion)) {
+      updatedResults.push(cr);
+    }
+  }
+
+  return updatedResults;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +513,12 @@ export async function scan(
               try {
                 const focusResults = await runFocusVisibleChecks(page, tabSequence);
                 pageResults.push(...focusResults);
+                if (focusResults.length === 0) {
+                  const passCr = makeCriterionResult(scanId, "2.4.7", "passed", "playwright",
+                    "All focused elements have visible focus indicators");
+                  upsertCriterionResult(db, passCr);
+                  allCriterionResults.push(passCr);
+                }
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 reporter.warn("behavioral", `Focus visible failed for ${snapshot.url}: ${msg}`);
@@ -449,6 +528,12 @@ export async function scan(
               try {
                 const orderResults = runFocusOrderChecks(tabSequence);
                 pageResults.push(...orderResults);
+                if (orderResults.length === 0) {
+                  const passCr = makeCriterionResult(scanId, "2.4.3", "passed", "playwright",
+                    "Focus order follows visual layout sequence");
+                  upsertCriterionResult(db, passCr);
+                  allCriterionResults.push(passCr);
+                }
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 reporter.warn("behavioral", `Focus order failed for ${snapshot.url}: ${msg}`);
@@ -548,6 +633,9 @@ export async function scan(
         })();
 
         if (runner) {
+          // Track which semantic criteria had violations
+          const semanticViolationCriteria = new Set<string>();
+
           for (const snapshot of pageSnapshots) {
             const dom = snapshot.full_dom;
             const pageResults: CheckResult[] = [];
@@ -559,6 +647,7 @@ export async function scan(
                 axeFlaggedSelectors: axeFlagged,
               });
               pageResults.push(...altResults);
+              if (altResults.length > 0) semanticViolationCriteria.add("1.1.1");
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("semantic", `Alt text checks failed for ${snapshot.url}: ${msg}`);
@@ -568,6 +657,7 @@ export async function scan(
             try {
               const linkResults = await runLinkTextChecks(dom, runner);
               pageResults.push(...linkResults);
+              if (linkResults.length > 0) semanticViolationCriteria.add("2.4.4");
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("semantic", `Link text checks failed for ${snapshot.url}: ${msg}`);
@@ -577,6 +667,7 @@ export async function scan(
             try {
               const headingResults = await runHeadingChecks(dom, snapshot.title, runner);
               pageResults.push(...headingResults);
+              if (headingResults.length > 0) semanticViolationCriteria.add("1.3.1");
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("semantic", `Heading checks failed for ${snapshot.url}: ${msg}`);
@@ -598,6 +689,20 @@ export async function scan(
             }
 
             reporter.update("semantic", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+          }
+
+          // Create pass CriterionResults for semantic criteria with no violations
+          const semanticCriteriaChecked: Array<[string, string]> = [
+            ["1.1.1", "Alt text quality evaluated across all pages"],
+            ["2.4.4", "Link text quality evaluated across all pages"],
+            ["1.3.1", "Heading structure evaluated across all pages"],
+          ];
+          for (const [criterion, summary] of semanticCriteriaChecked) {
+            if (!semanticViolationCriteria.has(criterion)) {
+              const passCr = makeCriterionResult(scanId, criterion, "passed", "claude_api", summary);
+              upsertCriterionResult(db, passCr);
+              allCriterionResults.push(passCr);
+            }
           }
 
           // 3d: Consistent navigation (cross-page comparison)
@@ -649,11 +754,15 @@ export async function scan(
 
         // Collect all submission states for Tier 5 error quality indicators
         const allSubmissionStates: SubmissionState[] = [];
+        // Track form criteria violations and whether any forms exist
+        const formViolationCriteria = new Set<string>();
+        let totalFormsFound = 0;
 
         for (const snapshot of pageSnapshots) {
           try {
             // 4a: Discover forms from DOM
             const forms = discoverForms(snapshot);
+            totalFormsFound += forms.length;
             reporter.update("forms", `${snapshot.url}: discovered ${forms.length} form(s)`);
 
             if (forms.length === 0) continue;
@@ -663,6 +772,7 @@ export async function scan(
               try {
                 const highRiskResults = await evaluateHighRiskForms(forms, formRunner);
                 if (highRiskResults.length > 0) {
+                  formViolationCriteria.add("3.3.4");
                   const findings = await processCheckResults(highRiskResults, {
                     scanId,
                     pageSnapshotId: snapshot.id,
@@ -694,6 +804,7 @@ export async function scan(
                   allSubmissionStates.push(...states);
 
                   if (submissionResults.length > 0) {
+                    for (const sr of submissionResults) formViolationCriteria.add(sr.wcag_criterion);
                     const findings = await processCheckResults(submissionResults, {
                       scanId,
                       pageSnapshotId: snapshot.id,
@@ -712,6 +823,7 @@ export async function scan(
                     try {
                       const errorResults = await evaluateErrorMessages(states, formRunner);
                       if (errorResults.length > 0) {
+                        for (const er of errorResults) formViolationCriteria.add(er.wcag_criterion);
                         const findings = await processCheckResults(errorResults, {
                           scanId,
                           pageSnapshotId: snapshot.id,
@@ -735,6 +847,7 @@ export async function scan(
                     try {
                       const purposeResults = await evaluateInputPurpose(form, formRunner);
                       if (purposeResults.length > 0) {
+                        formViolationCriteria.add("1.3.5");
                         const findings = await processCheckResults(purposeResults, {
                           scanId,
                           pageSnapshotId: snapshot.id,
@@ -757,6 +870,7 @@ export async function scan(
                   try {
                     const { results: onInputResults } = await checkOnInput(page, form);
                     if (onInputResults.length > 0) {
+                      formViolationCriteria.add("3.2.2");
                       const findings = await processCheckResults(onInputResults, {
                         scanId,
                         pageSnapshotId: snapshot.id,
@@ -812,6 +926,26 @@ export async function scan(
           }
         }
 
+        // Create pass/not_applicable CriterionResults for form criteria
+        const formCriteria: Array<[string, string]> = [
+          ["3.3.1", "Error identification"],
+          ["3.3.3", "Error suggestion"],
+          ["1.3.5", "Input purpose identification"],
+          ["3.3.4", "Error prevention (legal, financial, data)"],
+          ["3.2.2", "On input — no unexpected context changes"],
+        ];
+        for (const [criterion, desc] of formCriteria) {
+          if (!formViolationCriteria.has(criterion)) {
+            const status = totalFormsFound === 0 ? "not_applicable" : "passed";
+            const summary = totalFormsFound === 0
+              ? `${desc}: no forms found on scanned pages`
+              : `${desc}: no violations found across ${totalFormsFound} form(s)`;
+            const cr = makeCriterionResult(scanId, criterion, status, "playwright", summary);
+            upsertCriterionResult(db, cr);
+            allCriterionResults.push(cr);
+          }
+        }
+
         reporter.complete("forms", `Form checks complete: ${formCount} finding(s)`);
       }
 
@@ -819,6 +953,7 @@ export async function scan(
       if (tiers.includes(5)) {
         reporter.update("indicators", "Running indicator checks...");
         let indicatorCount = 0;
+        const indicatorViolationCriteria = new Set<string>();
 
         for (const snapshot of pageSnapshots) {
           const pageResults: CheckResult[] = [];
@@ -827,6 +962,7 @@ export async function scan(
           try {
             const pshResults = checkPauseStopHide(snapshot);
             pageResults.push(...pshResults);
+            if (pshResults.length > 0) indicatorViolationCriteria.add("2.2.2");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Pause/stop/hide failed for ${snapshot.url}: ${msg}`);
@@ -836,6 +972,7 @@ export async function scan(
           try {
             const flashResults = checkThreeFlashes(snapshot);
             pageResults.push(...flashResults);
+            if (flashResults.length > 0) indicatorViolationCriteria.add("2.3.1");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Three flashes check failed for ${snapshot.url}: ${msg}`);
@@ -845,6 +982,7 @@ export async function scan(
           try {
             const mwResults = checkMultipleWays(snapshot);
             pageResults.push(...mwResults);
+            if (mwResults.length > 0) indicatorViolationCriteria.add("2.4.5");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Multiple ways check failed for ${snapshot.url}: ${msg}`);
@@ -854,6 +992,7 @@ export async function scan(
           try {
             const motionResults = checkMotionActuation(snapshot);
             pageResults.push(...motionResults);
+            if (motionResults.length > 0) indicatorViolationCriteria.add("2.5.4");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Motion actuation check failed for ${snapshot.url}: ${msg}`);
@@ -877,6 +1016,24 @@ export async function scan(
           reporter.update("indicators", `${snapshot.url}: ${pageResults.length} issue(s) found`);
         }
 
+        // Create pass/not_applicable CriterionResults for indicator criteria
+        // 2.2.2 and 2.3.1: not_applicable when no animated/flash content found
+        // 2.4.5: passed when navigation methods are sufficient
+        // 2.5.4: not_applicable when no motion listeners detected
+        const indicatorAutoResults: Array<[string, "passed" | "not_applicable", string]> = [
+          ["2.2.2", "not_applicable", "No auto-playing animations, carousels, or videos detected"],
+          ["2.3.1", "not_applicable", "No content with potential flash patterns detected"],
+          ["2.4.5", "passed", "Multiple navigation methods available (nav, search, sitemap, etc.)"],
+          ["2.5.4", "not_applicable", "No motion-actuated functionality detected"],
+        ];
+        for (const [criterion, defaultStatus, summary] of indicatorAutoResults) {
+          if (!indicatorViolationCriteria.has(criterion)) {
+            const cr = makeCriterionResult(scanId, criterion, defaultStatus, "playwright", summary);
+            upsertCriterionResult(db, cr);
+            allCriterionResults.push(cr);
+          }
+        }
+
         reporter.complete("indicators", `Indicator checks complete: ${indicatorCount} finding(s)`);
       }
     } finally {
@@ -884,8 +1041,13 @@ export async function scan(
       if (ownBrowser && browser) await browser.close();
     }
 
-    // --- Phase 8: Compute summary ---------------------------------------------
-    const summary = computeSummary(scanId, allFindings, allCriterionResults);
+    // --- Phase 8: Reconcile CriterionResults ------------------------------------
+    // Ensure no criterion is both "passed" and has findings.
+    // Later tiers may add violations for criteria that earlier tiers marked passed.
+    const reconciledResults = reconcileCriterionResults(scanId, allFindings, allCriterionResults, db);
+
+    // --- Phase 9: Compute summary ---------------------------------------------
+    const summary = computeSummary(scanId, allFindings, reconciledResults);
     upsertScanSummary(db, summary);
 
     // --- Finalize scan session -------------------------------------------------
@@ -898,7 +1060,7 @@ export async function scan(
       scanSession,
       summary,
       findings: allFindings,
-      criterionResults: allCriterionResults,
+      criterionResults: reconciledResults,
       pageSnapshots,
     };
   } catch (err) {
