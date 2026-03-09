@@ -288,7 +288,8 @@ describe("renderHtmlReport", () => {
   it("includes executive summary with finding counts", () => {
     const html = renderHtmlReport(makeReportData());
     expect(html).toContain("Executive Summary");
-    expect(html).toContain("12"); // total findings
+    expect(html).toContain("12"); // total instances
+    expect(html).toContain("Total Instances");
     expect(html).toContain("4-8 hours");
   });
 
@@ -584,5 +585,175 @@ describe("renderHtmlReport failure types", () => {
     });
     const html = renderHtmlReport(data);
     expect(html).toContain("keyboard_trap");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clarified count tests
+// ---------------------------------------------------------------------------
+
+describe("renderHtmlReport clarified counts", () => {
+  it("shows issue types and total instances in summary", () => {
+    const data = makeReportData({
+      groups: [
+        makeGroup({ hash: "hash-1", instanceCount: 5, findings: Array(5).fill(null).map(() => makeFinding()) }),
+        makeGroup({ hash: "hash-2", instanceCount: 3, findings: Array(3).fill(null).map(() => makeFinding({ wcag_criterion: "2.4.7", finding_type_hash: "hash-2" })) }),
+      ],
+      summary: makeSummary({ total_findings: 8 }),
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("2 issue types (8 total instances)");
+  });
+
+  it("shows instance count and page count in finding group header", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        instanceCount: 4,
+        findings: [
+          makeFinding({ page_snapshot_id: "snap-1" }),
+          makeFinding({ page_snapshot_id: "snap-1" }),
+          makeFinding({ page_snapshot_id: "snap-2" }),
+          makeFinding({ page_snapshot_id: "snap-3" }),
+        ],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("4 instances across 3 pages");
+  });
+
+  it("omits page count when all instances are on one page", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        instanceCount: 2,
+        findings: [
+          makeFinding({ page_snapshot_id: "snap-1" }),
+          makeFinding({ page_snapshot_id: "snap-1" }),
+        ],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("2 instances");
+    expect(html).not.toContain("across");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Page-grouped view tests
+// ---------------------------------------------------------------------------
+
+describe("renderHtmlReport page-grouped view", () => {
+  it("includes Findings by Page section", () => {
+    const pageUrlMap = new Map([
+      ["snap-1", "https://example.com/"],
+      ["snap-2", "https://example.com/about"],
+    ]);
+    const data = makeReportData({
+      groups: [makeGroup({
+        findings: [
+          makeFinding({ page_snapshot_id: "snap-1" }),
+          makeFinding({ page_snapshot_id: "snap-2" }),
+        ],
+        instanceCount: 2,
+      })],
+    });
+    const html = renderHtmlReport(data, { pageUrlMap });
+    expect(html).toContain("Findings by Page");
+    expect(html).toContain("https://example.com/");
+    expect(html).toContain("https://example.com/about");
+  });
+
+  it("includes Findings by Type section after page view", () => {
+    const html = renderHtmlReport(makeReportData());
+    expect(html).toContain("Findings by Type");
+    expect(html).toContain("Findings by Page");
+    // Page view should appear before type view
+    const pageIdx = html.indexOf("Findings by Page");
+    const typeIdx = html.indexOf("Findings by Type");
+    expect(pageIdx).toBeLessThan(typeIdx);
+  });
+
+  it("shows issue count per page", () => {
+    const pageUrlMap = new Map([["snap-1", "https://example.com/"]]);
+    const data = makeReportData({
+      groups: [makeGroup({
+        findings: [
+          makeFinding({ page_snapshot_id: "snap-1" }),
+          makeFinding({ page_snapshot_id: "snap-1" }),
+          makeFinding({ page_snapshot_id: "snap-1" }),
+        ],
+        instanceCount: 3,
+      })],
+    });
+    const html = renderHtmlReport(data, { pageUrlMap });
+    expect(html).toContain("3 issues");
+  });
+
+  it("omits page-grouped view when no findings", () => {
+    const data = makeReportData({ groups: [] });
+    const html = renderHtmlReport(data);
+    expect(html).not.toContain("Findings by Page");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group remediation display tests
+// ---------------------------------------------------------------------------
+
+describe("renderHtmlReport group remediation", () => {
+  it("shows Webflow designer path in group header", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        instanceCount: 1,
+        findings: [makeFinding({
+          remediation: makeRemediation({
+            generic_fix: "Add alt text to the image",
+            platform_fix: makePlatformFix({
+              designer_path: "Element Settings (D) → Alt Text field",
+              steps: ["Select image", "Open Element Settings", "Add alt text"],
+            }),
+          }),
+        })],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("Element Settings (D)");
+    expect(html).toContain("Alt Text field");
+    expect(html).toContain("Webflow:");
+  });
+
+  it("shows platform-specific steps in collapsible section", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        instanceCount: 1,
+        findings: [makeFinding({
+          remediation: makeRemediation({
+            platform_fix: makePlatformFix({
+              steps: ["Step one", "Step two"],
+            }),
+          }),
+        })],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("Platform-specific steps");
+    expect(html).toContain("Step one");
+    expect(html).toContain("Step two");
+  });
+
+  it("shows code fix in collapsible section when available", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        instanceCount: 1,
+        findings: [makeFinding({
+          remediation: makeRemediation({
+            code_fix: '<script>document.documentElement.lang = "en";</script>',
+            platform_fix: makePlatformFix({ steps: ["Add code"] }),
+          }),
+        })],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("Code fix");
+    expect(html).toContain("document.documentElement.lang");
   });
 });

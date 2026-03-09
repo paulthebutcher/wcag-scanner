@@ -449,6 +449,14 @@ export function getTemplateCount(): number {
   return REMEDIATION_TEMPLATES.size;
 }
 
+/**
+ * Look up a remediation template by key (criterion:failure_type).
+ * Returns the template data if found, or undefined.
+ */
+export function getRemediationTemplate(key: string): RemediationTemplate | undefined {
+  return REMEDIATION_TEMPLATES.get(key);
+}
+
 // ---------------------------------------------------------------------------
 // LLM-based remediation (Prompt 12 + 13)
 // ---------------------------------------------------------------------------

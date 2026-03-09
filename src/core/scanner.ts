@@ -31,7 +31,7 @@ import { runAxeChecks } from "../checks/automated/index.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
 import { scoreConfidence } from "./confidence.js";
-import { WebflowAdapter } from "../adapters/webflow.js";
+import { WebflowAdapter, getRemediationTemplate } from "../adapters/webflow.js";
 import type { ProgressReporter } from "./progress.js";
 import { ScanProgressReporter } from "./progress.js";
 // Behavioral checks (Tier 2)
@@ -337,6 +337,47 @@ async function processCheckResults(
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[scanner] Analysis/scoring failed for ${finding.id}: ${msg}`);
       // Leave stub analysis/confidence in place — finding still valid
+    }
+  }
+
+  // 3. Generate platform-specific remediation (per unique finding_type_hash)
+  if (options.platform !== "unknown") {
+    const adapter = ADAPTERS.find(a => a.getPlatformInfo().platform === options.platform);
+    if (adapter) {
+      const processedHashes = new Set<string>();
+      for (const finding of findings) {
+        if (processedHashes.has(finding.finding_type_hash)) {
+          // Reuse cached remediation from adapter
+          const cached = adapter.getRemediationSteps(finding);
+          finding.remediation = {
+            generic_fix: finding.remediation.generic_fix || cached.steps[0] || "",
+            platform_fix: cached,
+            code_fix: finding.remediation.code_fix,
+            estimated_effort: finding.remediation.estimated_effort,
+            fix_verified: false,
+          };
+          updateFinding(options.db, finding.id, { remediation: finding.remediation });
+          continue;
+        }
+        try {
+          const platformFix = adapter.getRemediationSteps(finding);
+          // Look up template for generic_fix and code_fix
+          const templateKey = `${finding.wcag_criterion}:${(finding.evidence.measured_values?.failure_type as string) ?? ""}`;
+          const template = getRemediationTemplate(templateKey);
+          finding.remediation = {
+            generic_fix: template?.generic_fix ?? platformFix.steps[0] ?? "",
+            platform_fix: platformFix,
+            code_fix: template?.code_fix ?? null,
+            estimated_effort: template?.estimated_effort ?? finding.remediation.estimated_effort,
+            fix_verified: false,
+          };
+          updateFinding(options.db, finding.id, { remediation: finding.remediation });
+          processedHashes.add(finding.finding_type_hash);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[scanner] Remediation generation failed for ${finding.id}: ${msg}`);
+        }
+      }
     }
   }
 

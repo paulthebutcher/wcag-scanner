@@ -453,6 +453,51 @@ describe("scan (integration)", () => {
       wfServer.close();
     }
   });
+
+  it("populates Webflow-specific remediation for findings on Webflow sites", async () => {
+    // Webflow page with a missing-alt violation
+    const wfServer = http.createServer((_req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(`<!DOCTYPE html>
+<html lang="en" data-wf-site="abc" data-wf-page="xyz">
+<head><meta name="generator" content="Webflow"><title>WF Page</title></head>
+<body>
+  <div class="w-nav"><div class="w-container"><h1>Hello</h1></div></div>
+  <img src="photo.jpg">
+</body>
+</html>`);
+    });
+
+    const wfPort = await new Promise<number>((resolve) => {
+      wfServer.listen(0, "127.0.0.1", () => {
+        const addr = wfServer.address();
+        if (addr && typeof addr === "object") resolve(addr.port);
+      });
+    });
+
+    try {
+      const result = await scan(
+        {
+          url: `http://127.0.0.1:${wfPort}`,
+          dataDir: tmpDir,
+          maxPages: 1,
+          tiers: [1],
+        },
+        browser,
+      );
+
+      // Should have findings with Webflow-specific remediation
+      const imgFindings = result.findings.filter(f => f.wcag_criterion === "1.1.1");
+      if (imgFindings.length > 0) {
+        const first = imgFindings[0];
+        expect(first.remediation.platform_fix.platform).toBe("webflow");
+        expect(first.remediation.platform_fix.steps.length).toBeGreaterThan(0);
+        expect(first.remediation.platform_fix.designer_path).toBeTruthy();
+      }
+    } finally {
+      wfServer.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

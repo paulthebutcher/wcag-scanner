@@ -12,6 +12,7 @@ import {
   listCriterionResults,
   listFindingsByScan,
 } from "../store/db.js";
+import { WebflowAdapter, getRemediationTemplate } from "../adapters/webflow.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,6 +161,43 @@ function highestSeverity(findings: Finding[]): Severity {
 }
 
 // ---------------------------------------------------------------------------
+// Webflow remediation backfill
+// ---------------------------------------------------------------------------
+
+/**
+ * For findings with stub (empty) remediation, backfill from the Webflow
+ * adapter templates. This handles scans that were run before the remediation
+ * pipeline was wired in.
+ */
+function backfillWebflowRemediation(findings: Finding[]): void {
+  const adapter = new WebflowAdapter();
+  // Force detection so getPlatformInfo works
+  adapter.detect('<meta name="generator" content="Webflow">');
+
+  for (const finding of findings) {
+    // Skip if remediation is already populated
+    if (finding.remediation.platform_fix.steps.length > 0) continue;
+
+    try {
+      const platformFix = adapter.getRemediationSteps(finding);
+      const failureType = (finding.evidence.measured_values?.failure_type as string) ?? "";
+      const templateKey = `${finding.wcag_criterion}:${failureType}`;
+      const template = getRemediationTemplate(templateKey);
+
+      finding.remediation = {
+        generic_fix: template?.generic_fix ?? platformFix.steps[0] ?? "",
+        platform_fix: platformFix,
+        code_fix: template?.code_fix ?? null,
+        estimated_effort: template?.estimated_effort ?? finding.remediation.estimated_effort,
+        fix_verified: false,
+      };
+    } catch {
+      // Ignore errors — keep stub remediation
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Diff computation
 // ---------------------------------------------------------------------------
 
@@ -209,6 +247,11 @@ export function queryFindings(db: Database.Database, scanId: string): ReportData
 
   // Fetch all findings for this scan
   const findings = listFindingsByScan(db, scanId);
+
+  // Backfill Webflow remediation for findings with stub/empty remediation
+  if (scanSession.platform === "webflow") {
+    backfillWebflowRemediation(findings);
+  }
 
   // Group by finding_type_hash
   const groups = groupFindingsByHash(findings);

@@ -110,6 +110,13 @@ function resolveScreenshot(screenshotPath: string, dataDir?: string): string | n
   }
 }
 
+const SEVERITY_ORDER: Record<Severity, number> = {
+  critical: 0,
+  major: 1,
+  minor: 2,
+  advisory: 3,
+};
+
 function severityColor(severity: Severity): string {
   switch (severity) {
     case "critical": return "#dc2626";
@@ -188,13 +195,20 @@ function renderExecutiveSummary(data: ReportData, executiveSummaryHtml?: string)
     </section>`;
   }
 
+  const issueTypeCount = data.groups.length;
+  const totalInstances = summary.total_findings;
+  const countLabel = issueTypeCount > 0
+    ? `${issueTypeCount} issue type${issueTypeCount !== 1 ? "s" : ""} (${totalInstances} total instance${totalInstances !== 1 ? "s" : ""})`
+    : "No issues found";
+
   return `
     <section class="executive-summary" id="executive-summary">
       <h2>Executive Summary</h2>
       <div class="summary-grid">
         <div class="summary-card">
-          <div class="summary-number">${summary.total_findings}</div>
-          <div class="summary-label">Total Findings</div>
+          <div class="summary-number">${totalInstances}</div>
+          <div class="summary-label">Total Instances</div>
+          <div class="summary-detail">${esc(countLabel)}</div>
         </div>
         <div class="summary-card" style="border-color:#dc2626">
           <div class="summary-number" style="color:#dc2626">${summary.by_severity.critical}</div>
@@ -295,6 +309,27 @@ function renderFindingGroup(
 
   const badge = badgeType ? ` ${diffBadge(badgeType)}` : "";
 
+  // Count distinct pages for this group
+  const distinctPages = new Set(group.findings.map(f => f.page_snapshot_id));
+  const pageCount = distinctPages.size;
+  const pageLabel = pageCount > 1 ? ` across ${pageCount} pages` : "";
+
+  // Remediation summary for the group (from first finding with non-empty remediation)
+  const groupRemediation = group.findings.find(f => f.remediation.platform_fix.steps.length > 0)?.remediation;
+  const groupRemediationHtml = groupRemediation && groupRemediation.generic_fix
+    ? `<div class="group-remediation">
+        <h4>Remediation</h4>
+        <p>${esc(groupRemediation.generic_fix)}</p>
+        ${groupRemediation.platform_fix.designer_path
+          ? `<p class="designer-path"><strong>Webflow:</strong> ${esc(groupRemediation.platform_fix.designer_path)}</p>`
+          : ""}
+        ${groupRemediation.platform_fix.steps.length > 0
+          ? `<details class="remediation-steps"><summary>Platform-specific steps</summary><ol>${groupRemediation.platform_fix.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol></details>`
+          : ""}
+        ${groupRemediation.code_fix ? `<details class="remediation-code"><summary>Code fix</summary><div class="code-block"><pre><code>${esc(groupRemediation.code_fix)}</code></pre></div></details>` : ""}
+      </div>`
+    : "";
+
   return `
     <div class="finding-group">
       <div class="group-header">
@@ -303,10 +338,11 @@ function renderFindingGroup(
           ${esc(group.criterion)} — ${esc(criterionName)}
         </h3>
         <p class="group-meta">
-          Failure type: <code>${esc(group.failureType)}</code> |
-          ${group.instanceCount} instance${group.instanceCount !== 1 ? "s" : ""}
+          Failure type: <code>${esc(group.failureType)}</code> —
+          ${group.instanceCount} instance${group.instanceCount !== 1 ? "s" : ""}${pageLabel}
         </p>
         ${impactHtml}
+        ${groupRemediationHtml}
       </div>
       <details class="instances-detail">
         <summary>Show ${group.instanceCount} instance${group.instanceCount !== 1 ? "s" : ""}</summary>
@@ -315,6 +351,118 @@ function renderFindingGroup(
         </div>
       </details>
     </div>`;
+}
+
+/** Group findings by page for the "Findings by Page" section. */
+interface PageGroup {
+  url: string;
+  snapshotId: string;
+  findings: Finding[];
+}
+
+function groupFindingsByPage(
+  groups: FindingGroup[],
+  pageUrlMap: Map<string, string>,
+): PageGroup[] {
+  const pageMap = new Map<string, Finding[]>();
+
+  for (const group of groups) {
+    for (const finding of group.findings) {
+      const existing = pageMap.get(finding.page_snapshot_id);
+      if (existing) {
+        existing.push(finding);
+      } else {
+        pageMap.set(finding.page_snapshot_id, [finding]);
+      }
+    }
+  }
+
+  const pageGroups: PageGroup[] = [];
+  for (const [snapshotId, findings] of pageMap) {
+    const url = pageUrlMap.get(snapshotId) ?? snapshotId;
+    pageGroups.push({ url, snapshotId, findings });
+  }
+
+  // Sort by finding count (most issues first)
+  pageGroups.sort((a, b) => b.findings.length - a.findings.length);
+  return pageGroups;
+}
+
+function renderFindingsByPage(
+  data: ReportData,
+  pageUrlMap: Map<string, string>,
+  dataDir?: string,
+): string {
+  if (data.groups.length === 0) return "";
+
+  const pageGroups = groupFindingsByPage(data.groups, pageUrlMap);
+  if (pageGroups.length === 0) return "";
+
+  const pagesHtml = pageGroups.map(pg => {
+    // Group findings within this page by criterion for readability
+    const byCriterion = new Map<string, Finding[]>();
+    for (const f of pg.findings) {
+      const existing = byCriterion.get(f.wcag_criterion);
+      if (existing) {
+        existing.push(f);
+      } else {
+        byCriterion.set(f.wcag_criterion, [f]);
+      }
+    }
+
+    // Count by severity for the page summary
+    const severityCounts = { critical: 0, major: 0, minor: 0, advisory: 0 };
+    for (const f of pg.findings) severityCounts[f.severity]++;
+    const severityParts: string[] = [];
+    if (severityCounts.critical > 0) severityParts.push(`${severityCounts.critical} critical`);
+    if (severityCounts.major > 0) severityParts.push(`${severityCounts.major} major`);
+    if (severityCounts.minor > 0) severityParts.push(`${severityCounts.minor} minor`);
+    if (severityCounts.advisory > 0) severityParts.push(`${severityCounts.advisory} advisory`);
+
+    const criterionRows = Array.from(byCriterion.entries())
+      .sort((a, b) => {
+        const sevA = SEVERITY_ORDER[a[1][0].severity];
+        const sevB = SEVERITY_ORDER[b[1][0].severity];
+        if (sevA !== sevB) return sevA - sevB;
+        return b[1].length - a[1].length;
+      })
+      .map(([criterion, findings]) => {
+        const name = CRITERION_NAMES[criterion] ?? criterion;
+        const severity = findings[0].severity;
+        const failureType = (findings[0].evidence.measured_values?.failure_type as string) ?? "";
+        return `<tr>
+          <td>${severityBadge(severity)}</td>
+          <td>${esc(criterion)}</td>
+          <td>${esc(name)}</td>
+          <td><code>${esc(failureType)}</code></td>
+          <td>${findings.length}</td>
+        </tr>`;
+      }).join("");
+
+    // Determine page-level severity badge (worst severity on page)
+    const worstSeverity = severityCounts.critical > 0 ? "critical" as const
+      : severityCounts.major > 0 ? "major" as const
+      : severityCounts.minor > 0 ? "minor" as const
+      : "advisory" as const;
+
+    return `
+      <div class="page-group">
+        <div class="page-group-header">
+          <h3>${severityBadge(worstSeverity)} <a href="${esc(pg.url)}">${esc(pg.url)}</a></h3>
+          <p class="page-group-meta">${pg.findings.length} issue${pg.findings.length !== 1 ? "s" : ""}: ${severityParts.join(", ")}</p>
+        </div>
+        <table class="page-findings-table">
+          <thead><tr><th>Severity</th><th>Criterion</th><th>Name</th><th>Failure Type</th><th>Count</th></tr></thead>
+          <tbody>${criterionRows}</tbody>
+        </table>
+      </div>`;
+  }).join("");
+
+  return `
+    <section class="findings-by-page" id="findings-by-page">
+      <h2>Findings by Page</h2>
+      ${pagesHtml}
+    </section>`;
 }
 
 function renderFindings(
@@ -329,15 +477,15 @@ function renderFindings(
 
   if (data.groups.length === 0) {
     return `
-    <section class="findings" id="findings">
-      <h2>Findings</h2>
+    <section class="findings" id="findings-by-type">
+      <h2>Findings by Type</h2>
       <p>No accessibility violations detected.</p>
     </section>`;
   }
 
   return `
-    <section class="findings" id="findings">
-      <h2>Findings</h2>
+    <section class="findings" id="findings-by-type">
+      <h2>Findings by Type</h2>
       ${data.groups.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, undefined, dataDir)).join("")}
     </section>`;
 }
@@ -591,6 +739,21 @@ const REPORT_CSS = `
   .methodology ul { margin: 0.5rem 0; padding-left: 1.5rem; }
   .methodology li { margin: 0.25rem 0; }
 
+  .summary-detail { font-size: 0.8rem; color: #6b7280; margin-top: 0.25rem; }
+
+  .page-group { margin: 1.5rem 0; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .page-group-header { padding: 1rem; background: #f9fafb; }
+  .page-group-meta { font-size: 0.88rem; color: #6b7280; margin-top: 0.25rem; }
+  .page-findings-table { font-size: 0.88rem; margin: 0; }
+  .page-findings-table th:first-child { width: 80px; }
+
+  .group-remediation { margin-top: 0.75rem; padding: 0.75rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; }
+  .group-remediation h4 { font-size: 0.95rem; margin: 0 0 0.25rem; }
+  .designer-path { font-size: 0.88rem; color: #166534; }
+  .remediation-steps summary, .remediation-code summary { cursor: pointer; font-weight: 500; color: #2563eb; font-size: 0.88rem; margin-top: 0.5rem; }
+  .remediation-steps ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+  .remediation-steps li { margin: 0.25rem 0; font-size: 0.88rem; }
+
   .effort-breakdown table { max-width: 400px; }
 
   .report-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; font-size: 0.85rem; color: #6b7280; text-align: center; }
@@ -633,6 +796,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
     renderHeader(data),
     renderExecutiveSummary(data, executiveSummaryHtml),
     data.diff ? renderDiffSummary(data.diff) : "",
+    renderFindingsByPage(data, pageUrlMap, dataDir),
     renderFindings(data, pageUrlMap, impactDescriptions, dataDir),
     renderCriterionTable(data.criterionResults),
     renderMethodology(),
