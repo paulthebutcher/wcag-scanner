@@ -35,6 +35,8 @@ export interface PdfOptions {
   executiveSummaryHtml?: string;
   /** Progress reporter */
   reporter?: ProgressReporter;
+  /** Data directory for resolving screenshot files */
+  dataDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +183,7 @@ export async function generatePdfReport(
     pageUrlMap,
     impactDescriptions: options.impactDescriptions,
     executiveSummaryHtml: options.executiveSummaryHtml,
+    dataDir: options.dataDir,
   };
   const html = renderHtmlReport(data, renderOpts);
 

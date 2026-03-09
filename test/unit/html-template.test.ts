@@ -478,3 +478,111 @@ describe("renderHtmlReport with diff", () => {
     expect(html).toContain("scan-old");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Screenshot rendering tests
+// ---------------------------------------------------------------------------
+
+describe("renderHtmlReport screenshots", () => {
+  it("shows gray placeholder when screenshot path set but no dataDir", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        findings: [makeFinding({
+          evidence: makeEvidence({ element_screenshot: "scan-001/findings/f1-element.png" }),
+        })],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("screenshot-placeholder");
+    expect(html).toContain("Screenshot not available");
+  });
+
+  it("shows gray placeholder when screenshot file does not exist", () => {
+    const data = makeReportData({
+      groups: [makeGroup({
+        findings: [makeFinding({
+          evidence: makeEvidence({ element_screenshot: "scan-001/findings/nonexistent.png" }),
+        })],
+      })],
+    });
+    const html = renderHtmlReport(data, { dataDir: "/tmp/no-such-dir" });
+    expect(html).toContain("screenshot-placeholder");
+    expect(html).toContain("Screenshot not available");
+  });
+
+  it("does not show screenshot section when screenshot path is empty", () => {
+    const finding = makeFinding({
+      evidence: makeEvidence({ element_screenshot: "" }),
+    });
+    const data = makeReportData({
+      groups: [makeGroup({
+        instanceCount: 1,
+        findings: [finding],
+      })],
+    });
+    const html = renderHtmlReport(data);
+    // No <div class="instance-screenshot"> should appear in the body
+    expect(html).not.toContain('class="instance-screenshot"');
+  });
+
+  it("renders base64 data URI when screenshot file exists", () => {
+    // Create a temp file to test with
+    const { mkdtempSync, writeFileSync, rmSync } = require("node:fs");
+    const { join } = require("node:path");
+    const { tmpdir } = require("node:os");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "wcag-screenshot-test-"));
+    const { mkdirSync } = require("node:fs");
+    mkdirSync(join(tmpDir, "scan-001", "findings"), { recursive: true });
+    // Write a tiny valid PNG (1x1 pixel)
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+    ]);
+    writeFileSync(join(tmpDir, "scan-001", "findings", "f1-element.png"), pngHeader);
+
+    try {
+      const finding = makeFinding({
+        evidence: makeEvidence({ element_screenshot: "scan-001/findings/f1-element.png" }),
+      });
+      const data = makeReportData({
+        groups: [makeGroup({
+          instanceCount: 1,
+          findings: [finding],
+        })],
+      });
+      const html = renderHtmlReport(data, { dataDir: tmpDir });
+      expect(html).toContain("data:image/png;base64,");
+      expect(html).not.toContain("Screenshot not available");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes placeholder CSS in report", () => {
+    const html = renderHtmlReport(makeReportData());
+    expect(html).toContain(".screenshot-placeholder");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Failure type label tests
+// ---------------------------------------------------------------------------
+
+describe("renderHtmlReport failure types", () => {
+  it("shows failure_type from measured_values in group header", () => {
+    const data = makeReportData({
+      groups: [makeGroup({ failureType: "image-alt" })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("image-alt");
+    expect(html).not.toContain(">unknown<");
+  });
+
+  it("shows specific behavioral failure type", () => {
+    const data = makeReportData({
+      groups: [makeGroup({ failureType: "keyboard_trap", criterion: "2.1.2" })],
+    });
+    const html = renderHtmlReport(data);
+    expect(html).toContain("keyboard_trap");
+  });
+});

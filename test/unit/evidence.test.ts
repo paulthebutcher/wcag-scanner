@@ -15,6 +15,7 @@ import {
   mapCriterionToLevel,
   mapCriterionToCategory,
   mapToSeverity,
+  extractFailureTypeLabel,
   stubAnalysis,
   stubConfidence,
   stubRemediation,
@@ -280,6 +281,48 @@ describe("mapToSeverity", () => {
 });
 
 // ---------------------------------------------------------------------------
+// extractFailureTypeLabel — pure function tests
+// ---------------------------------------------------------------------------
+
+describe("extractFailureTypeLabel", () => {
+  it("extracts ruleId from axe-core raw_result", () => {
+    expect(extractFailureTypeLabel("axe_core", { ruleId: "image-alt", impact: "serious" })).toBe("image-alt");
+  });
+
+  it("falls back to id for axe-core if no ruleId", () => {
+    expect(extractFailureTypeLabel("axe_core", { id: "color-contrast" })).toBe("color-contrast");
+  });
+
+  it("extracts type from playwright behavioral raw_result", () => {
+    expect(extractFailureTypeLabel("playwright", { type: "keyboard_trap" })).toBe("keyboard_trap");
+    expect(extractFailureTypeLabel("playwright", { type: "no_visible_focus_indicator" })).toBe("no_visible_focus_indicator");
+  });
+
+  it("extracts issue from playwright form raw_result", () => {
+    expect(extractFailureTypeLabel("playwright", { issue: "error_not_associated" })).toBe("error_not_associated");
+  });
+
+  it("extracts failure_type from claude_api semantic raw_result", () => {
+    expect(extractFailureTypeLabel("claude_api", { failure_type: "missing_alt", confidence: 0.9 })).toBe("missing_alt");
+    expect(extractFailureTypeLabel("claude_api", { failure_type: "generic_link_text" })).toBe("generic_link_text");
+  });
+
+  it("falls back to scannerFailureType when raw_result lacks specific field", () => {
+    expect(extractFailureTypeLabel("playwright", {}, "behavioral")).toBe("behavioral");
+    expect(extractFailureTypeLabel("claude_api", {}, "semantic")).toBe("semantic");
+  });
+
+  it('falls back to "unknown" when nothing is available', () => {
+    expect(extractFailureTypeLabel("manual", {})).toBe("unknown");
+    expect(extractFailureTypeLabel("manual", null)).toBe("unknown");
+  });
+
+  it("extracts animationType from indicator raw_result", () => {
+    expect(extractFailureTypeLabel("playwright", { animationType: "css_animation" })).toBe("css_animation");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Stub factories
 // ---------------------------------------------------------------------------
 
@@ -396,7 +439,8 @@ describe("createFinding", () => {
     expect(finding.evidence.element_selector).toBe("img.hero");
     expect(finding.evidence.element_html).toBe('<img class="hero" src="photo.jpg">');
     expect(finding.evidence.detected_by).toBe("axe_core");
-    expect(finding.evidence.measured_values).toEqual({ contrast_ratio: 4.5 });
+    expect(finding.evidence.measured_values.contrast_ratio).toBe(4.5);
+    expect(finding.evidence.measured_values.failure_type).toBe("image-alt");
     expect(finding.evidence.aria_attributes).toEqual({ "aria-label": "Hero image" });
     expect(finding.evidence.element_computed_styles).toEqual({
       color: "rgb(0,0,0)",
@@ -511,6 +555,46 @@ describe("createFinding", () => {
     expect(stored!.wcag_criterion).toBe("1.1.1");
     expect(stored!.evidence.element_selector).toBe("img.hero");
     expect(stored!.evidence.detected_by).toBe("axe_core");
+  });
+
+  it("stores failure_type label in measured_values from raw_result", async () => {
+    const checkResult = makeCheckResult({
+      raw_result: { impact: "serious", ruleId: "image-alt" },
+    });
+    const finding = await createFinding(checkResult, {
+      scanSessionId,
+      pageSnapshotId,
+      interactionStateId: null,
+      platform: "webflow",
+      failureType: "axe_violation",
+      fullPageScreenshot: null,
+      boundingBox: null,
+      db,
+      fileStore,
+    });
+
+    expect(finding.evidence.measured_values.failure_type).toBe("image-alt");
+  });
+
+  it("stores behavioral type as failure_type in measured_values", async () => {
+    const checkResult = makeCheckResult({
+      detected_by: "playwright",
+      wcag_criterion: "2.1.2",
+      raw_result: { type: "keyboard_trap" },
+    });
+    const finding = await createFinding(checkResult, {
+      scanSessionId,
+      pageSnapshotId,
+      interactionStateId: null,
+      platform: "webflow",
+      failureType: "behavioral",
+      fullPageScreenshot: null,
+      boundingBox: null,
+      db,
+      fileStore,
+    });
+
+    expect(finding.evidence.measured_values.failure_type).toBe("keyboard_trap");
   });
 
   it("maps axe-core severity correctly from raw_result", async () => {

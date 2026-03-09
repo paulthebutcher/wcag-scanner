@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type {
   Finding,
   CriterionResult,
@@ -90,6 +92,22 @@ function esc(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/**
+ * Resolve a screenshot path to an inline base64 data URI.
+ * Returns the data URI string, or null if the file is missing.
+ */
+function resolveScreenshot(screenshotPath: string, dataDir?: string): string | null {
+  if (!screenshotPath || !dataDir) return null;
+  try {
+    const fullPath = join(dataDir, screenshotPath);
+    if (!existsSync(fullPath)) return null;
+    const buf = readFileSync(fullPath);
+    return `data:image/png;base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
 
 function severityColor(severity: Severity): string {
@@ -216,14 +234,20 @@ function renderDiffSummary(diff: ScanDiff): string {
     </section>`;
 }
 
-function renderFindingInstance(finding: Finding, pageUrl?: string): string {
+function renderFindingInstance(finding: Finding, pageUrl?: string, dataDir?: string): string {
   const evidence = finding.evidence;
   const analysis = finding.analysis;
   const remediation = finding.remediation;
 
-  const screenshotHtml = evidence.element_screenshot
-    ? `<div class="instance-screenshot"><img src="${esc(evidence.element_screenshot)}" alt="Element screenshot"></div>`
-    : "";
+  let screenshotHtml = "";
+  if (evidence.element_screenshot) {
+    const dataUri = resolveScreenshot(evidence.element_screenshot, dataDir);
+    if (dataUri) {
+      screenshotHtml = `<div class="instance-screenshot"><img src="${dataUri}" alt="Element screenshot"></div>`;
+    } else {
+      screenshotHtml = `<div class="instance-screenshot"><div class="screenshot-placeholder">Screenshot not available</div></div>`;
+    }
+  }
 
   const htmlSnippet = evidence.element_html
     ? `<div class="code-block"><pre><code>${esc(evidence.element_html)}</code></pre></div>`
@@ -262,6 +286,7 @@ function renderFindingGroup(
   pageUrlMap: Map<string, string>,
   impactDescriptions?: Map<string, string>,
   badgeType?: "fixed" | "new",
+  dataDir?: string,
 ): string {
   const criterionName = CRITERION_NAMES[group.criterion] ?? group.criterion;
   const impactHtml = impactDescriptions?.get(group.hash)
@@ -286,7 +311,7 @@ function renderFindingGroup(
       <details class="instances-detail">
         <summary>Show ${group.instanceCount} instance${group.instanceCount !== 1 ? "s" : ""}</summary>
         <div class="instances">
-          ${group.findings.map(f => renderFindingInstance(f, pageUrlMap.get(f.page_snapshot_id))).join("")}
+          ${group.findings.map(f => renderFindingInstance(f, pageUrlMap.get(f.page_snapshot_id), dataDir)).join("")}
         </div>
       </details>
     </div>`;
@@ -296,9 +321,10 @@ function renderFindings(
   data: ReportData,
   pageUrlMap: Map<string, string>,
   impactDescriptions?: Map<string, string>,
+  dataDir?: string,
 ): string {
   if (data.diff) {
-    return renderDiffFindings(data, pageUrlMap, impactDescriptions);
+    return renderDiffFindings(data, pageUrlMap, impactDescriptions, dataDir);
   }
 
   if (data.groups.length === 0) {
@@ -312,7 +338,7 @@ function renderFindings(
   return `
     <section class="findings" id="findings">
       <h2>Findings</h2>
-      ${data.groups.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions)).join("")}
+      ${data.groups.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, undefined, dataDir)).join("")}
     </section>`;
 }
 
@@ -320,6 +346,7 @@ function renderDiffFindings(
   data: ReportData,
   pageUrlMap: Map<string, string>,
   impactDescriptions?: Map<string, string>,
+  dataDir?: string,
 ): string {
   const diff = data.diff!;
   const sections: string[] = [];
@@ -327,19 +354,19 @@ function renderDiffFindings(
   if (diff.resolved.length > 0) {
     sections.push(`
       <h3 class="diff-section-title">Resolved Issues</h3>
-      ${diff.resolved.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, "fixed")).join("")}`);
+      ${diff.resolved.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, "fixed", dataDir)).join("")}`);
   }
 
   if (diff.newFindings.length > 0) {
     sections.push(`
       <h3 class="diff-section-title">New Issues</h3>
-      ${diff.newFindings.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, "new")).join("")}`);
+      ${diff.newFindings.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, "new", dataDir)).join("")}`);
   }
 
   if (diff.persistent.length > 0) {
     sections.push(`
       <h3 class="diff-section-title">Persistent Issues</h3>
-      ${diff.persistent.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions)).join("")}`);
+      ${diff.persistent.map(g => renderFindingGroup(g, pageUrlMap, impactDescriptions, undefined, dataDir)).join("")}`);
   }
 
   return `
@@ -547,6 +574,7 @@ const REPORT_CSS = `
   .instance-url { font-size: 0.88rem; }
   .instance-screenshot { margin: 0.5rem 0; }
   .instance-screenshot img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px; }
+  .screenshot-placeholder { background: #e5e7eb; color: #6b7280; padding: 2rem; text-align: center; border-radius: 4px; font-size: 0.88rem; font-style: italic; }
   .instance-analysis { margin: 0.5rem 0; }
   .impact { color: #7c3aed; }
   .affected-users { font-size: 0.88rem; color: #6b7280; }
@@ -588,6 +616,8 @@ export interface RenderOptions {
   impactDescriptions?: Map<string, string>;
   /** Executive summary HTML block (from Prompt 15) */
   executiveSummaryHtml?: string;
+  /** Data directory path for resolving screenshot files to base64 data URIs */
+  dataDir?: string;
 }
 
 /**
@@ -597,13 +627,13 @@ export interface RenderOptions {
  * for rendering in Chrome and PDF conversion via page.pdf().
  */
 export function renderHtmlReport(data: ReportData, options: RenderOptions = {}): string {
-  const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml } = options;
+  const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml, dataDir } = options;
 
   const sections = [
     renderHeader(data),
     renderExecutiveSummary(data, executiveSummaryHtml),
     data.diff ? renderDiffSummary(data.diff) : "",
-    renderFindings(data, pageUrlMap, impactDescriptions),
+    renderFindings(data, pageUrlMap, impactDescriptions, dataDir),
     renderCriterionTable(data.criterionResults),
     renderMethodology(),
     renderEffortEstimate(data.summary),

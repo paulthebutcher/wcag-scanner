@@ -326,6 +326,57 @@ export function mapToSeverity(
   return "major";
 }
 
+/**
+ * Extract a descriptive failure_type label from a CheckResult's raw_result.
+ *
+ * Each detection tier stores different fields:
+ * - axe-core:    raw_result.ruleId  (e.g. "image-alt", "color-contrast")
+ * - behavioral:  raw_result.type    (e.g. "keyboard_trap", "no_visible_focus_indicator")
+ * - semantic:    raw_result.failure_type (e.g. "missing_alt", "generic_link_text")
+ * - forms:       raw_result.issue or raw_result.failure_type
+ * - indicators:  raw_result.animationType or raw_result.changeType
+ *
+ * Falls back to the scanner-level failureType (e.g. "behavioral", "semantic").
+ */
+export function extractFailureTypeLabel(
+  detectedBy: DetectedBy,
+  rawResult: unknown,
+  scannerFailureType?: string,
+): string {
+  const raw = (rawResult && typeof rawResult === "object")
+    ? rawResult as Record<string, unknown>
+    : undefined;
+
+  if (!raw) return scannerFailureType ?? "unknown";
+
+  // axe-core: use ruleId (e.g. "image-alt", "color-contrast", "link-name")
+  if (detectedBy === "axe_core") {
+    if (typeof raw.ruleId === "string") return raw.ruleId;
+    if (typeof raw.id === "string") return raw.id;
+    return scannerFailureType ?? "axe_violation";
+  }
+
+  // Semantic (claude_api): use failure_type from Claude response
+  if (detectedBy === "claude_api") {
+    if (typeof raw.failure_type === "string" && raw.failure_type) return raw.failure_type;
+    return scannerFailureType ?? "semantic";
+  }
+
+  // Behavioral / forms / indicators (playwright): use type or issue
+  if (detectedBy === "playwright") {
+    if (typeof raw.type === "string") return raw.type;
+    if (typeof raw.issue === "string") return raw.issue;
+    if (typeof raw.failure_type === "string" && raw.failure_type) return raw.failure_type;
+    if (typeof raw.animationType === "string") return raw.animationType;
+    if (typeof raw.changeType === "string") return raw.changeType;
+    return scannerFailureType ?? "behavioral";
+  }
+
+  // Manual / other: use verdict or scannerFailureType
+  if (typeof raw.verdict === "string") return raw.verdict;
+  return scannerFailureType ?? "unknown";
+}
+
 // ---------------------------------------------------------------------------
 // Stub factories for sub-entities filled by later modules
 // ---------------------------------------------------------------------------
@@ -525,13 +576,26 @@ export async function createFinding(
   }
 
   // --- Evidence (immutable after this point) ---------------------------------
+  const measuredValues: Record<string, unknown> = {
+    ...(checkResult.measured_values ?? {}),
+  };
+
+  // Ensure failure_type is stored in measured_values for report rendering
+  if (!measuredValues.failure_type) {
+    measuredValues.failure_type = extractFailureTypeLabel(
+      checkResult.detected_by,
+      checkResult.raw_result,
+      options.failureType,
+    );
+  }
+
   const evidence: Evidence = {
     element_selector: checkResult.element_selector,
     element_html: checkResult.element_html,
     element_screenshot: elementScreenshotPath,
     element_computed_styles: options.computedStyles ?? {},
     context_screenshot: contextScreenshotPath,
-    measured_values: checkResult.measured_values ?? {},
+    measured_values: measuredValues,
     keyboard_sequence: (checkResult.keyboard_sequence as KeyboardEvent[] | undefined) ?? null,
     aria_attributes: checkResult.aria_attributes ?? {},
     detected_by: checkResult.detected_by,

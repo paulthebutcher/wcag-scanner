@@ -93,7 +93,7 @@ export function createReportCommand(): Command {
           const pageUrlMap = buildPageUrlMap(db, scanId);
 
           reporter.update("report", "Rendering HTML...");
-          const html = renderHtmlReport(data, { pageUrlMap });
+          const html = renderHtmlReport(data, { pageUrlMap, dataDir });
 
           const { writeFileSync } = await import("node:fs");
           writeFileSync(outputPath, html, "utf-8");
@@ -104,6 +104,7 @@ export function createReportCommand(): Command {
             comparisonScanId: compareId,
             severityFilter,
             reporter,
+            dataDir,
           });
         }
 
