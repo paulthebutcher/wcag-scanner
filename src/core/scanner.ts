@@ -174,6 +174,115 @@ function estimateEffort(findings: Finding[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Behavioral deduplication
+// ---------------------------------------------------------------------------
+
+/** Behavioral check result with its page context for deduplication. */
+export interface BehavioralPageEntry {
+  snapshotId: string;
+  snapshotUrl: string;
+  results: CheckResult[];
+  fullScreenshot: Buffer;
+}
+
+/** Deduplicated results ready for processing. */
+export interface DedupedPageEntry {
+  snapshotId: string;
+  results: CheckResult[];
+  fullScreenshot: Buffer;
+}
+
+/** Criteria eligible for cross-page deduplication. */
+export const DEDUP_CRITERIA = new Set(["2.4.7", "2.4.3", "2.1.1", "2.4.1"]);
+
+/**
+ * Deduplicate behavioral findings across pages.
+ *
+ * Shared elements (navbar, footer) produce identical findings on every page.
+ * This groups results by (selector + element_html + wcag_criterion) and keeps
+ * only the first occurrence, annotating it with the number of other pages.
+ *
+ * Only deduplicates criteria in DEDUP_CRITERIA (focus visible, focus order,
+ * keyboard reachability, skip nav). Modal/trap checks are NOT deduplicated
+ * since they may behave differently per page.
+ */
+export function deduplicateBehavioralResults(
+  pages: BehavioralPageEntry[],
+): DedupedPageEntry[] {
+  // Track seen elements: key → { primaryPageIndex, otherPageUrls[] }
+  const seen = new Map<string, { pageIndex: number; otherUrls: string[] }>();
+
+  // Build dedup key for a check result
+  function dedupKey(cr: CheckResult): string {
+    return `${cr.wcag_criterion}|${cr.element_selector}|${cr.element_html}`;
+  }
+
+  // First pass: identify duplicates
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    for (const result of page.results) {
+      if (!DEDUP_CRITERIA.has(result.wcag_criterion)) continue;
+      const key = dedupKey(result);
+      const existing = seen.get(key);
+      if (existing) {
+        existing.otherUrls.push(page.snapshotUrl);
+      } else {
+        seen.set(key, { pageIndex: i, otherUrls: [] });
+      }
+    }
+  }
+
+  // Second pass: filter results, keeping only primary occurrences
+  const dedupedPages: DedupedPageEntry[] = [];
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const filteredResults: CheckResult[] = [];
+
+    for (const result of page.results) {
+      if (!DEDUP_CRITERIA.has(result.wcag_criterion)) {
+        // Non-dedup criteria pass through unchanged
+        filteredResults.push(result);
+        continue;
+      }
+
+      const key = dedupKey(result);
+      const entry = seen.get(key)!;
+
+      if (entry.pageIndex !== i) {
+        // This is a duplicate on a secondary page — skip it
+        continue;
+      }
+
+      // This is the primary occurrence — annotate if seen on other pages
+      if (entry.otherUrls.length > 0) {
+        const annotatedResult: CheckResult = {
+          ...result,
+          measured_values: {
+            ...(result.measured_values ?? {}),
+            also_found_on_pages: entry.otherUrls.length,
+            dedup_note: `Also found on ${entry.otherUrls.length} other page${entry.otherUrls.length !== 1 ? "s" : ""}`,
+          },
+        };
+        filteredResults.push(annotatedResult);
+      } else {
+        filteredResults.push(result);
+      }
+    }
+
+    if (filteredResults.length > 0) {
+      dedupedPages.push({
+        snapshotId: page.snapshotId,
+        results: filteredResults,
+        fullScreenshot: page.fullScreenshot,
+      });
+    }
+  }
+
+  return dedupedPages;
+}
+
+// ---------------------------------------------------------------------------
 // Analyze + score a batch of findings
 // ---------------------------------------------------------------------------
 
@@ -527,6 +636,10 @@ export async function scan(
       if (tiers.includes(2) && context) {
         reporter.update("behavioral", "Running behavioral checks...");
         let behavioralCount = 0;
+        let rawBehavioralCount = 0;
+
+        // Collect all behavioral results per page before deduplication
+        const behavioralPages: BehavioralPageEntry[] = [];
 
         for (const snapshot of pageSnapshots) {
           const page = await context.newPage();
@@ -622,28 +735,46 @@ export async function scan(
               reporter.warn("behavioral", `Modal checks failed for ${snapshot.url}: ${msg}`);
             }
 
-            // Process all behavioral results through evidence → analyzer → confidence
-            if (pageResults.length > 0) {
-              const findings = await processCheckResults(pageResults, {
-                scanId,
-                pageSnapshotId: snapshot.id,
-                platform: scanSession.platform,
-                failureType: "behavioral",
-                fullPageScreenshot: fullScreenshot,
-                db,
-                fileStore,
-              });
-              allFindings.push(...findings);
-              behavioralCount += findings.length;
-            }
-
+            rawBehavioralCount += pageResults.length;
             reporter.update("behavioral", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+
+            // Collect results for deduplication (don't process yet)
+            if (pageResults.length > 0) {
+              behavioralPages.push({
+                snapshotId: snapshot.id,
+                snapshotUrl: snapshot.url,
+                results: pageResults,
+                fullScreenshot: fullScreenshot,
+              });
+            }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("behavioral", `Failed for ${snapshot.url}: ${msg}`);
           } finally {
             await page.close();
           }
+        }
+
+        // Deduplicate shared elements across pages, then process findings
+        const dedupedPages = deduplicateBehavioralResults(behavioralPages);
+        const dedupedCount = dedupedPages.reduce((s, p) => s + p.results.length, 0);
+        if (rawBehavioralCount > dedupedCount) {
+          reporter.update("behavioral",
+            `Deduplicated: ${rawBehavioralCount} → ${dedupedCount} (${rawBehavioralCount - dedupedCount} shared-element duplicates removed)`);
+        }
+
+        for (const entry of dedupedPages) {
+          const findings = await processCheckResults(entry.results, {
+            scanId,
+            pageSnapshotId: entry.snapshotId,
+            platform: scanSession.platform,
+            failureType: "behavioral",
+            fullPageScreenshot: entry.fullScreenshot,
+            db,
+            fileStore,
+          });
+          allFindings.push(...findings);
+          behavioralCount += findings.length;
         }
 
         // Additional behavioral criteria: pass/not_applicable when no issues detected
