@@ -21,6 +21,8 @@ export interface AxeCheckOutput {
   incomplete: CheckResult[];
   /** Criterion-level pass results */
   passes: CriterionResult[];
+  /** Criterion-level not_applicable results (no matching elements on page) */
+  inapplicable: CriterionResult[];
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +173,48 @@ export function passesToCriterionResults(
 }
 
 // ---------------------------------------------------------------------------
+// Inapplicable results mapping (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert axe inapplicable rules to CriterionResult entries with status "not_applicable".
+ * These are rules where no matching elements were found on the page.
+ * Groups by WCAG criterion — one CriterionResult per unique criterion.
+ */
+export function inapplicableToCriterionResults(
+  inapplicable: AxeResult[],
+  scanSessionId: string,
+): CriterionResult[] {
+  const criterionMap = new Map<string, { rules: string[] }>();
+
+  for (const rule of inapplicable) {
+    const criterion = getWcagCriterion(rule.tags);
+    if (criterion === "unknown") continue;
+
+    const existing = criterionMap.get(criterion);
+    if (existing) {
+      existing.rules.push(rule.id);
+    } else {
+      criterionMap.set(criterion, { rules: [rule.id] });
+    }
+  }
+
+  const results: CriterionResult[] = [];
+  for (const [criterion, data] of criterionMap) {
+    results.push({
+      scan_session_id: scanSessionId,
+      wcag_criterion: criterion,
+      status: "not_applicable",
+      tested_by: "axe_core",
+      evidence_summary: `No applicable elements for ${data.rules.length} axe-core rule(s): ${data.rules.join(", ")}`,
+      finding_ids: [],
+    });
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -217,5 +261,11 @@ export async function runAxeChecks(
   // Map passes: group by criterion
   const passes = passesToCriterionResults(axeResults.passes, scanSessionId);
 
-  return { violations, incomplete, passes };
+  // Map inapplicable: group by criterion as not_applicable
+  const inapplicable = inapplicableToCriterionResults(
+    axeResults.inapplicable,
+    scanSessionId,
+  );
+
+  return { violations, incomplete, passes, inapplicable };
 }

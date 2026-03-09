@@ -476,6 +476,12 @@ export async function scan(
               allCriterionResults.push(cr);
             }
 
+            // Store inapplicable criterion results
+            for (const cr of axeOutput.inapplicable) {
+              upsertCriterionResult(db, cr);
+              allCriterionResults.push(cr);
+            }
+
             reporter.update(
               "axe",
               `${snapshot.url}: ${axeOutput.violations.length} violation(s), ${axeOutput.incomplete.length} incomplete, ${axeOutput.passes.length} passed`,
@@ -1039,6 +1045,30 @@ export async function scan(
     } finally {
       if (context) await context.close();
       if (ownBrowser && browser) await browser.close();
+    }
+
+    // --- Phase 7.5: Time-based media criteria (1.2.x) ----------------------------
+    // Check if any page has audio/video elements. If not, mark 1.2.1-1.2.5 as not_applicable.
+    {
+      const hasMedia = pageSnapshots.some((snap) => {
+        const dom = snap.full_dom.toLowerCase();
+        return /<(audio|video)\b/.test(dom) || /<source\b[^>]+type\s*=\s*["'](audio|video)\//i.test(snap.full_dom);
+      });
+      if (!hasMedia) {
+        const mediaCriteria: Array<[string, string]> = [
+          ["1.2.1", "Audio-only and Video-only (Prerecorded)"],
+          ["1.2.2", "Captions (Prerecorded)"],
+          ["1.2.3", "Audio Description or Media Alternative (Prerecorded)"],
+          ["1.2.4", "Captions (Live)"],
+          ["1.2.5", "Audio Description (Prerecorded)"],
+        ];
+        for (const [criterion, name] of mediaCriteria) {
+          const cr = makeCriterionResult(scanId, criterion, "not_applicable", "playwright",
+            `${name}: no audio or video elements found on scanned pages`);
+          upsertCriterionResult(db, cr);
+          allCriterionResults.push(cr);
+        }
+      }
     }
 
     // --- Phase 8: Reconcile CriterionResults ------------------------------------

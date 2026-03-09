@@ -12,6 +12,11 @@ import type { ReportData, FindingGroup, ScanDiff } from "../generator.js";
 
 const CRITERION_NAMES: Record<string, string> = {
   "1.1.1": "Non-text Content",
+  "1.2.1": "Audio-only and Video-only (Prerecorded)",
+  "1.2.2": "Captions (Prerecorded)",
+  "1.2.3": "Audio Description or Media Alternative (Prerecorded)",
+  "1.2.4": "Captions (Live)",
+  "1.2.5": "Audio Description (Prerecorded)",
   "1.3.1": "Info and Relationships",
   "1.3.2": "Meaningful Sequence",
   "1.3.3": "Sensory Characteristics",
@@ -19,6 +24,7 @@ const CRITERION_NAMES: Record<string, string> = {
   "1.3.5": "Identify Input Purpose",
   "1.3.6": "Identify Purpose",
   "1.4.1": "Use of Color",
+  "1.4.2": "Audio Control",
   "1.4.3": "Contrast (Minimum)",
   "1.4.4": "Resize Text",
   "1.4.5": "Images of Text",
@@ -29,6 +35,7 @@ const CRITERION_NAMES: Record<string, string> = {
   "2.1.1": "Keyboard",
   "2.1.2": "No Keyboard Trap",
   "2.1.4": "Character Key Shortcuts",
+  "2.2.1": "Timing Adjustable",
   "2.2.2": "Pause, Stop, Hide",
   "2.3.1": "Three Flashes or Below Threshold",
   "2.4.1": "Bypass Blocks",
@@ -40,6 +47,7 @@ const CRITERION_NAMES: Record<string, string> = {
   "2.4.7": "Focus Visible",
   "2.5.1": "Pointer Gestures",
   "2.5.2": "Pointer Cancellation",
+  "2.5.3": "Label in Name",
   "2.5.4": "Motion Actuation",
   "3.1.1": "Language of Page",
   "3.1.2": "Language of Parts",
@@ -51,7 +59,9 @@ const CRITERION_NAMES: Record<string, string> = {
   "3.3.2": "Labels or Instructions",
   "3.3.3": "Error Suggestion",
   "3.3.4": "Error Prevention (Legal, Financial, Data)",
+  "4.1.1": "Parsing",
   "4.1.2": "Name, Role, Value",
+  "4.1.3": "Status Messages",
 };
 
 // All 50 WCAG 2.1 AA criteria in order
