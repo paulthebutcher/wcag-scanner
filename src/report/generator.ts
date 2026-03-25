@@ -187,53 +187,50 @@ function highestSeverity(findings: Finding[]): Severity {
  * More specific keys take priority over generic failure_type keys.
  */
 const EFFORT_BY_FAILURE_TYPE: Record<string, number> = {
-  // Low effort (1h) — single attribute or CSS fix
-  "focus_indicator_low_contrast": 1,
-  "no_visible_focus_indicator": 1,
+  // Trivial (0.5h) — single attribute or quick CSS tweak
+  "focus_indicator_low_contrast": 0.5,
+  "no_visible_focus_indicator": 0.5,
+  "missing_alt": 0.5,
+  "decorative_with_alt": 0.5,
+  "empty_alt_on_informative": 0.5,
+  "missing_lang": 0.5,
+  "missing_title": 0.5,
+  "missing_autocomplete": 0.5,
+  "input_purpose": 0.5,
+  "missing_required_indication": 0.5,
+  "duplicate_nav_landmark": 0.5,
+  "unlabeled_nav_landmark": 0.5,
+  "table_no_caption": 0.5,
+  "table_header_no_scope": 0.5,
+  // Low (1h) — template attribute fix or content edit
   "link-name": 1,
   "image_link_no_alt": 1,
   "semantic": 1,
-  "empty_alt_on_informative": 1,
-  "missing_alt": 1,
-  "decorative_with_alt": 1,
-  "skipped_level": 1,
-  "missing_heading": 1,
-  "missing_autocomplete": 1,
-  "input_purpose": 1,
-  "missing_lang": 1,
-  "missing_title": 1,
   "empty_link": 1,
   "non_descriptive_link": 1,
-  "missing_required_indication": 1,
-  // Low-moderate (2h) — style changes across multiple elements
-  "color-contrast": 2,
-  "insufficient_contrast": 2,
-  "color_alone": 2,
-  // Moderate (2-3h) — custom embed or structural change
-  "missing_skip_navigation": 2,
-  "missing_skip_link": 2,
-  "focus_order_mismatch": 3,
-  "insufficient_navigation_methods": 3,
-  "error_not_announced": 2,
-  // Moderate-high (4h) — keyboard/interaction work
-  "unreachable_interactive_element": 4,
-  "not_keyboard_accessible": 4,
-  "tabs_keyboard": 3,
-  "dropdown_keyboard": 3,
-  "modal_focus_trap": 4,
-  // High (6h) — significant process change
-  "high_risk_form": 6,
-  // New checks
-  "duplicate_nav_landmark": 1,
-  "unlabeled_nav_landmark": 1,
-  "missing_aria_expanded": 3,
-  "missing_tab_role": 3,
-  "custom_interactive_no_role": 3,
-  "table_no_caption": 1,
-  "table_header_no_scope": 1,
-  "table_missing_headers": 2,
-  "layout_table": 0.5,
+  "skipped_level": 1,
+  "missing_heading": 1,
   "duplicate_link_text": 1,
+  "color-contrast": 1,
+  "insufficient_contrast": 1,
+  "color_alone": 1,
+  "missing_skip_navigation": 1,
+  "missing_skip_link": 1,
+  "table_missing_headers": 1,
+  "layout_table": 0.5,
+  // Moderate (2h) — custom embed, JS snippet, or structural change
+  "focus_order_mismatch": 2,
+  "insufficient_navigation_methods": 1.5,
+  "error_not_announced": 2,
+  "unreachable_interactive_element": 2,
+  "not_keyboard_accessible": 2,
+  "custom_interactive_no_role": 2,
+  "missing_aria_expanded": 2,
+  "missing_tab_role": 2,
+  "tabs_keyboard": 2,
+  "dropdown_keyboard": 2,
+  "high_risk_form": 3,
+  "modal_focus_trap": 3,
 };
 
 /** Fallback effort hours based on the stored Effort enum */
@@ -331,6 +328,24 @@ function backfillWebflowRemediation(findings: Finding[]): void {
       }
     } catch {
       // Ignore errors — keep existing remediation
+    }
+
+    // Downgrade Webflow password pages from critical 3.3.4 to advisory.
+    // Webflow's native .w-password-page is a platform auth form, not a
+    // user-submitted legal/financial form.
+    if (
+      finding.wcag_criterion === "3.3.4" &&
+      finding.severity === "critical" &&
+      finding.evidence.element_html.includes("w-password-page")
+    ) {
+      finding.severity = "advisory";
+      finding.analysis = {
+        ...finding.analysis,
+        reasoning: "This page uses Webflow\u2019s built-in password protection form. " +
+          "If it protects legal or financial data, consider adding a confirmation step. " +
+          "Downgraded from critical because this is a platform-level authentication form, " +
+          "not a user data submission form.",
+      };
     }
   }
 }

@@ -167,9 +167,9 @@ function humanizeFailureType(ft: string): string {
  */
 const PLAIN_DESCRIPTIONS: Record<string, (count: number, pages: number) => string> = {
   "2.4.7:focus_indicator_low_contrast": (n, p) =>
-    `${n} interactive elements across ${p} pages lack visible focus indicators, making keyboard navigation difficult for users who don't use a mouse.`,
+    `${n} interactive element${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} visible focus indicators, making keyboard navigation difficult for users who don't use a mouse.`,
   "2.4.7:no_visible_focus_indicator": (n, p) =>
-    `${n} interactive elements across ${p} pages have no visible focus indicator, preventing keyboard users from seeing which element is selected.`,
+    `${n} interactive element${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} ha${n === 1 ? "s" : "ve"} no visible focus indicator, preventing keyboard users from seeing which element is selected.`,
   "2.4.4:link-name": (n, p) =>
     `${n} links across ${p} pages have no accessible name, so screen reader users cannot tell where these links go.`,
   "2.4.4:image_link_no_alt": (n, p) =>
@@ -183,13 +183,13 @@ const PLAIN_DESCRIPTIONS: Record<string, (count: number, pages: number) => strin
   "1.4.3:color-contrast": (n, p) =>
     `${n} text elements across ${p} pages have insufficient color contrast, making them difficult to read for users with low vision.`,
   "2.4.1:missing_skip_navigation": (n, p) =>
-    `${n} page${p !== 1 ? "s" : ""} lack a skip navigation link, forcing keyboard users to tab through every navigation item to reach the main content.`,
+    `${n} page${n !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} a skip navigation link, forcing keyboard users to tab through every navigation item to reach the main content.`,
   "2.4.3:focus_order_mismatch": (n, p) =>
     `${n} elements across ${p} pages have a tab order that doesn't match the visual layout, creating a confusing navigation experience for keyboard users.`,
   "2.4.5:insufficient_navigation_methods": (n, p) =>
-    `${n} page${p !== 1 ? "s" : ""} offer only one way to find content (e.g. navigation links), without a sitemap or search — a barrier for users who navigate differently.`,
+    `${n} page${n !== 1 ? "s" : ""} offer${n === 1 ? "s" : ""} only one way to find content (e.g. navigation links), without a sitemap or search — a barrier for users who navigate differently.`,
   "2.4.6:missing_heading": (n, p) =>
-    `${n} page sections across ${p} pages lack heading elements, making it harder for screen reader users to scan and navigate the page structure.`,
+    `${n} page section${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} heading elements, making it harder for screen reader users to scan and navigate the page structure.`,
   "2.4.6:skipped_level": (n, p) =>
     `${n} headings across ${p} pages skip hierarchy levels (e.g. H2 to H4), confusing screen reader users who rely on heading structure to navigate.`,
   "1.3.5:missing_autocomplete": (n, p) =>
@@ -202,15 +202,15 @@ const PLAIN_DESCRIPTIONS: Record<string, (count: number, pages: number) => strin
   "1.3.1:unlabeled_nav_landmark": (n, p) =>
     `${n} navigation landmark${n !== 1 ? "s" : ""} across ${p} pages lack${n === 1 ? "s" : ""} an aria-label, making it unnamed in screen reader landmark navigation.`,
   "4.1.2:missing_aria_expanded": (n, p) =>
-    `${n} accordion or disclosure widget${n !== 1 ? "s" : ""} across ${p} pages lack aria-expanded, so screen readers cannot tell whether content sections are open or closed.`,
+    `${n} accordion or disclosure widget${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} aria-expanded, so screen readers cannot tell whether content sections are open or closed.`,
   "4.1.2:missing_tab_role": (n, p) =>
-    `${n} tab interface${n !== 1 ? "s" : ""} across ${p} pages lack proper ARIA tab roles, making the tab pattern invisible to screen reader users.`,
+    `${n} tab interface${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} proper ARIA tab roles, making the tab pattern invisible to screen reader users.`,
   "4.1.2:custom_interactive_no_role": (n, p) =>
     `${n} custom interactive element${n !== 1 ? "s" : ""} across ${p} pages have no ARIA role or keyboard support, making them invisible and unusable for assistive technology users.`,
   "1.3.1:table_no_caption": (n, p) =>
-    `${n} data table${n !== 1 ? "s" : ""} across ${p} pages lack a caption or aria-label, so screen reader users cannot identify the table's purpose.`,
+    `${n} data table${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} a caption or aria-label, so screen reader users cannot identify the table's purpose.`,
   "1.3.1:table_header_no_scope": (n, p) =>
-    `${n} table header cell${n !== 1 ? "s" : ""} across ${p} pages lack scope attributes, preventing screen readers from associating headers with data cells.`,
+    `${n} table header cell${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} scope attributes, preventing screen readers from associating headers with data cells.`,
   "1.3.1:table_missing_headers": (n, p) =>
     `${n} data table${n !== 1 ? "s" : ""} across ${p} pages have no header cells, making it impossible for screen readers to describe the data structure.`,
   "2.4.4:duplicate_link_text": (n, p) =>
@@ -301,10 +301,34 @@ function categoryLabel(failureType: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Failure types whose remediation is a single global fix (e.g., one CSS rule
+ * or one JS snippet) regardless of how many elements are affected.
+ */
+const GLOBAL_FIX_TYPES = new Set([
+  "focus_indicator_low_contrast",
+  "no_visible_focus_indicator",
+  "no_focus_indicator",
+  "missing_skip_navigation",
+  "missing_skip_link",
+  "insufficient_navigation_methods",
+]);
+
+/**
  * Count unique fixes needed within a finding group by deduplicating
  * on element_html. The same nav link appearing on 15 pages = 1 fix.
+ *
+ * Special case: failure types that resolve with a single global fix
+ * (e.g., a CSS :focus-visible rule) always count as 1 fix.
  */
 function countUniqueFixes(group: FindingGroup): number {
+  // Global fixes: one CSS rule or one embed resolves all instances
+  if (GLOBAL_FIX_TYPES.has(group.failureType)) return 1;
+
+  // Also detect global fixes from the remediation content: if the fix
+  // is a <style> block or site-wide JS snippet, it's 1 fix.
+  const codeFix = group.findings[0]?.remediation.code_fix ?? "";
+  if (codeFix.includes("<style>") || codeFix.includes("document.querySelector")) return 1;
+
   const seen = new Set<string>();
   for (const f of group.findings) {
     const key = f.evidence.element_html.trim();
@@ -896,6 +920,7 @@ function renderAppendixByPage(
     }
   }
 
+  const majoritySet = new Set(majoritySignature.split(",").filter(Boolean));
   const outlierPages = pageGroups.filter(pg => {
     const sig = [...new Set(pg.findings.map(f => f.wcag_criterion))].sort().join(",");
     return sig !== majoritySignature;
@@ -905,14 +930,30 @@ function renderAppendixByPage(
   if (outlierPages.length > 0 && outlierPages.length < totalPages) {
     const outlierRows = outlierPages.map(pg => {
       const criteria = [...new Set(pg.findings.map(f => f.wcag_criterion))];
-      const extra = criteria.filter(c => !majoritySignature.split(",").includes(c));
-      const extraLabel = extra.length > 0
-        ? extra.map(c => `${c} ${CRITERION_NAMES[c] ?? ""}`).join(", ")
-        : "different violation mix";
+      // Show criteria that differ from the majority: extra ones this page has,
+      // plus ones the majority has that this page is missing.
+      const extra = criteria.filter(c => !majoritySet.has(c));
+      const missing = [...majoritySet].filter(c => !criteria.includes(c));
+
+      const parts: string[] = [];
+      if (extra.length > 0) {
+        parts.push(extra.map(c => `${c} ${CRITERION_NAMES[c] ?? ""}`.trim()).join(", "));
+      }
+      if (missing.length > 0) {
+        parts.push(`missing: ${missing.map(c => `${c}`.trim()).join(", ")}`);
+      }
+      // If somehow both are empty (shouldn't happen), show all criteria for this page
+      const label = parts.length > 0
+        ? parts.join("; ")
+        : criteria.map(c => `${c} ${CRITERION_NAMES[c] ?? ""}`.trim()).join(", ");
+
+      let urlPath = pg.url;
+      try { urlPath = new URL(pg.url).pathname; } catch { /* keep full url */ }
+
       return `<tr>
-        <td><a href="${esc(pg.url)}">${esc(new URL(pg.url).pathname)}</a></td>
+        <td><a href="${esc(pg.url)}">${esc(urlPath)}</a></td>
         <td>${pg.findings.length}</td>
-        <td>${esc(extraLabel)}</td>
+        <td>${esc(label)}</td>
       </tr>`;
     }).join("");
 
@@ -920,7 +961,7 @@ function renderAppendixByPage(
       <h3>Pages with Additional Issues</h3>
       <p class="section-intro">These pages have violations beyond the sitewide pattern:</p>
       <table class="appendix-table">
-        <thead><tr><th>Page</th><th>Issues</th><th>Additional Criteria</th></tr></thead>
+        <thead><tr><th>Page</th><th>Issues</th><th>Differs From Baseline</th></tr></thead>
         <tbody>${outlierRows}</tbody>
       </table>`;
   }
