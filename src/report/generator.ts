@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type {
   Finding,
+  Effort,
   ScanSession,
   ScanSummary,
   CriterionResult,
@@ -12,7 +13,7 @@ import {
   listCriterionResults,
   listFindingsByScan,
 } from "../store/db.js";
-import { WebflowAdapter, getRemediationTemplate } from "../adapters/webflow.js";
+import { WebflowAdapter, getRemediationTemplate, clearRemediationCache } from "../adapters/webflow.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,18 +95,14 @@ export function groupFindingsByHash(findings: Finding[]): FindingGroup[] {
     }
   }
 
-  const groups: FindingGroup[] = [];
+  const rawGroups: FindingGroup[] = [];
 
   for (const [hash, groupFindings] of groupMap) {
     const first = groupFindings[0];
-
-    // Extract failure_type from measured_values if available
     const failureType = extractFailureType(first);
-
-    // Use the highest severity in the group
     const severity = highestSeverity(groupFindings);
 
-    groups.push({
+    rawGroups.push({
       hash,
       criterion: first.wcag_criterion,
       failureType,
@@ -114,6 +111,27 @@ export function groupFindingsByHash(findings: Finding[]): FindingGroup[] {
       findings: groupFindings,
     });
   }
+
+  // Merge groups that share the same criterion + failureType but got
+  // different hashes (e.g. axe_violation vs axe_incomplete for the same rule).
+  const mergeKey = (g: FindingGroup) => `${g.criterion}::${g.failureType}`;
+  const mergedMap = new Map<string, FindingGroup>();
+
+  for (const group of rawGroups) {
+    const key = mergeKey(group);
+    const existing = mergedMap.get(key);
+    if (existing) {
+      existing.findings.push(...group.findings);
+      existing.instanceCount = existing.findings.length;
+      if (SEVERITY_ORDER[group.severity] < SEVERITY_ORDER[existing.severity]) {
+        existing.severity = group.severity;
+      }
+    } else {
+      mergedMap.set(key, { ...group });
+    }
+  }
+
+  const groups = Array.from(mergedMap.values());
 
   // Sort: severity first (critical → advisory), then instance count descending
   groups.sort((a, b) => {
@@ -161,6 +179,103 @@ function highestSeverity(findings: Finding[]): Severity {
 }
 
 // ---------------------------------------------------------------------------
+// Per-type effort estimation
+// ---------------------------------------------------------------------------
+
+/**
+ * Hours keyed by failure_type (or criterion:failure_type).
+ * More specific keys take priority over generic failure_type keys.
+ */
+const EFFORT_BY_FAILURE_TYPE: Record<string, number> = {
+  // Low effort (1h) — single attribute or CSS fix
+  "focus_indicator_low_contrast": 1,
+  "no_visible_focus_indicator": 1,
+  "link-name": 1,
+  "image_link_no_alt": 1,
+  "semantic": 1,
+  "empty_alt_on_informative": 1,
+  "missing_alt": 1,
+  "decorative_with_alt": 1,
+  "skipped_level": 1,
+  "missing_heading": 1,
+  "missing_autocomplete": 1,
+  "input_purpose": 1,
+  "missing_lang": 1,
+  "missing_title": 1,
+  "empty_link": 1,
+  "non_descriptive_link": 1,
+  "missing_required_indication": 1,
+  // Low-moderate (2h) — style changes across multiple elements
+  "color-contrast": 2,
+  "insufficient_contrast": 2,
+  "color_alone": 2,
+  // Moderate (2-3h) — custom embed or structural change
+  "missing_skip_navigation": 2,
+  "missing_skip_link": 2,
+  "focus_order_mismatch": 3,
+  "insufficient_navigation_methods": 3,
+  "error_not_announced": 2,
+  // Moderate-high (4h) — keyboard/interaction work
+  "unreachable_interactive_element": 4,
+  "not_keyboard_accessible": 4,
+  "tabs_keyboard": 3,
+  "dropdown_keyboard": 3,
+  "modal_focus_trap": 4,
+  // High (6h) — significant process change
+  "high_risk_form": 6,
+  // New checks
+  "duplicate_nav_landmark": 1,
+  "unlabeled_nav_landmark": 1,
+  "missing_aria_expanded": 3,
+  "missing_tab_role": 3,
+  "custom_interactive_no_role": 3,
+  "table_no_caption": 1,
+  "table_header_no_scope": 1,
+  "table_missing_headers": 2,
+  "layout_table": 0.5,
+  "duplicate_link_text": 1,
+};
+
+/** Fallback effort hours based on the stored Effort enum */
+const EFFORT_ENUM_HOURS: Record<Effort, number> = {
+  trivial: 0.25,
+  minor: 0.5,
+  moderate: 2,
+  significant: 4,
+};
+
+/** Get the effort hours for a finding group, using the failure-type-specific lookup. */
+export function getEffortHours(group: FindingGroup): number {
+  const ft = group.failureType;
+  // Try criterion:failure_type first (most specific)
+  const specific = EFFORT_BY_FAILURE_TYPE[`${group.criterion}:${ft}`];
+  if (specific !== undefined) return specific;
+  // Try failure_type alone
+  const byType = EFFORT_BY_FAILURE_TYPE[ft];
+  if (byType !== undefined) return byType;
+  // Fall back to stored effort enum
+  const effort = group.findings[0]?.remediation.estimated_effort ?? "moderate";
+  return EFFORT_ENUM_HOURS[effort as Effort] ?? 2;
+}
+
+/**
+ * Estimate total remediation effort at the **finding-type** level.
+ *
+ * A finding type that appears on 15 pages is still one fix — the effort
+ * is counted once per unique group, not once per instance.
+ */
+export function estimateEffortByType(groups: FindingGroup[]): string {
+  let total = 0;
+  for (const group of groups) {
+    total += getEffortHours(group);
+  }
+
+  if (total <= 2) return "< 2 hours";
+  if (total <= 8) return `~${Math.round(total)} hours`;
+  return `~${Math.round(total)} hours (~${Math.round(total / 8)} days)`;
+}
+
+// ---------------------------------------------------------------------------
 // Webflow remediation backfill
 // ---------------------------------------------------------------------------
 
@@ -170,29 +285,52 @@ function highestSeverity(findings: Finding[]): Severity {
  * pipeline was wired in.
  */
 function backfillWebflowRemediation(findings: Finding[]): void {
+  // Clear the remediation cache to avoid stale generic entries from prior runs
+  clearRemediationCache();
+
   const adapter = new WebflowAdapter();
-  // Force detection so getPlatformInfo works
   adapter.detect('<meta name="generator" content="Webflow">');
 
   for (const finding of findings) {
-    // Skip if remediation is already populated
-    if (finding.remediation.platform_fix.steps.length > 0) continue;
-
+    // Always attempt backfill — the adapter templates have been expanded to
+    // cover actual failure_type values from the scan data.  Even if the
+    // finding already has stub "two-sentence placeholder" steps we want to
+    // replace them with the real template content.
     try {
-      const platformFix = adapter.getRemediationSteps(finding);
       const failureType = (finding.evidence.measured_values?.failure_type as string) ?? "";
       const templateKey = `${finding.wcag_criterion}:${failureType}`;
       const template = getRemediationTemplate(templateKey);
 
-      finding.remediation = {
-        generic_fix: template?.generic_fix ?? platformFix.steps[0] ?? "",
-        platform_fix: platformFix,
-        code_fix: template?.code_fix ?? null,
-        estimated_effort: template?.estimated_effort ?? finding.remediation.estimated_effort,
-        fix_verified: false,
-      };
+      if (template) {
+        // Direct template match — use it
+        finding.remediation = {
+          generic_fix: template.generic_fix,
+          platform_fix: {
+            platform: "webflow",
+            platform_version: "2024.1",
+            steps: template.steps,
+            designer_path: template.designer_path,
+            screenshots: [],
+            generated_by: "template",
+            platform_docs_url: template.platform_docs_url,
+          },
+          code_fix: template.code_fix,
+          estimated_effort: template.estimated_effort,
+          fix_verified: false,
+        };
+      } else {
+        // No template — fall back to adapter (which may produce a generic fix)
+        const platformFix = adapter.getRemediationSteps(finding);
+        finding.remediation = {
+          generic_fix: platformFix.steps[0] ?? "",
+          platform_fix: platformFix,
+          code_fix: null,
+          estimated_effort: finding.remediation.estimated_effort,
+          fix_verified: false,
+        };
+      }
     } catch {
-      // Ignore errors — keep stub remediation
+      // Ignore errors — keep existing remediation
     }
   }
 }
@@ -258,7 +396,12 @@ export function queryFindings(db: Database.Database, scanId: string): ReportData
 
   // Fetch criterion results and summary
   const criterionResults = listCriterionResults(db, scanId);
-  const summary = getScanSummary(db, scanId) ?? null;
+  const storedSummary = getScanSummary(db, scanId) ?? null;
+
+  // Recalculate effort at the finding-type level (not per-instance)
+  const summary = storedSummary
+    ? { ...storedSummary, estimated_total_effort: estimateEffortByType(groups) }
+    : null;
 
   // Compute diff if comparison scan exists
   let diff: ScanDiff | null = null;

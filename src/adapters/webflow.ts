@@ -436,6 +436,347 @@ const REMEDIATION_TEMPLATES = new Map<string, RemediationTemplate>([
     estimated_effort: "minor" as Effort,
     platform_docs_url: null,
   }],
+  // -----------------------------------------------------------------------
+  // Templates keyed by actual failure_type values from scan data
+  // (aliases for existing templates or new entries for types without templates)
+  // -----------------------------------------------------------------------
+  ["1.4.3:color-contrast", {
+    generic_fix: "Adjust text or background color to achieve a contrast ratio of at least 4.5:1 for normal text or 3:1 for large text.",
+    steps: [
+      "Open the element in the Webflow Designer.",
+      "Identify the text color and background color in the Style panel (S).",
+      "Adjust one or both colors until the contrast ratio meets 4.5:1 for normal text or 3:1 for large text.",
+      "Use a contrast checker tool to verify the new values.",
+      "Check all element states (hover, focus, active) for contrast compliance.",
+    ],
+    designer_path: "Select text → Style panel (S) → Typography → Color",
+    code_fix: null,
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.7:focus_indicator_low_contrast", {
+    generic_fix: "Add a high-contrast visible focus indicator to all interactive elements using a global CSS rule or Webflow's Focus state.",
+    steps: [
+      "Add a custom CSS rule via Project Settings → Custom Code → Head Code or a global stylesheet.",
+      "Use :focus { outline: 3px solid #005FCC; outline-offset: 2px; } as a baseline.",
+      "Alternatively, select each interactive element in the Designer, open States → Focus, and style the focus indicator.",
+      "Ensure the focus indicator has at least 3:1 contrast against adjacent colors.",
+    ],
+    designer_path: "Project Settings → Custom Code → Head Code, or Style panel (S) → States → Focus",
+    code_fix: '<style>\n:focus {\n  outline: 3px solid #005FCC;\n  outline-offset: 2px;\n}\n:focus:not(:focus-visible) {\n  outline: none;\n}\n:focus-visible {\n  outline: 3px solid #005FCC;\n  outline-offset: 2px;\n}\n</style>',
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.7:no_visible_focus_indicator", {
+    generic_fix: "Add a visible focus indicator to all interactive elements so keyboard users can see which element is focused.",
+    steps: [
+      "Select the interactive element in the Webflow Designer.",
+      "In the Style panel (S), click the States dropdown and select 'Focus'.",
+      "Add a visible focus indicator: outline, border, or background color change.",
+      "Ensure the focus indicator has at least 3:1 contrast against adjacent colors.",
+      "Repeat for all interactive elements (links, buttons, form fields).",
+    ],
+    designer_path: "Select element → Style panel (S) → States → Focus → Add outline/border",
+    code_fix: null,
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.4:link-name", {
+    generic_fix: "Add descriptive text or aria-label to links so that screen reader users understand each link's purpose.",
+    steps: [
+      "Select the link element in the Webflow Designer.",
+      "If the link contains an image, select the image and add alt text in Element Settings (D) → Alt Text.",
+      "For icon-only links, open Element Settings (D) → Custom Attributes → add aria-label with a descriptive value.",
+      "For links with generic text like 'Click here', replace with descriptive text.",
+    ],
+    designer_path: "Select link → Element Settings (D) → Custom Attributes → aria-label",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.4:image_link_no_alt", {
+    generic_fix: "Add alt text to images inside links so screen readers can describe the link's purpose.",
+    steps: [
+      "Select the image element inside the link in the Webflow Designer.",
+      "Open Element Settings (D) and add descriptive alt text in the Alt Text field.",
+      "The alt text should describe the link destination, not just the image content.",
+      "For icon-only links, add aria-label to the parent link via Custom Attributes instead.",
+    ],
+    designer_path: "Select image inside link → Element Settings (D) → Alt Text field",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.1.1:unreachable_interactive_element", {
+    generic_fix: "Ensure all interactive elements are reachable via keyboard by fixing z-index, visibility, and pointer-events issues.",
+    steps: [
+      "Check the element's z-index, visibility, and display properties in the Webflow Style panel.",
+      "Ensure no parent element has pointer-events: none or visibility: hidden set.",
+      "Verify the element is not obscured by an overlay or positioned off-screen.",
+      "Add tabindex='0' if the element is a custom interactive component not natively focusable.",
+      "Test keyboard access by pressing Tab and verifying the element receives focus.",
+    ],
+    designer_path: "Select element → Style panel (S) → Check position, z-index, visibility, pointer-events",
+    code_fix: null,
+    estimated_effort: "moderate" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.1:missing_skip_navigation", {
+    generic_fix: "Add a skip navigation link as the first focusable element that jumps to the main content area.",
+    steps: [
+      "Add a custom HTML embed as the first element inside the Body, before the navigation.",
+      "Use: <a href=\"#main-content\" class=\"skip-link\">Skip to main content</a>",
+      "Add id=\"main-content\" to the main content wrapper via Element Settings (D).",
+      "Style the skip link to be visually hidden until focused using the CSS below.",
+    ],
+    designer_path: "Add Embed block as first Body child → Add id='main-content' to main content wrapper",
+    code_fix: '<a href="#main-content" class="skip-link">Skip to main content</a>\n<style>\n.skip-link {\n  position: absolute;\n  left: -9999px;\n  top: auto;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n}\n.skip-link:focus {\n  position: static;\n  width: auto;\n  height: auto;\n  padding: 8px 16px;\n  background: #000;\n  color: #fff;\n  z-index: 9999;\n  text-decoration: none;\n}\n</style>',
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.1.1:semantic", {
+    generic_fix: "Add descriptive alt text to images, or mark decorative images appropriately so screen readers handle them correctly.",
+    steps: [
+      "Select the image in the Webflow Designer.",
+      "Open Element Settings (D) and add descriptive alt text in the Alt Text field.",
+      "For decorative images, leave alt blank and check 'Decorative' if available.",
+      "If 'Decorative' is not available, add role='presentation' via Custom Attributes.",
+      "For CMS images, ensure the alt text field is filled in for each collection item.",
+    ],
+    designer_path: "Select image → Element Settings (D) → Alt Text field",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.1.1:empty_alt_on_informative", {
+    generic_fix: "Add descriptive alt text to informative images that currently have empty alt attributes.",
+    steps: [
+      "Select the image in the Webflow Designer.",
+      "Open Element Settings (D) and enter meaningful alt text that describes the image content.",
+      "If the image conveys information not available in surrounding text, the alt text must capture that information.",
+    ],
+    designer_path: "Select image → Element Settings (D) → Alt Text field",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.3.5:missing_autocomplete", {
+    generic_fix: "Add the autocomplete attribute with the appropriate value to form inputs that collect personal information.",
+    steps: [
+      "Select the form input in the Webflow Designer.",
+      "Open Element Settings (D) → Custom Attributes.",
+      "Click + and add: name='autocomplete', value matching the input purpose (e.g. 'name', 'email', 'tel', 'street-address').",
+      "Common values: name, email, tel, street-address, postal-code, country, cc-number, cc-exp.",
+    ],
+    designer_path: "Select input → Element Settings (D) → Custom Attributes → autocomplete",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.3.5:input_purpose", {
+    generic_fix: "Add the autocomplete attribute to form inputs so browsers and assistive technologies can identify the input's purpose.",
+    steps: [
+      "Select the form input in the Webflow Designer.",
+      "Open Element Settings (D) → Custom Attributes.",
+      "Click + and add: name='autocomplete', value matching the input purpose.",
+      "Common values: name, email, tel, street-address, postal-code, country.",
+    ],
+    designer_path: "Select input → Element Settings (D) → Custom Attributes → autocomplete",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.3:focus_order_mismatch", {
+    generic_fix: "Reorder elements in the DOM so that the tab order matches the visual reading order.",
+    steps: [
+      "Open the Navigator panel in the Webflow Designer to see the DOM order.",
+      "Drag elements to reorder them so the DOM sequence matches the visual reading order.",
+      "Avoid using CSS order, flex-direction: row-reverse, or absolute positioning to visually reorder tab-focusable elements.",
+      "Test by pressing Tab through the page and verifying focus moves in a logical sequence.",
+    ],
+    designer_path: "Navigator panel → Drag elements to match visual order",
+    code_fix: null,
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.6:missing_heading", {
+    generic_fix: "Add heading elements to sections that lack them, ensuring proper heading hierarchy.",
+    steps: [
+      "Identify sections of the page that lack heading elements.",
+      "Add appropriate heading elements (H2, H3, etc.) in the Webflow Designer.",
+      "Ensure headings follow a logical hierarchy: H1 → H2 → H3 without skipping levels.",
+      "Use the Tag dropdown in the Style panel to set the correct heading level.",
+    ],
+    designer_path: "Add heading element → Style panel (S) → Tag dropdown → Set heading level",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.6:skipped_level", {
+    generic_fix: "Fix the heading hierarchy so no levels are skipped. Change the heading tag to maintain proper order.",
+    steps: [
+      "Select the heading element in the Webflow Designer.",
+      "In the Style panel (S), use the Tag dropdown to change the heading level.",
+      "Ensure headings follow a logical order: H1 → H2 → H3 without skipping levels.",
+      "If the visual size needs to differ from the semantic level, adjust font-size via CSS instead of changing the tag.",
+    ],
+    designer_path: "Select heading → Style panel (S) → Tag dropdown → Change heading level",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["2.4.5:insufficient_navigation_methods", {
+    generic_fix: "Provide at least two ways for users to find content on the site, such as a sitemap page and a search function.",
+    steps: [
+      "Add a sitemap page listing all major pages and link it in the footer.",
+      "Consider adding a search widget via Webflow's site search feature or a third-party embed.",
+      "Ensure the main navigation is consistent across all pages.",
+      "If using CMS collections, add collection-level navigation or breadcrumbs.",
+    ],
+    designer_path: "Add sitemap page → Link in footer → Add search via embed or Webflow search",
+    code_fix: null,
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
+  ["3.3.4:high_risk_form", {
+    generic_fix: "Add a confirmation step or review screen before final submission of legal or financial forms.",
+    steps: [
+      "Add a confirmation step before the final form submission.",
+      "Implement via Webflow Interactions (show a review panel before submitting) or a custom embed.",
+      "Display a summary of the user's inputs and ask them to confirm before submitting.",
+      "Ensure legal or financial forms provide the ability to review, correct, and confirm data.",
+      "Consider adding a checkbox: 'I have reviewed the information above' before the submit button.",
+    ],
+    designer_path: "Add review step via IX2 interaction or custom embed before form submission",
+    code_fix: null,
+    estimated_effort: "significant" as Effort,
+    platform_docs_url: null,
+  }],
+  // -----------------------------------------------------------------------
+  // Check 1: Landmark labels
+  // -----------------------------------------------------------------------
+  ["1.3.1:duplicate_nav_landmark", {
+    generic_fix: "Add unique aria-label attributes to each navigation landmark so screen readers can distinguish between them.",
+    steps: [
+      "Select each nav element in the Webflow Designer.",
+      "Open Element Settings (D) → Custom Attributes.",
+      "Click + and add: name='aria-label', value describing the nav purpose (e.g. 'Main navigation', 'Mobile navigation', 'Footer links').",
+      "Each nav element must have a unique label — do not reuse the same label for multiple navs.",
+    ],
+    designer_path: "Select nav → Element Settings (D) → Custom Attributes → aria-label",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.3.1:unlabeled_nav_landmark", {
+    generic_fix: "Add an aria-label to the navigation element so screen readers announce its purpose.",
+    steps: [
+      "Select the nav element in the Webflow Designer.",
+      "Open Element Settings (D) → Custom Attributes.",
+      "Click + and add: name='aria-label', value='Main navigation' (or appropriate description).",
+    ],
+    designer_path: "Select nav → Element Settings (D) → Custom Attributes → aria-label",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  // -----------------------------------------------------------------------
+  // Check 2: Widget ARIA roles
+  // -----------------------------------------------------------------------
+  ["4.1.2:missing_aria_expanded", {
+    generic_fix: "The accordion trigger needs aria-expanded toggling between true/false. Replace with native <details>/<summary> or add custom JS to manage aria-expanded.",
+    steps: [
+      "Identify the accordion/disclosure trigger element.",
+      "Replace the Webflow interaction with a custom HTML embed using native <details>/<summary> elements.",
+      "Alternatively, add a custom JS embed that sets the trigger as a <button> and toggles aria-expanded='true'/'false' on click.",
+      "Ensure the content panel has a unique id and the trigger references it via aria-controls.",
+    ],
+    designer_path: "Replace with Embed block → native <details>/<summary> or custom JS managing aria-expanded",
+    code_fix: null,
+    estimated_effort: "moderate" as Effort,
+    platform_docs_url: null,
+  }],
+  ["4.1.2:missing_tab_role", {
+    generic_fix: "Add ARIA tab roles to tab trigger and panel elements. Webflow's native interactions cannot produce valid ARIA tab patterns — implement via custom HTML/JS embed.",
+    steps: [
+      "Add role='tab', aria-selected, and aria-controls to each tab trigger.",
+      "Add role='tabpanel' with aria-labelledby to each panel.",
+      "Wrap the tab triggers in a container with role='tablist'.",
+      "Implement via a custom HTML/JS embed — Webflow's native w-tabs cannot produce valid ARIA tab patterns.",
+    ],
+    designer_path: "Replace w-tabs with Embed block → Custom HTML/JS with ARIA tab roles",
+    code_fix: null,
+    estimated_effort: "moderate" as Effort,
+    platform_docs_url: null,
+  }],
+  ["4.1.2:custom_interactive_no_role", {
+    generic_fix: "Replace the custom interactive element with a native <button> or <a>, or add role='button', tabindex='0', and keyboard event handling.",
+    steps: [
+      "Replace the div/span interactive element with a native <button> or <a> element.",
+      "If replacement is not possible, add role='button' and tabindex='0' via Custom Attributes.",
+      "Add a custom JS embed handling Enter and Space key events.",
+      "Ensure the element has an accessible name via text content or aria-label.",
+    ],
+    designer_path: "Element Settings (D) → Custom Attributes → role='button' + tabindex='0'",
+    code_fix: null,
+    estimated_effort: "moderate" as Effort,
+    platform_docs_url: null,
+  }],
+  // -----------------------------------------------------------------------
+  // Check 3: Table structure
+  // -----------------------------------------------------------------------
+  ["1.3.1:table_no_caption", {
+    generic_fix: "Add a <caption> or aria-label to data tables so assistive technology can describe the table's purpose.",
+    steps: [
+      "Add a <caption> as the first child of the <table> element via a custom HTML embed.",
+      "Alternatively, add aria-label to the table element via Custom Attributes in Element Settings (D).",
+      "The caption should describe what data the table contains.",
+    ],
+    designer_path: "Add Embed block with <caption> inside <table>, or Element Settings (D) → Custom Attributes → aria-label",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.3.1:table_header_no_scope", {
+    generic_fix: "Add scope='col' or scope='row' to table header cells so assistive technology can associate headers with data cells.",
+    steps: [
+      "Webflow does not expose scope on table headers natively.",
+      "Add scope='col' or scope='row' to each <th> via a custom HTML embed replacing the table.",
+      "Alternatively, add a post-render JS snippet that adds the scope attribute to all <th> elements.",
+    ],
+    designer_path: "Add Embed block with custom <table> HTML including scope attributes",
+    code_fix: '<script>\ndocument.querySelectorAll("th").forEach(th => {\n  if (!th.getAttribute("scope")) {\n    const isRow = th.parentElement?.firstElementChild === th && th.parentElement?.parentElement?.tagName === "TBODY";\n    th.setAttribute("scope", isRow ? "row" : "col");\n  }\n});\n</script>',
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
+  ["1.3.1:table_missing_headers", {
+    generic_fix: "Add proper header associations to complex data tables using scope or headers/id attributes.",
+    steps: [
+      "Add <th> elements in the first row or column of the table with appropriate scope attributes.",
+      "For complex tables, use the headers attribute on <td> elements referencing <th> ids.",
+      "Implement via a custom HTML embed replacing Webflow's native table.",
+    ],
+    designer_path: "Replace table with Embed block → Custom HTML with proper <th> and scope/headers attributes",
+    code_fix: null,
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
+  // -----------------------------------------------------------------------
+  // Check 4: Duplicate link text
+  // -----------------------------------------------------------------------
+  ["2.4.4:duplicate_link_text", {
+    generic_fix: "Add unique aria-label to each repeated link that includes distinguishing context (e.g. the year or document name).",
+    steps: [
+      "For each repeated link, open Element Settings (D) → Custom Attributes.",
+      "Add aria-label with a value that includes the distinguishing context.",
+      "Example: aria-label='Download 2024 Annual Report' instead of just 'Download Report'.",
+      "For CMS-driven repeated links, use a dynamic aria-label field bound to a CMS field.",
+    ],
+    designer_path: "Element Settings (D) → Custom Attributes → aria-label with unique context",
+    code_fix: null,
+    estimated_effort: "trivial" as Effort,
+    platform_docs_url: null,
+  }],
 ]);
 
 export function getTemplateKey(finding: Finding): string | null {

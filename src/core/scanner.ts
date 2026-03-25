@@ -45,6 +45,10 @@ import { runAltTextChecks } from "../checks/semantic/alt-text.js";
 import { runLinkTextChecks } from "../checks/semantic/link-text.js";
 import { runHeadingChecks } from "../checks/semantic/headings.js";
 import { runConsistentNavChecks } from "../checks/semantic/consistent-nav.js";
+import { runLandmarkLabelChecks } from "../checks/semantic/landmark-labels.js";
+import { runWidgetAriaChecks } from "../checks/semantic/widget-aria.js";
+import { runTableStructureChecks } from "../checks/semantic/table-structure.js";
+import { runDuplicateLinkChecks } from "../checks/semantic/duplicate-links.js";
 import { createPromptRunner, type PromptRunner } from "./prompt-runner.js";
 // Form checks (Tier 4)
 import { discoverForms } from "../checks/forms/discovery.js";
@@ -896,6 +900,46 @@ export async function scan(
               reporter.warn("semantic", `Heading checks failed for ${snapshot.url}: ${msg}`);
             }
 
+            // 3d: Landmark labels (structural, no Claude needed)
+            try {
+              const landmarkResults = runLandmarkLabelChecks(dom);
+              pageResults.push(...landmarkResults);
+              if (landmarkResults.length > 0) semanticViolationCriteria.add("1.3.1");
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Landmark label checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 3e: Widget ARIA roles
+            try {
+              const widgetResults = await runWidgetAriaChecks(dom, runner);
+              pageResults.push(...widgetResults);
+              if (widgetResults.length > 0) semanticViolationCriteria.add("4.1.2");
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Widget ARIA checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 3f: Table structure (structural, no Claude needed)
+            try {
+              const tableResults = runTableStructureChecks(dom);
+              pageResults.push(...tableResults);
+              if (tableResults.length > 0) semanticViolationCriteria.add("1.3.1");
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Table structure checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 3g: Duplicate link text (structural, no Claude needed)
+            try {
+              const dupLinkResults = runDuplicateLinkChecks(dom);
+              pageResults.push(...dupLinkResults);
+              if (dupLinkResults.length > 0) semanticViolationCriteria.add("2.4.4");
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `Duplicate link checks failed for ${snapshot.url}: ${msg}`);
+            }
+
             // Process semantic results
             if (pageResults.length > 0) {
               const findings = await processCheckResults(pageResults, {
@@ -917,11 +961,13 @@ export async function scan(
           // Create pass CriterionResults for semantic criteria with no violations
           const semanticCriteriaChecked: Array<[string, string]> = [
             ["1.1.1", "Alt text quality evaluated across all pages"],
-            ["2.4.4", "Link text quality evaluated across all pages"],
-            ["1.3.1", "Heading structure evaluated across all pages"],
+            ["2.4.4", "Link text quality and duplicate link detection evaluated across all pages"],
+            ["1.3.1", "Heading structure, landmark labels, and table structure evaluated across all pages"],
+            ["4.1.2", "Widget ARIA roles and states evaluated across all pages"],
           ];
           for (const [criterion, summary] of semanticCriteriaChecked) {
             if (!semanticViolationCriteria.has(criterion)) {
+              // Override not_applicable → passed if we actually ran checks for this criterion
               const passCr = makeCriterionResult(scanId, criterion, "passed", "claude_api", summary);
               upsertCriterionResult(db, passCr);
               allCriterionResults.push(passCr);

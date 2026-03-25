@@ -164,9 +164,9 @@ describe("groupFindingsByHash", () => {
 
   it("sorts by severity (critical first)", () => {
     const findings = [
-      makeFinding({ finding_type_hash: "hash-minor", severity: "minor" }),
-      makeFinding({ finding_type_hash: "hash-critical", severity: "critical" }),
-      makeFinding({ finding_type_hash: "hash-major", severity: "major" }),
+      makeFinding({ finding_type_hash: "hash-minor", severity: "minor", evidence: makeEvidence({ measured_values: { failure_type: "type_a" } }) }),
+      makeFinding({ finding_type_hash: "hash-critical", severity: "critical", evidence: makeEvidence({ measured_values: { failure_type: "type_b" } }) }),
+      makeFinding({ finding_type_hash: "hash-major", severity: "major", evidence: makeEvidence({ measured_values: { failure_type: "type_c" } }) }),
     ];
 
     const groups = groupFindingsByHash(findings);
@@ -177,10 +177,10 @@ describe("groupFindingsByHash", () => {
 
   it("sorts by instance count (descending) when same severity", () => {
     const findings = [
-      makeFinding({ finding_type_hash: "hash-few", severity: "major" }),
-      makeFinding({ finding_type_hash: "hash-many", severity: "major" }),
-      makeFinding({ finding_type_hash: "hash-many", severity: "major" }),
-      makeFinding({ finding_type_hash: "hash-many", severity: "major" }),
+      makeFinding({ finding_type_hash: "hash-few", severity: "major", evidence: makeEvidence({ measured_values: { failure_type: "type_few" } }) }),
+      makeFinding({ finding_type_hash: "hash-many", severity: "major", evidence: makeEvidence({ measured_values: { failure_type: "type_many" } }) }),
+      makeFinding({ finding_type_hash: "hash-many", severity: "major", evidence: makeEvidence({ measured_values: { failure_type: "type_many" } }) }),
+      makeFinding({ finding_type_hash: "hash-many", severity: "major", evidence: makeEvidence({ measured_values: { failure_type: "type_many" } }) }),
     ];
 
     const groups = groupFindingsByHash(findings);
@@ -214,6 +214,29 @@ describe("groupFindingsByHash", () => {
     const groups = groupFindingsByHash(findings);
     expect(groups[0].findings.length).toBe(3);
     expect(groups[0].findings.map((f) => f.id)).toEqual(["f1", "f2", "f3"]);
+  });
+
+  it("merges groups with different hashes but same criterion and failure_type", () => {
+    const findings = [
+      makeFinding({ id: "f1", finding_type_hash: "hash-violation", wcag_criterion: "1.4.3", evidence: makeEvidence({ measured_values: { failure_type: "color-contrast" } }) }),
+      makeFinding({ id: "f2", finding_type_hash: "hash-violation", wcag_criterion: "1.4.3", evidence: makeEvidence({ measured_values: { failure_type: "color-contrast" } }) }),
+      makeFinding({ id: "f3", finding_type_hash: "hash-incomplete", wcag_criterion: "1.4.3", evidence: makeEvidence({ measured_values: { failure_type: "color-contrast" } }) }),
+    ];
+
+    const groups = groupFindingsByHash(findings);
+    expect(groups.length).toBe(1);
+    expect(groups[0].criterion).toBe("1.4.3");
+    expect(groups[0].instanceCount).toBe(3);
+  });
+
+  it("keeps groups separate when same criterion but different failure_types", () => {
+    const findings = [
+      makeFinding({ id: "f1", finding_type_hash: "hash-axe", wcag_criterion: "2.4.4", evidence: makeEvidence({ measured_values: { failure_type: "link-name" } }) }),
+      makeFinding({ id: "f2", finding_type_hash: "hash-semantic", wcag_criterion: "2.4.4", evidence: makeEvidence({ measured_values: { failure_type: "image_link_no_alt" } }) }),
+    ];
+
+    const groups = groupFindingsByHash(findings);
+    expect(groups.length).toBe(2);
   });
 });
 
@@ -326,14 +349,14 @@ describe("queryFindings", () => {
   });
 
   it("returns findings grouped by finding_type_hash", () => {
-    insertFinding(db, makeFinding({ id: "f1", finding_type_hash: "hash-a" }));
-    insertFinding(db, makeFinding({ id: "f2", finding_type_hash: "hash-a" }));
-    insertFinding(db, makeFinding({ id: "f3", finding_type_hash: "hash-b" }));
+    insertFinding(db, makeFinding({ id: "f1", finding_type_hash: "hash-a", wcag_criterion: "1.1.1" }));
+    insertFinding(db, makeFinding({ id: "f2", finding_type_hash: "hash-a", wcag_criterion: "1.1.1" }));
+    insertFinding(db, makeFinding({ id: "f3", finding_type_hash: "hash-b", wcag_criterion: "2.4.7" }));
 
     const report = queryFindings(db, "scan-1");
     expect(report.groups.length).toBe(2);
 
-    const groupA = report.groups.find((g) => g.hash === "hash-a")!;
+    const groupA = report.groups.find((g) => g.criterion === "1.1.1")!;
     expect(groupA.instanceCount).toBe(2);
     expect(groupA.findings.length).toBe(2);
   });
@@ -454,20 +477,24 @@ describe("queryFindings", () => {
     insertFinding(db, makeFinding({
       id: "old-f1", page_snapshot_id: "snap-old",
       finding_type_hash: "hash-resolved", severity: "major",
+      wcag_criterion: "1.4.3",
     }));
     insertFinding(db, makeFinding({
       id: "old-f2", page_snapshot_id: "snap-old",
       finding_type_hash: "hash-persistent", severity: "minor",
+      wcag_criterion: "2.4.7",
     }));
 
     // New scan has hash-b (persistent) and hash-c (new)
     insertFinding(db, makeFinding({
       id: "new-f1", page_snapshot_id: "snap-1",
       finding_type_hash: "hash-persistent", severity: "minor",
+      wcag_criterion: "2.4.7",
     }));
     insertFinding(db, makeFinding({
       id: "new-f2", page_snapshot_id: "snap-1",
       finding_type_hash: "hash-new", severity: "critical",
+      wcag_criterion: "2.1.1",
     }));
 
     const report = queryFindings(db, "scan-1");

@@ -11,7 +11,7 @@ const program = new Command();
 
 program
   .name("wcag")
-  .description("AI-powered WCAG AA compliance engine")
+  .description("AI-powered WCAG AA accessibility scanner")
   .version("0.1.0");
 
 program.addCommand(createScanCommand());

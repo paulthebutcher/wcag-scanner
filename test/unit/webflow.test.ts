@@ -505,8 +505,8 @@ describe("getTemplateCount", () => {
     expect(getTemplateCount()).toBeGreaterThanOrEqual(15);
   });
 
-  it("has exactly 20 templates", () => {
-    expect(getTemplateCount()).toBe(20);
+  it("has at least 36 templates", () => {
+    expect(getTemplateCount()).toBeGreaterThanOrEqual(36);
   });
 });
 

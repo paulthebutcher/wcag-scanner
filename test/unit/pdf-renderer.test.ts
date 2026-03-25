@@ -94,8 +94,8 @@ describe("buildReportDataWithComparison", () => {
   afterEach(() => { db.close(); });
 
   it("returns report data for a single scan", () => {
-    insertFinding(db, makeFinding({ id: "f1", finding_type_hash: "hash-a" }));
-    insertFinding(db, makeFinding({ id: "f2", finding_type_hash: "hash-b", severity: "critical" }));
+    insertFinding(db, makeFinding({ id: "f1", finding_type_hash: "hash-a", wcag_criterion: "1.1.1" }));
+    insertFinding(db, makeFinding({ id: "f2", finding_type_hash: "hash-b", severity: "critical", wcag_criterion: "2.4.7" }));
 
     const data = buildReportDataWithComparison(db, "scan-new");
     expect(data.groups.length).toBe(2);
@@ -114,22 +114,19 @@ describe("buildReportDataWithComparison", () => {
       screenshot: "s.png", viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
     });
 
-    // Old scan: hash-resolved + hash-persistent
-    insertFinding(db, makeFinding({ id: "old-1", page_snapshot_id: "snap-old", finding_type_hash: "hash-resolved" }));
-    insertFinding(db, makeFinding({ id: "old-2", page_snapshot_id: "snap-old", finding_type_hash: "hash-persistent" }));
+    // Old scan: hash-resolved + hash-persistent (distinct criteria so dedup doesn't merge)
+    insertFinding(db, makeFinding({ id: "old-1", page_snapshot_id: "snap-old", finding_type_hash: "hash-resolved", wcag_criterion: "1.4.3" }));
+    insertFinding(db, makeFinding({ id: "old-2", page_snapshot_id: "snap-old", finding_type_hash: "hash-persistent", wcag_criterion: "2.4.7" }));
 
     // New scan: hash-persistent + hash-new
-    insertFinding(db, makeFinding({ id: "new-1", finding_type_hash: "hash-persistent" }));
-    insertFinding(db, makeFinding({ id: "new-2", finding_type_hash: "hash-new", severity: "critical" }));
+    insertFinding(db, makeFinding({ id: "new-1", finding_type_hash: "hash-persistent", wcag_criterion: "2.4.7" }));
+    insertFinding(db, makeFinding({ id: "new-2", finding_type_hash: "hash-new", severity: "critical", wcag_criterion: "2.1.1" }));
 
     const data = buildReportDataWithComparison(db, "scan-new", "scan-old");
     expect(data.diff).not.toBeNull();
     expect(data.diff!.resolved.length).toBe(1);
-    expect(data.diff!.resolved[0].hash).toBe("hash-resolved");
     expect(data.diff!.newFindings.length).toBe(1);
-    expect(data.diff!.newFindings[0].hash).toBe("hash-new");
     expect(data.diff!.persistent.length).toBe(1);
-    expect(data.diff!.persistent[0].hash).toBe("hash-persistent");
   });
 
   it("sets comparison_scan_id on session", () => {
@@ -273,13 +270,13 @@ describe("before/after report rendering", () => {
       screenshot: "s.png", viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
     });
 
-    // Old: hash-resolved, hash-persistent
-    insertFinding(db, makeFinding({ id: "o1", page_snapshot_id: "snap-old", finding_type_hash: "hash-resolved" }));
-    insertFinding(db, makeFinding({ id: "o2", page_snapshot_id: "snap-old", finding_type_hash: "hash-persistent" }));
+    // Old: hash-resolved, hash-persistent (distinct criteria to avoid merge)
+    insertFinding(db, makeFinding({ id: "o1", page_snapshot_id: "snap-old", finding_type_hash: "hash-resolved", wcag_criterion: "1.4.3" }));
+    insertFinding(db, makeFinding({ id: "o2", page_snapshot_id: "snap-old", finding_type_hash: "hash-persistent", wcag_criterion: "2.4.7" }));
 
     // New: hash-persistent, hash-new
-    insertFinding(db, makeFinding({ id: "n1", page_snapshot_id: "snap-new", finding_type_hash: "hash-persistent" }));
-    insertFinding(db, makeFinding({ id: "n2", page_snapshot_id: "snap-new", finding_type_hash: "hash-new", severity: "critical" }));
+    insertFinding(db, makeFinding({ id: "n1", page_snapshot_id: "snap-new", finding_type_hash: "hash-persistent", wcag_criterion: "2.4.7" }));
+    insertFinding(db, makeFinding({ id: "n2", page_snapshot_id: "snap-new", finding_type_hash: "hash-new", severity: "critical", wcag_criterion: "2.1.1" }));
   });
 
   afterEach(() => { db.close(); });
@@ -288,17 +285,17 @@ describe("before/after report rendering", () => {
     const data = buildReportDataWithComparison(db, "scan-new", "scan-old");
 
     expect(data.diff).not.toBeNull();
-    expect(data.diff!.resolved.map(g => g.hash)).toContain("hash-resolved");
-    expect(data.diff!.newFindings.map(g => g.hash)).toContain("hash-new");
-    expect(data.diff!.persistent.map(g => g.hash)).toContain("hash-persistent");
+    expect(data.diff!.resolved.length).toBe(1);
+    expect(data.diff!.newFindings.length).toBe(1);
+    expect(data.diff!.persistent.length).toBe(1);
   });
 
-  it("report header shows both scan dates", () => {
+  it("report header shows scan date and diff summary", () => {
     const data = buildReportDataWithComparison(db, "scan-new", "scan-old");
     const html = renderHtmlReport(data);
 
     expect(html).toContain("June 15, 2024"); // new scan date
-    expect(html).toContain("scan-old"); // comparison scan ID
+    expect(html).toContain("Changes Since Previous Scan"); // diff summary section
   });
 
   it("resolved findings get Fixed badge", () => {

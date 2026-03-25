@@ -203,10 +203,10 @@ describe("severityBadge", () => {
 });
 
 describe("statusBadge", () => {
-  it("renders passed badge green", () => {
+  it("renders passed badge green with honest label", () => {
     const html = statusBadge("passed");
     expect(html).toContain("#16a34a");
-    expect(html).toContain("passed");
+    expect(html).toContain("no issues detected");
   });
 
   it("replaces underscores with spaces", () => {
@@ -275,8 +275,8 @@ describe("renderHtmlReport", () => {
   it("includes site info in header", () => {
     const html = renderHtmlReport(makeReportData());
     expect(html).toContain("https://example.com");
-    expect(html).toContain("webflow");
-    expect(html).toContain("meta_generator");
+    expect(html).toContain("Webflow");
+    // Scan ID is now in footer, not cover
     expect(html).toContain("scan-001");
   });
 
@@ -303,14 +303,14 @@ describe("renderHtmlReport", () => {
     const html = renderHtmlReport(makeReportData());
     expect(html).toContain("1.1.1");
     expect(html).toContain("Non-text Content");
-    expect(html).toContain("missing_alt");
+    expect(html).toContain("Images &amp; Alt Text"); // category label for missing_alt
     expect(html).toContain("3 instance");
   });
 
-  it("includes finding instances with analysis", () => {
+  it("includes finding type description in report", () => {
     const html = renderHtmlReport(makeReportData());
-    expect(html).toContain("Image has no alt attribute");
-    expect(html).toContain("screen_reader");
+    // The remediation generic_fix text appears in the finding card
+    expect(html).toContain("Add descriptive alt text to the image");
   });
 
   it("includes HTML snippet in evidence", () => {
@@ -325,15 +325,9 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("Open Element Settings");
   });
 
-  it("includes expandable details for instances", () => {
-    const html = renderHtmlReport(makeReportData());
-    expect(html).toContain("<details");
-    expect(html).toContain("<summary>");
-  });
-
   it("includes criterion results table for all 50 criteria", () => {
     const html = renderHtmlReport(makeReportData());
-    expect(html).toContain("Criterion Results");
+    expect(html).toContain("Compliance Scorecard");
     expect(html).toContain("1.1.1");
     expect(html).toContain("4.1.2"); // last in our CRITERION_NAMES
     // Criteria not in the results should show as not_tested
@@ -381,7 +375,8 @@ describe("renderHtmlReport", () => {
   it("handles missing summary gracefully", () => {
     const data = makeReportData({ summary: null });
     const html = renderHtmlReport(data);
-    expect(html).toContain("No summary data available");
+    // Fallback executive summary generates plain-language posture from findings
+    expect(html).toContain("significant accessibility gaps");
   });
 
   it("escapes XSS in user content", () => {
@@ -474,9 +469,10 @@ describe("renderHtmlReport with diff", () => {
     expect(html).toContain("Persistent Issues");
   });
 
-  it("includes comparison scan info in header", () => {
+  it("includes diff summary when comparison scan present", () => {
     const html = renderHtmlReport(makeDiffReportData());
-    expect(html).toContain("scan-old");
+    expect(html).toContain("Changes Since Previous Scan");
+    expect(html).toContain("diff-summary");
   });
 });
 
@@ -485,7 +481,7 @@ describe("renderHtmlReport with diff", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderHtmlReport screenshots", () => {
-  it("shows gray placeholder when screenshot path set but no dataDir", () => {
+  it("skips screenshot when path set but no dataDir", () => {
     const data = makeReportData({
       groups: [makeGroup({
         findings: [makeFinding({
@@ -494,11 +490,13 @@ describe("renderHtmlReport screenshots", () => {
       })],
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("screenshot-placeholder");
-    expect(html).toContain("Screenshot not available");
+    // New template silently skips unresolvable screenshots
+    expect(html).not.toContain("screenshot-placeholder");
+    expect(html).not.toContain("Screenshot not available");
+    expect(html).not.toContain("data:image/png;base64,");
   });
 
-  it("shows gray placeholder when screenshot file does not exist", () => {
+  it("skips screenshot when screenshot file does not exist", () => {
     const data = makeReportData({
       groups: [makeGroup({
         findings: [makeFinding({
@@ -507,8 +505,10 @@ describe("renderHtmlReport screenshots", () => {
       })],
     });
     const html = renderHtmlReport(data, { dataDir: "/tmp/no-such-dir" });
-    expect(html).toContain("screenshot-placeholder");
-    expect(html).toContain("Screenshot not available");
+    // New template silently skips unresolvable screenshots
+    expect(html).not.toContain("screenshot-placeholder");
+    expect(html).not.toContain("Screenshot not available");
+    expect(html).not.toContain("data:image/png;base64,");
   });
 
   it("does not show screenshot section when screenshot path is empty", () => {
@@ -559,9 +559,9 @@ describe("renderHtmlReport screenshots", () => {
     }
   });
 
-  it("includes placeholder CSS in report", () => {
+  it("includes snippet-screenshot CSS in report", () => {
     const html = renderHtmlReport(makeReportData());
-    expect(html).toContain(".screenshot-placeholder");
+    expect(html).toContain(".snippet-screenshot");
   });
 });
 
@@ -570,21 +570,26 @@ describe("renderHtmlReport screenshots", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderHtmlReport failure types", () => {
-  it("shows failure_type from measured_values in group header", () => {
+  it("shows category label for failure type", () => {
     const data = makeReportData({
-      groups: [makeGroup({ failureType: "image-alt" })],
+      groups: [makeGroup({
+        failureType: "missing_alt",
+      })],
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("image-alt");
-    expect(html).not.toContain(">unknown<");
+    // Category label appears in card meta and effort table
+    expect(html).toContain("Images &amp; Alt Text");
   });
 
-  it("shows specific behavioral failure type", () => {
+  it("shows category label for behavioral failure type", () => {
     const data = makeReportData({
-      groups: [makeGroup({ failureType: "keyboard_trap", criterion: "2.1.2" })],
+      groups: [makeGroup({
+        failureType: "unreachable_interactive_element",
+        criterion: "2.1.1",
+      })],
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("keyboard_trap");
+    expect(html).toContain("Keyboard Access");
   });
 });
 
@@ -602,7 +607,9 @@ describe("renderHtmlReport clarified counts", () => {
       summary: makeSummary({ total_findings: 8 }),
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("2 issue types (8 total instances)");
+    // Summary grid shows issue types and total instances in separate cards
+    expect(html).toContain("2 unique issue type");
+    expect(html).toContain("8");
   });
 
   it("shows instance count and page count in finding group header", () => {
@@ -621,7 +628,7 @@ describe("renderHtmlReport clarified counts", () => {
     expect(html).toContain("4 instances across 3 pages");
   });
 
-  it("omits page count when all instances are on one page", () => {
+  it("always shows page count even for single page", () => {
     const data = makeReportData({
       groups: [makeGroup({
         instanceCount: 2,
@@ -632,8 +639,8 @@ describe("renderHtmlReport clarified counts", () => {
       })],
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("2 instances");
-    expect(html).not.toContain("across");
+    expect(html).toContain("2 instance");
+    expect(html).toContain("across 1 page");
   });
 });
 
@@ -662,17 +669,17 @@ describe("renderHtmlReport page-grouped view", () => {
     expect(html).toContain("https://example.com/about");
   });
 
-  it("includes Findings by Type section after page view", () => {
+  it("includes Findings by Type section before page appendix", () => {
     const html = renderHtmlReport(makeReportData());
     expect(html).toContain("Findings by Type");
     expect(html).toContain("Findings by Page");
-    // Page view should appear before type view
-    const pageIdx = html.indexOf("Findings by Page");
+    // Type view should appear before page appendix
     const typeIdx = html.indexOf("Findings by Type");
-    expect(pageIdx).toBeLessThan(typeIdx);
+    const pageIdx = html.indexOf("Findings by Page");
+    expect(typeIdx).toBeLessThan(pageIdx);
   });
 
-  it("shows issue count per page", () => {
+  it("shows consolidated summary in appendix", () => {
     const pageUrlMap = new Map([["snap-1", "https://example.com/"]]);
     const data = makeReportData({
       groups: [makeGroup({
@@ -685,7 +692,8 @@ describe("renderHtmlReport page-grouped view", () => {
       })],
     });
     const html = renderHtmlReport(data, { pageUrlMap });
-    expect(html).toContain("3 issues");
+    expect(html).toContain("Findings by Page");
+    expect(html).toContain("1.1.1");
   });
 
   it("omits page-grouped view when no findings", () => {
@@ -721,7 +729,7 @@ describe("renderHtmlReport group remediation", () => {
     expect(html).toContain("Webflow:");
   });
 
-  it("shows platform-specific steps in collapsible section", () => {
+  it("shows platform-specific steps inline", () => {
     const data = makeReportData({
       groups: [makeGroup({
         instanceCount: 1,
@@ -735,12 +743,12 @@ describe("renderHtmlReport group remediation", () => {
       })],
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("Platform-specific steps");
+    // Steps are rendered inline (no collapsible wrapper)
     expect(html).toContain("Step one");
     expect(html).toContain("Step two");
   });
 
-  it("shows code fix in collapsible section when available", () => {
+  it("shows code fix directly in code block", () => {
     const data = makeReportData({
       groups: [makeGroup({
         instanceCount: 1,
@@ -753,7 +761,7 @@ describe("renderHtmlReport group remediation", () => {
       })],
     });
     const html = renderHtmlReport(data);
-    expect(html).toContain("Code fix");
+    // Code fix rendered directly in a code block, not in a collapsible
     expect(html).toContain("document.documentElement.lang");
   });
 });
