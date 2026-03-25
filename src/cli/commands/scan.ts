@@ -52,7 +52,7 @@ export function createScanCommand(): Command {
     .argument("<url>", "URL to scan")
     .option("--max-pages <n>", "Maximum pages to crawl", "50")
     .option("--output <format>", "Output format: json or table", "table")
-    .option("--tiers <list>", "Comma-separated check tiers to run", "1")
+    .option("--tiers <list>", "Comma-separated check tiers to run", "1,2,3,4,5")
     .option("--cms-samples <n>", "CMS collection pages to sample per collection", "5")
     .option("--data-dir <path>", "Data directory for results", "./wcag-data")
     .option("--quiet", "Suppress progress output, only print results")
