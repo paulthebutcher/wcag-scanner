@@ -1215,11 +1215,19 @@ const REPORT_CSS = `
 
   /* Executive Summary */
   .executive-summary { page-break-after: always; }
+  .executive-summary .summary-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 1rem;
     margin: 1rem 0;
+  }
+  @media (max-width: 700px) {
+    .executive-summary .summary-grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
   }
   .summary-card {
     text-align: center;
