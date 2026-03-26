@@ -501,8 +501,16 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
   const totalPassed = passedCriteria.length;
   // "Tested" = criteria with a definitive pass/fail result (not N/A or not-tested)
   const totalTested = totalPassed + totalFailed;
-  const totalNA = criterionResults.filter(r => r.status === "not_applicable").length;
-  const totalNotTested = criterionResults.filter(r => r.status === "not_tested").length;
+  // Count N/A and not-tested from ALL_CRITERIA, not just DB rows.
+  // Criteria missing from the DB entirely are also "not tested".
+  const crResultMap = new Map(criterionResults.map(r => [r.wcag_criterion, r]));
+  let totalNA = 0;
+  let totalNotTested = 0;
+  for (const c of ALL_CRITERIA) {
+    const status = crResultMap.get(c)?.status;
+    if (status === "not_applicable") totalNA++;
+    else if (status === "not_tested" || status === undefined) totalNotTested++;
+  }
 
   // Determine posture
   const critical = summary?.by_severity.critical ?? groups.filter(g => g.severity === "critical").reduce((s, g) => s + g.instanceCount, 0);
@@ -1216,18 +1224,13 @@ const REPORT_CSS = `
   /* Executive Summary */
   .executive-summary { page-break-after: always; }
   .executive-summary .summary-grid {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 1rem;
     margin: 1rem 0;
-  }
-  @media (max-width: 700px) {
-    .executive-summary .summary-grid {
-      grid-template-columns: repeat(3, 1fr);
-    }
   }
   .summary-card {
     text-align: center;
