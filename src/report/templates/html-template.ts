@@ -497,9 +497,12 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
   const totalInstances = summary?.total_findings ?? groups.reduce((s, g) => s + g.instanceCount, 0);
   const failedCriteria = summary?.wcag_criteria_failed ?? [...new Set(groups.map(g => g.criterion))];
   const passedCriteria = summary?.wcag_criteria_passed ?? [];
-  const totalTested = criterionResults.length;
   const totalFailed = failedCriteria.length;
   const totalPassed = passedCriteria.length;
+  // "Tested" = criteria with a definitive pass/fail result (not N/A or not-tested)
+  const totalTested = totalPassed + totalFailed;
+  const totalNA = criterionResults.filter(r => r.status === "not_applicable").length;
+  const totalNotTested = criterionResults.filter(r => r.status === "not_tested").length;
 
   // Determine posture
   const critical = summary?.by_severity.critical ?? groups.filter(g => g.severity === "critical").reduce((s, g) => s + g.instanceCount, 0);
@@ -535,7 +538,14 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
        </ol>`
     : "";
 
-  // Summary stats grid
+  // Summary stats grid — "Criteria Tested" = passed + failed only
+  const notTestedCard = totalNotTested > 0
+    ? `<div class="summary-card">
+        <div class="summary-number" style="color:#9ca3af">${totalNotTested}</div>
+        <div class="summary-label">Not Tested</div>
+      </div>`
+    : "";
+
   const statsHtml = `
     <div class="summary-grid">
       <div class="summary-card">
@@ -550,6 +560,11 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
         <div class="summary-number" style="color:#dc2626">${totalFailed}</div>
         <div class="summary-label">Failed</div>
       </div>
+      <div class="summary-card">
+        <div class="summary-number" style="color:#6b7280">${totalNA}</div>
+        <div class="summary-label">Not Applicable</div>
+      </div>
+      ${notTestedCard}
       <div class="summary-card">
         <div class="summary-number">${data.groups.length}</div>
         <div class="summary-label">Issue Types</div>
