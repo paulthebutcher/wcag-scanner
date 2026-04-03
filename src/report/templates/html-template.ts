@@ -685,6 +685,30 @@ function renderFindingTypeCard(
     sitewideHtml = `<div class="sitewide-callout">This issue appears across ${pages} of ${pageUrlMap.size || pages} pages and likely requires a template-level fix.${fixNote}</div>`;
   }
 
+  // Affected page paths list
+  let affectedPagesHtml = "";
+  if (pages > 1) {
+    const uniquePages = new Map<string, string>();
+    for (const f of group.findings) {
+      if (uniquePages.has(f.page_snapshot_id)) continue;
+      const url = pageUrlMap.get(f.page_snapshot_id) ?? "";
+      let pathname = "";
+      try { pathname = url ? new URL(url).pathname : ""; } catch { pathname = url; }
+      if (pathname) uniquePages.set(f.page_snapshot_id, pathname);
+    }
+    const allPaths = Array.from(uniquePages.values()).sort();
+    const VISIBLE_LIMIT = 8;
+    const visiblePaths = allPaths.slice(0, VISIBLE_LIMIT);
+    const hiddenCount = allPaths.length - visiblePaths.length;
+    const pathItems = visiblePaths.map(p => `<code>${esc(p)}</code>`).join(", ");
+    if (hiddenCount > 0) {
+      const hiddenItems = allPaths.slice(VISIBLE_LIMIT).map(p => `<code>${esc(p)}</code>`).join(", ");
+      affectedPagesHtml = `<div class="affected-pages"><strong>Affected pages:</strong> ${pathItems} <details class="affected-pages-more"><summary>and ${hiddenCount} more</summary>${hiddenItems}</details></div>`;
+    } else {
+      affectedPagesHtml = `<div class="affected-pages"><strong>Affected pages:</strong> ${pathItems}</div>`;
+    }
+  }
+
   // Remediation: "How to fix" with platform-specific steps + example
   const groupRemediation = group.findings.find(f => f.remediation.platform_fix.steps.length > 0)?.remediation;
   const platformName = formatPlatform(group.findings[0]?.remediation.platform_fix.platform ?? "webflow");
@@ -787,6 +811,7 @@ function renderFindingTypeCard(
         </p>
       </div>
       ${sitewideHtml}
+      ${affectedPagesHtml}
       ${whatWrongHtml}
       ${remediationHtml}
       ${snippetsSectionHtml}
@@ -1266,6 +1291,36 @@ const REPORT_CSS = `
     border-left: 3px solid #3b82f6;
     font-size: 0.88rem;
     color: #1e40af;
+  }
+
+  .affected-pages {
+    margin: 0.4rem 1rem 0.25rem;
+    font-size: 0.85rem;
+    color: #475569;
+    line-height: 1.5;
+  }
+  .affected-pages code {
+    background: #f1f5f9;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.82rem;
+  }
+  .affected-pages-more {
+    display: inline;
+  }
+  .affected-pages-more summary {
+    display: inline;
+    cursor: pointer;
+    color: #3b82f6;
+    list-style: none;
+  }
+  .affected-pages-more summary:hover {
+    text-decoration: underline;
+  }
+  .affected-pages-more summary::-webkit-details-marker { display: none; }
+  @media print {
+    .affected-pages-more { display: inline !important; }
+    .affected-pages-more summary { display: none !important; }
   }
 
   .card-remediation { margin: 0.75rem 1rem; padding: 0.75rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; }
