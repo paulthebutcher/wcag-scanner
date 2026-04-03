@@ -218,16 +218,34 @@ describe("mapToSeverity", () => {
     expect(mapToSeverity("claude_api", { confidence: 0.9 }, "semantic", "1.1.1")).toBe("major");
   });
 
-  it('maps medium confidence (0.65-0.85) semantic to "minor"', () => {
-    expect(mapToSeverity("claude_api", { confidence: 0.75 }, "semantic", "2.4.4")).toBe("minor");
+  it('maps medium confidence semantic to floor when floor is higher', () => {
+    // 2.4.4 has floor "major" — confidence 0.75 would be "minor" but floor promotes to "major"
+    expect(mapToSeverity("claude_api", { confidence: 0.75 }, "semantic", "2.4.4")).toBe("major");
   });
 
-  it('maps low confidence (<0.65) semantic to "advisory"', () => {
+  it('maps medium confidence semantic to "minor" when floor allows it', () => {
+    // 1.1.1 has floor "minor" — confidence 0.75 maps to "minor" which is at floor
+    expect(mapToSeverity("claude_api", { confidence: 0.75 }, "semantic", "1.1.1")).toBe("minor");
+  });
+
+  it('maps low confidence (<0.65) semantic to floor when floor is higher', () => {
+    // 1.1.1 has floor "minor" — confidence 0.30 would be "advisory" but floor promotes to "minor"
+    expect(mapToSeverity("claude_api", { confidence: 0.30 }, "semantic", "1.1.1")).toBe("minor");
+  });
+
+  it('maps low confidence semantic to "advisory" when floor is advisory', () => {
+    // 2.4.6 has floor "advisory" — confidence 0.5 maps to "advisory", same as floor
     expect(mapToSeverity("claude_api", { confidence: 0.5 }, "semantic", "2.4.6")).toBe("advisory");
   });
 
-  it('maps semantic without confidence to "minor"', () => {
-    expect(mapToSeverity("claude_api", {}, "semantic", "2.4.4")).toBe("minor");
+  it('maps high confidence to "major" even above floor', () => {
+    // 2.4.6 has floor "advisory" — confidence 0.90 promotes to "major"
+    expect(mapToSeverity("claude_api", { confidence: 0.90 }, "semantic", "2.4.6")).toBe("major");
+  });
+
+  it('maps semantic without confidence to floor when floor is higher', () => {
+    // 2.4.4 has floor "major" — no confidence defaults to "minor" but floor promotes to "major"
+    expect(mapToSeverity("claude_api", {}, "semantic", "2.4.4")).toBe("major");
   });
 
   // --- Tier 4: forms ---

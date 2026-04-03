@@ -232,12 +232,37 @@ export function mapCriterionToCategory(wcagCriterion: string): Category {
   return "semantics";
 }
 
+// Severity ordering for floor comparison (lower number = higher severity)
+const SEVERITY_ORDER: Record<Severity, number> = {
+  critical: 0,
+  major: 1,
+  minor: 2,
+  advisory: 3,
+};
+
+/**
+ * Per-criterion severity floor for Tier 3 (Claude API) findings.
+ * Confidence can promote severity upward but never below the floor.
+ * This prevents scan-to-scan severity drift when Claude confidence
+ * fluctuates near threshold boundaries.
+ */
+export const CRITERION_SEVERITY_FLOOR: Record<string, Severity> = {
+  "1.1.1": "minor",      // Alt text — at least minor
+  "1.3.1": "minor",      // Info & relationships — at least minor
+  "2.4.4": "major",      // Link purpose — at least major
+  "2.4.6": "advisory",   // Headings & labels — advisory floor (no forced promotion)
+  "3.2.3": "minor",      // Consistent navigation — at least minor
+  "3.2.4": "minor",      // Consistent identification — at least minor
+  "3.3.2": "minor",      // Labels or instructions — at least minor
+  "4.1.2": "major",      // Name, Role, Value — at least major
+};
+
 /**
  * Map detection results to our Severity enum using tier-specific rules.
  *
  * - Tier 1 (axe-core):  violation.impact → critical/major/minor/minor
  * - Tier 2 (behavioral): wcag_criterion → critical/major/minor per criterion
- * - Tier 3 (semantic):   Claude confidence → major/minor/advisory
+ * - Tier 3 (semantic):   Claude confidence → major/minor/advisory (with per-criterion floor)
  * - Tier 4 (forms):      failureType + issue → critical/major/minor
  * - Tier 5 (indicators): always advisory
  */
@@ -295,16 +320,25 @@ export function mapToSeverity(
     return "minor";
   }
 
-  // --- Tier 3: semantic (Claude API) — use confidence ---
+  // --- Tier 3: semantic (Claude API) — use confidence with per-criterion floor ---
   if (detectedBy === "claude_api" && raw) {
     const confidence = raw.confidence as number | undefined;
+    let severity: Severity;
     if (typeof confidence === "number") {
-      if (confidence > 0.85) return "major";
-      if (confidence >= 0.65) return "minor";
-      return "advisory";
+      if (confidence > 0.85) severity = "major";
+      else if (confidence >= 0.65) severity = "minor";
+      else severity = "advisory";
+    } else {
+      // Semantic checks without confidence default to minor
+      severity = "minor";
     }
-    // Semantic checks without confidence default to minor
-    return "minor";
+    // Apply per-criterion severity floor — confidence can only promote
+    // upward, never demote below the floor for that criterion.
+    const floor = wcagCriterion ? CRITERION_SEVERITY_FLOOR[wcagCriterion] : undefined;
+    if (floor && SEVERITY_ORDER[severity] > SEVERITY_ORDER[floor]) {
+      severity = floor;
+    }
+    return severity;
   }
 
   // --- Tier 2: behavioral (playwright) — map by criterion ---

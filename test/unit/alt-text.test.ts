@@ -4,6 +4,7 @@ import {
   deduplicateCmsImages,
   runAltTextChecks,
   extractAttr,
+  altTextPassesPreFilter,
   type ImageContext,
   type AltTextEvaluation,
 } from "../../src/checks/semantic/alt-text.js";
@@ -41,15 +42,15 @@ const CMS_COLLECTION_HTML = `
 <body>
   <div class="w-dyn-items">
     <div class="w-dyn-item">
-      <img src="/uploads/post-1.jpg" alt="Blog post thumbnail" class="blog-thumb">
+      <img src="/uploads/post-1.jpg" alt="thumbnail" class="blog-thumb">
       <h3>First Post</h3>
     </div>
     <div class="w-dyn-item">
-      <img src="/uploads/post-2.jpg" alt="Blog post thumbnail" class="blog-thumb">
+      <img src="/uploads/post-2.jpg" alt="thumbnail" class="blog-thumb">
       <h3>Second Post</h3>
     </div>
     <div class="w-dyn-item">
-      <img src="/uploads/post-3.jpg" alt="Blog post thumbnail" class="blog-thumb">
+      <img src="/uploads/post-3.jpg" alt="thumbnail" class="blog-thumb">
       <h3>Third Post</h3>
     </div>
     <div class="w-dyn-item">
@@ -172,7 +173,7 @@ describe("deduplicateCmsImages", () => {
     expect(images.length).toBe(4);
 
     const deduped = deduplicateCmsImages(images);
-    // "Blog post thumbnail" appears 3 times → 1 kept
+    // "thumbnail" appears 3 times → 1 kept
     // "" appears 1 time → 1 kept
     expect(deduped.length).toBe(2);
   });
@@ -353,7 +354,7 @@ describe("runAltTextChecks", () => {
 
     const results = await runAltTextChecks(CMS_COLLECTION_HTML, mockRunner);
 
-    // CMS dedup: 3 "Blog post thumbnail" → 1, 1 "" → 1 = 2 prompts sent
+    // CMS dedup: 3 "thumbnail" → 1, 1 "" → 1 = 2 after dedup; both fail pre-filter
     expect(runPromptsSpy).toHaveBeenCalledTimes(1);
     const promptInputs = runPromptsSpy.mock.calls[0][0];
     expect(promptInputs.length).toBe(2);
@@ -399,7 +400,8 @@ describe("runAltTextChecks", () => {
   });
 
   it("sends correct prompt template", async () => {
-    const html = '<html><body><img src="test.jpg" alt="test alt"></body></html>';
+    // Use alt text that fails the pre-filter (single generic word) so the API is called
+    const html = '<html><body><img src="test.jpg" alt="photo"></body></html>';
 
     runPromptsSpy.mockResolvedValue([{
       success: true,
@@ -412,7 +414,7 @@ describe("runAltTextChecks", () => {
     const inputs = runPromptsSpy.mock.calls[0][0];
     expect(inputs[0].template.name).toBe("alt_text_quality");
     expect(inputs[0].template.vision).toBe(true);
-    expect(inputs[0].userMessage).toContain("test alt");
+    expect(inputs[0].userMessage).toContain("photo");
     expect(inputs[0].userMessage).toContain("1.1.1");
   });
 
@@ -495,5 +497,174 @@ describe("runAltTextChecks", () => {
     const results = await runAltTextChecks(html, mockRunner);
     expect(results.length).toBe(1);
     expect((results[0].raw_result as AltTextEvaluation).verdict).toBe("needs_review");
+  });
+
+  it("skips API call for images with clearly acceptable alt text", async () => {
+    const html = '<html><body><img src="hero.jpg" alt="Lakewood Park Solstice Steps at sunset"></body></html>';
+
+    const results = await runAltTextChecks(html, mockRunner);
+
+    // Pre-filter passes → no API call at all
+    expect(runPromptsSpy).not.toHaveBeenCalled();
+    expect(results).toEqual([]);
+  });
+
+  it("still calls API for images failing the pre-filter", async () => {
+    const html = '<html><body><img src="test.jpg" alt="icon"></body></html>';
+
+    runPromptsSpy.mockResolvedValue([{
+      success: true,
+      data: {
+        verdict: "fail",
+        confidence: 0.85,
+        reasoning: "Single generic word",
+        wcag_criterion: "1.1.1",
+        failure_type: "alt_not_descriptive",
+        suggestion: "Use descriptive alt",
+        affected_users: ["screen_reader"],
+        requires_human_verification: false,
+      },
+      rawResponse: "{}",
+      model: "claude-sonnet-4-6",
+      tokensUsed: 100,
+      latencyMs: 500,
+      retries: 0,
+    }]);
+
+    const results = await runAltTextChecks(html, mockRunner);
+    expect(runPromptsSpy).toHaveBeenCalledTimes(1);
+    expect(results.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// altTextPassesPreFilter
+// ---------------------------------------------------------------------------
+
+describe("altTextPassesPreFilter", () => {
+  // --- Should pass (auto-skip API call) ---
+
+  it("passes descriptive alt text", () => {
+    expect(altTextPassesPreFilter("Lakewood Park Solstice Steps")).toBe(true);
+  });
+
+  it("passes 'Home icon' (generic word as part of longer string)", () => {
+    expect(altTextPassesPreFilter("Home icon")).toBe(true);
+  });
+
+  it("passes 'Staff photo of Judge Miller'", () => {
+    expect(altTextPassesPreFilter("Staff photo of Judge Miller")).toBe(true);
+  });
+
+  it("passes alt text at exactly 5 characters", () => {
+    expect(altTextPassesPreFilter("A cat")).toBe(true);
+  });
+
+  it("passes alt text at exactly 250 characters", () => {
+    const text = "A".repeat(250);
+    expect(altTextPassesPreFilter(text)).toBe(true);
+  });
+
+  // --- Should fail (proceed to API evaluation) ---
+
+  it("fails empty string", () => {
+    expect(altTextPassesPreFilter("")).toBe(false);
+  });
+
+  it("fails null (missing alt attribute)", () => {
+    expect(altTextPassesPreFilter(null)).toBe(false);
+  });
+
+  it("fails whitespace-only string", () => {
+    expect(altTextPassesPreFilter("   ")).toBe(false);
+  });
+
+  it("fails filename with extension: IMG_0234.jpg", () => {
+    expect(altTextPassesPreFilter("IMG_0234.jpg")).toBe(false);
+  });
+
+  it("fails filename with .png extension", () => {
+    expect(altTextPassesPreFilter("hero-banner.png")).toBe(false);
+  });
+
+  it("fails filename with .webp extension", () => {
+    expect(altTextPassesPreFilter("product-photo.webp")).toBe(false);
+  });
+
+  it("fails filename with .svg extension", () => {
+    expect(altTextPassesPreFilter("logo-dark.svg")).toBe(false);
+  });
+
+  it("fails filename with .gif extension", () => {
+    expect(altTextPassesPreFilter("loading-spinner.gif")).toBe(false);
+  });
+
+  it("fails camera prefix: IMG_0234", () => {
+    expect(altTextPassesPreFilter("IMG_0234")).toBe(false);
+  });
+
+  it("fails camera prefix: DSC_1234", () => {
+    expect(altTextPassesPreFilter("DSC_1234")).toBe(false);
+  });
+
+  it("fails screenshot prefix: Screenshot 2024-01-15", () => {
+    expect(altTextPassesPreFilter("Screenshot 2024-01-15")).toBe(false);
+  });
+
+  it("fails single generic word 'icon' (case-insensitive)", () => {
+    expect(altTextPassesPreFilter("icon")).toBe(false);
+  });
+
+  it("fails single generic word 'Icon' (uppercase)", () => {
+    expect(altTextPassesPreFilter("Icon")).toBe(false);
+  });
+
+  it("fails single generic word 'photo'", () => {
+    expect(altTextPassesPreFilter("photo")).toBe(false);
+  });
+
+  it("fails single generic word 'image'", () => {
+    expect(altTextPassesPreFilter("image")).toBe(false);
+  });
+
+  it("fails single generic word 'logo'", () => {
+    expect(altTextPassesPreFilter("logo")).toBe(false);
+  });
+
+  it("fails single generic word 'banner'", () => {
+    expect(altTextPassesPreFilter("banner")).toBe(false);
+  });
+
+  it("fails single generic word 'thumbnail'", () => {
+    expect(altTextPassesPreFilter("thumbnail")).toBe(false);
+  });
+
+  it("fails placeholder text 'alt text'", () => {
+    expect(altTextPassesPreFilter("alt text")).toBe(false);
+  });
+
+  it("fails placeholder text 'description'", () => {
+    expect(altTextPassesPreFilter("description")).toBe(false);
+  });
+
+  it("fails placeholder text 'todo'", () => {
+    expect(altTextPassesPreFilter("todo")).toBe(false);
+  });
+
+  it("fails placeholder text 'placeholder'", () => {
+    expect(altTextPassesPreFilter("placeholder")).toBe(false);
+  });
+
+  it("fails placeholder text 'untitled'", () => {
+    expect(altTextPassesPreFilter("untitled")).toBe(false);
+  });
+
+  it("fails alt text shorter than 5 characters", () => {
+    expect(altTextPassesPreFilter("Hi")).toBe(false);
+  });
+
+  it("fails alt text longer than 250 characters", () => {
+    const text = "A".repeat(251);
+    expect(altTextPassesPreFilter(text)).toBe(false);
   });
 });

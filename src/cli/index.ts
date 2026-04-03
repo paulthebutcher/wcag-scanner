@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { config as dotenvConfig } from "dotenv";
-dotenvConfig();
+dotenvConfig({ override: true });
 
 import { Command } from "commander";
 import { createScanCommand } from "./commands/scan.js";

@@ -799,6 +799,90 @@ describe("scan — analysis and confidence pipeline", () => {
 });
 
 // ---------------------------------------------------------------------------
+// scan() — Tier 3 not_tested when API key missing (Fix 1)
+// ---------------------------------------------------------------------------
+
+describe("scan — Tier 3 not_tested without API key", () => {
+  let browser: Browser;
+  let tmpDir: string;
+  let server: http.Server;
+  let baseUrl: string;
+
+  const SIMPLE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Simple Page</title></head>
+<body><h1>Simple</h1><a href="/">Home</a><img src="photo.jpg" alt="Photo"></body>
+</html>`;
+
+  beforeEach(async () => {
+    tmpDir = join(tmpdir(), `wcag-tier3-nokey-${randomUUID()}`);
+    mkdirSync(tmpDir, { recursive: true });
+    browser = await chromium.launch({ headless: true });
+
+    server = http.createServer((_req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(SIMPLE_HTML);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        if (addr && typeof addr === "object") {
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+        }
+        resolve();
+      });
+    });
+  });
+
+  afterEach(async () => {
+    await browser.close();
+    server.close();
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("marks all Tier 3 criteria as not_tested when no API key is provided", async () => {
+    // Ensure no API key is set — pass explicit undefined and clear env
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+
+    try {
+      const result = await scan(
+        { url: baseUrl, dataDir: tmpDir, maxPages: 1, tiers: [1, 3], apiKey: undefined },
+        browser,
+      );
+
+      // Tier 3 criteria should be not_tested, never "passed"
+      const tier3Criteria = ["1.1.1", "2.4.4", "1.3.1", "4.1.2", "3.2.3", "3.2.4", "3.3.2"];
+      for (const criterion of tier3Criteria) {
+        const cr = result.criterionResults.find(
+          (r) => r.wcag_criterion === criterion && r.tested_by === "claude_api",
+        );
+        if (cr) {
+          expect(cr.status, `${criterion} should not be "passed" without API key`).not.toBe("passed");
+        }
+      }
+
+      // At least some should be explicitly not_tested
+      const notTested = result.criterionResults.filter(
+        (r) => r.status === "not_tested" && r.tested_by === "claude_api",
+      );
+      expect(notTested.length).toBeGreaterThan(0);
+
+      // Zero false passes from Tier 3
+      const falsePasses = result.criterionResults.filter(
+        (r) => r.status === "passed" && r.tested_by === "claude_api",
+      );
+      expect(falsePasses.length).toBe(0);
+    } finally {
+      if (savedKey !== undefined) {
+        process.env.ANTHROPIC_API_KEY = savedKey;
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createScanCommand — CLI unit tests
 // ---------------------------------------------------------------------------
 

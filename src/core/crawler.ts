@@ -487,7 +487,7 @@ export async function crawl(
 
       const page = await context.newPage();
       try {
-        await page.goto(url, { waitUntil: "load", timeout: timeoutMs });
+        await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
 
         const title = await page.title();
         const dom = await page.content();

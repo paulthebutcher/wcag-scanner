@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
   initiated_at TEXT NOT NULL,
   completed_at TEXT NOT NULL,
   comparison_scan_id TEXT,
-  scan_type TEXT NOT NULL
+  scan_type TEXT NOT NULL,
+  detection_manifest TEXT
 );
 
 CREATE TABLE IF NOT EXISTS page_snapshots (
@@ -121,14 +122,29 @@ export function openDatabase(dbPath: string): Database.Database {
 // ---------------------------------------------------------------------------
 
 export function insertScanSession(db: Database.Database, session: ScanSession): void {
+  const row = {
+    ...session,
+    detection_manifest: session.detection_manifest ? JSON.stringify(session.detection_manifest) : null,
+  };
   db.prepare(`
-    INSERT INTO scan_sessions (id, url, platform, platform_detected_via, initiated_at, completed_at, comparison_scan_id, scan_type)
-    VALUES (@id, @url, @platform, @platform_detected_via, @initiated_at, @completed_at, @comparison_scan_id, @scan_type)
-  `).run(session);
+    INSERT INTO scan_sessions (id, url, platform, platform_detected_via, initiated_at, completed_at, comparison_scan_id, scan_type, detection_manifest)
+    VALUES (@id, @url, @platform, @platform_detected_via, @initiated_at, @completed_at, @comparison_scan_id, @scan_type, @detection_manifest)
+  `).run(row);
+}
+
+function parseSessionRow(row: Record<string, unknown> | undefined): ScanSession | undefined {
+  if (!row) return undefined;
+  return {
+    ...row,
+    detection_manifest: typeof row.detection_manifest === "string"
+      ? JSON.parse(row.detection_manifest)
+      : row.detection_manifest ?? null,
+  } as ScanSession;
 }
 
 export function getScanSession(db: Database.Database, id: string): ScanSession | undefined {
-  return db.prepare("SELECT * FROM scan_sessions WHERE id = ?").get(id) as ScanSession | undefined;
+  const row = db.prepare("SELECT * FROM scan_sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  return parseSessionRow(row);
 }
 
 export function updateScanSession(
@@ -143,7 +159,8 @@ export function updateScanSession(
 }
 
 export function listScanSessions(db: Database.Database): ScanSession[] {
-  return db.prepare("SELECT * FROM scan_sessions ORDER BY initiated_at DESC").all() as ScanSession[];
+  const rows = db.prepare("SELECT * FROM scan_sessions ORDER BY initiated_at DESC").all() as Record<string, unknown>[];
+  return rows.map((r) => parseSessionRow(r)!);
 }
 
 // ---------------------------------------------------------------------------

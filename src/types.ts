@@ -110,6 +110,22 @@ export interface PromptRunnerConfig {
 
 // Entity interfaces
 
+/** Audit trail of which detection rules/versions were active during a scan */
+export interface DetectionManifest {
+  /** Engine version (package.json version) */
+  engine_version: string;
+  /** @axe-core/playwright version from node_modules */
+  axe_core_version: string;
+  /** Any axe-core rules explicitly disabled */
+  axe_disabled_rules: string[];
+  /** Which check tiers were active */
+  active_tiers: number[];
+  /** Whether the Anthropic API key was present and usable */
+  api_key_present: boolean;
+  /** Tier 3 semantic checks that were enabled */
+  semantic_checks: string[];
+}
+
 export interface ScanSession {
   id: string;
   url: string;
@@ -119,6 +135,8 @@ export interface ScanSession {
   completed_at: string;
   comparison_scan_id: string | null;
   scan_type: ScanType;
+  /** Audit trail: which rules, versions, and tiers were active */
+  detection_manifest: DetectionManifest | null;
 }
 
 export interface PageSnapshot {

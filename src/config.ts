@@ -26,8 +26,9 @@ function parsePositiveInt(value: string, name: string): number {
  *   3. Built-in defaults
  */
 export function loadConfig(overrides?: Partial<Config>): Config {
-  // Load .env file into process.env (does not overwrite existing vars)
-  dotenvConfig();
+  // Load .env file into process.env (override existing vars — avoids issues
+  // when the shell exports an empty ANTHROPIC_API_KEY)
+  dotenvConfig({ override: true });
 
   // --- anthropicApiKey (required) ---
   const apiKey = overrides?.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;

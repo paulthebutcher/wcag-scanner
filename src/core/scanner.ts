@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type {
   ScanSession,
@@ -15,6 +16,7 @@ import type {
   CategoryCounts,
   PlatformAdapter,
   DetectedBy,
+  DetectionManifest,
 } from "../types.js";
 import { openDatabase } from "../store/db.js";
 import {
@@ -444,13 +446,19 @@ function reconcileCriterionResults(
   for (const [criterion, findingIds] of findingsByCriterion) {
     const existing = crByCriterion.get(criterion);
     if (existing) {
+      // Infer tested_by from the actual finding that detected the violation
+      const firstFinding = findings.find((f) => f.wcag_criterion === criterion);
+      const actualTestedBy = firstFinding?.evidence.detected_by ?? existing.tested_by;
+
       if (existing.status !== "failed") {
         // Overwrite: was passed/not_applicable but has violations
         existing.status = "failed";
+        existing.tested_by = actualTestedBy;
         existing.finding_ids = findingIds;
         upsertCriterionResult(db, existing);
       } else {
-        // Already failed — ensure finding IDs are populated
+        // Already failed — ensure finding IDs and tested_by are accurate
+        existing.tested_by = actualTestedBy;
         existing.finding_ids = findingIds;
         upsertCriterionResult(db, existing);
       }
@@ -480,6 +488,49 @@ function reconcileCriterionResults(
   }
 
   return updatedResults;
+}
+
+// ---------------------------------------------------------------------------
+// Detection manifest — audit trail for scan reproducibility
+// ---------------------------------------------------------------------------
+
+const TIER3_SEMANTIC_CHECKS = [
+  "alt-text", "link-text", "headings", "landmark-labels",
+  "widget-aria", "table-structure", "duplicate-links", "consistent-nav",
+];
+
+function buildDetectionManifest(tiers: number[], options: ScanOptions): DetectionManifest {
+  // Read axe-core version from installed package
+  let axeCoreVersion = "unknown";
+  try {
+    // ESM-compatible: resolve from node_modules relative to project root
+    const axePkgPath = join(process.cwd(), "node_modules", "axe-core", "package.json");
+    const axePkg = JSON.parse(readFileSync(axePkgPath, "utf8"));
+    axeCoreVersion = axePkg.version ?? "unknown";
+  } catch {
+    // If we can't read it, leave as "unknown"
+  }
+
+  // Read our own engine version
+  let engineVersion = "unknown";
+  try {
+    const pkgPath = join(process.cwd(), "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    engineVersion = pkg.version ?? "unknown";
+  } catch {
+    // Fallback
+  }
+
+  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+
+  return {
+    engine_version: engineVersion,
+    axe_core_version: axeCoreVersion,
+    axe_disabled_rules: [],
+    active_tiers: tiers,
+    api_key_present: !!apiKey,
+    semantic_checks: tiers.includes(3) ? TIER3_SEMANTIC_CHECKS : [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +572,7 @@ export async function scan(
     completed_at: "",
     comparison_scan_id: null,
     scan_type: "initial",
+    detection_manifest: buildDetectionManifest(tiers, options),
   };
   insertScanSession(db, scanSession);
 
@@ -849,6 +901,12 @@ export async function scan(
         reporter.update("semantic", "Running semantic checks...");
         let semanticCount = 0;
 
+        // Track which semantic criteria were attempted (regardless of outcome)
+        // and which had violations.  At the end, criteria in attempted but NOT
+        // in violations are "passed"; criteria NOT in attempted are "not_tested".
+        const semanticAttemptedCriteria = new Set<string>();
+        const semanticViolationCriteria = new Set<string>();
+
         // Create or use injected PromptRunner
         const runner = options.promptRunner ?? (() => {
           const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -860,14 +918,12 @@ export async function scan(
         })();
 
         if (runner) {
-          // Track which semantic criteria had violations
-          const semanticViolationCriteria = new Set<string>();
-
           for (const snapshot of pageSnapshots) {
             const dom = snapshot.full_dom;
             const pageResults: CheckResult[] = [];
 
             // 3a: Alt text quality
+            semanticAttemptedCriteria.add("1.1.1");
             try {
               const axeFlagged = axeFlaggedByPage.get(snapshot.id) ?? new Set();
               const altResults = await runAltTextChecks(dom, runner, {
@@ -881,6 +937,7 @@ export async function scan(
             }
 
             // 3b: Link text quality
+            semanticAttemptedCriteria.add("2.4.4");
             try {
               const linkResults = await runLinkTextChecks(dom, runner);
               pageResults.push(...linkResults);
@@ -891,6 +948,7 @@ export async function scan(
             }
 
             // 3c: Heading structure
+            semanticAttemptedCriteria.add("1.3.1");
             try {
               const headingResults = await runHeadingChecks(dom, snapshot.title, runner);
               pageResults.push(...headingResults);
@@ -911,6 +969,7 @@ export async function scan(
             }
 
             // 3e: Widget ARIA roles
+            semanticAttemptedCriteria.add("4.1.2");
             try {
               const widgetResults = await runWidgetAriaChecks(dom, runner);
               pageResults.push(...widgetResults);
@@ -958,16 +1017,17 @@ export async function scan(
             reporter.update("semantic", `${snapshot.url}: ${pageResults.length} issue(s) found`);
           }
 
-          // Create pass CriterionResults for semantic criteria with no violations
-          const semanticCriteriaChecked: Array<[string, string]> = [
-            ["1.1.1", "Alt text quality evaluated across all pages"],
-            ["2.4.4", "Link text quality and duplicate link detection evaluated across all pages"],
-            ["1.3.1", "Heading structure, landmark labels, and table structure evaluated across all pages"],
-            ["4.1.2", "Widget ARIA roles and states evaluated across all pages"],
-          ];
-          for (const [criterion, summary] of semanticCriteriaChecked) {
-            if (!semanticViolationCriteria.has(criterion)) {
-              // Override not_applicable → passed if we actually ran checks for this criterion
+          // Create pass CriterionResults for semantic criteria that were
+          // attempted with no violations.  Criteria not attempted stay
+          // un-covered and will be marked "not_tested" below.
+          const semanticCriteriaDescriptions: Record<string, string> = {
+            "1.1.1": "Alt text quality evaluated across all pages",
+            "2.4.4": "Link text quality and duplicate link detection evaluated across all pages",
+            "1.3.1": "Heading structure, landmark labels, and table structure evaluated across all pages",
+            "4.1.2": "Widget ARIA roles and states evaluated across all pages",
+          };
+          for (const [criterion, summary] of Object.entries(semanticCriteriaDescriptions)) {
+            if (semanticAttemptedCriteria.has(criterion) && !semanticViolationCriteria.has(criterion)) {
               const passCr = makeCriterionResult(scanId, criterion, "passed", "claude_api", summary);
               upsertCriterionResult(db, passCr);
               allCriterionResults.push(passCr);
@@ -975,6 +1035,7 @@ export async function scan(
           }
 
           // 3d: Consistent navigation (cross-page comparison)
+          semanticAttemptedCriteria.add("3.2.3");
           if (pageSnapshots.length > 1) {
             try {
               const navResults = await runConsistentNavChecks(pageSnapshots, runner);
@@ -1012,6 +1073,7 @@ export async function scan(
             const failed = new Set(allFindings.map(f => f.wcag_criterion));
             for (const [criterion, summary] of semanticExtra) {
               if (!covered.has(criterion) && !failed.has(criterion)) {
+                semanticAttemptedCriteria.add(criterion);
                 const cr = makeCriterionResult(scanId, criterion, "passed", "claude_api", summary);
                 upsertCriterionResult(db, cr);
                 allCriterionResults.push(cr);
@@ -1020,6 +1082,24 @@ export async function scan(
           }
 
           reporter.complete("semantic", `Semantic checks complete: ${semanticCount} finding(s)`);
+        }
+
+        // Mark all Tier 3 criteria that were NOT attempted as "not_tested".
+        // This covers both the "no API key" case (runner is null → nothing
+        // attempted) and partial failures where individual checks threw.
+        const TIER3_CRITERIA = ["1.1.1", "2.4.4", "1.3.1", "4.1.2", "3.2.3", "3.2.4", "3.3.2"];
+        for (const criterion of TIER3_CRITERIA) {
+          if (!semanticAttemptedCriteria.has(criterion)) {
+            const cr = makeCriterionResult(
+              scanId,
+              criterion,
+              "not_tested",
+              "claude_api",
+              "Tier 3 semantic evaluation was unavailable or failed",
+            );
+            upsertCriterionResult(db, cr);
+            allCriterionResults.push(cr);
+          }
         }
       }
 

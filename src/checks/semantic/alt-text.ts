@@ -120,6 +120,64 @@ export function deduplicateCmsImages(images: ImageContext[]): ImageContext[] {
 }
 
 // ---------------------------------------------------------------------------
+// Alt text pre-filter — skip API call for clearly acceptable alt text
+// ---------------------------------------------------------------------------
+
+/** Known file extension patterns */
+const FILE_EXT_RE = /\.(jpe?g|png|gif|svg|webp|avif|bmp|tiff?|ico)(\?.*)?$/i;
+
+/** Common camera / screenshot prefixes that indicate a filename */
+const FILENAME_PREFIX_RE = /^(IMG[_-]|DSC[_-]|DCIM|Screenshot|Screen Shot|Capture|Photo[_-]|PXL_|DJI_|GOPR|VID[_-])/i;
+
+/** Single generic words that are never useful alt text */
+const GENERIC_SINGLE_WORDS = new Set([
+  "image", "photo", "picture", "icon", "logo",
+  "graphic", "banner", "screenshot", "thumbnail",
+]);
+
+/** Placeholder / filler text */
+const PLACEHOLDER_RE = /^(alt\s*text|description|todo|placeholder|untitled)$/i;
+
+/**
+ * Returns `true` if the alt text is clearly acceptable and can skip the
+ * Claude API call. Returns `false` if any anti-pattern is detected (or
+ * the text is empty / too short / too long), meaning it should proceed
+ * to the full semantic evaluation.
+ *
+ * Conditions for auto-pass (ALL must be true):
+ * 1. Non-empty and not whitespace-only
+ * 2. Not a filename (has file extension or camera/screenshot prefix)
+ * 3. Not a single generic word (image, photo, icon, etc.)
+ * 4. Not placeholder text (todo, placeholder, alt text, etc.)
+ * 5. Length between 5 and 250 characters (inclusive)
+ */
+export function altTextPassesPreFilter(alt: string | null): boolean {
+  // Null or missing alt attribute — needs evaluation
+  if (alt === null) return false;
+
+  const trimmed = alt.trim();
+
+  // 1. Non-empty
+  if (trimmed.length === 0) return false;
+
+  // 5. Length bounds (check early to short-circuit)
+  if (trimmed.length < 5 || trimmed.length > 250) return false;
+
+  const lower = trimmed.toLowerCase();
+
+  // 2. Filename detection: extension or camera/screenshot prefix
+  if (FILE_EXT_RE.test(lower) || FILENAME_PREFIX_RE.test(trimmed)) return false;
+
+  // 3. Single generic word (exact match only)
+  if (GENERIC_SINGLE_WORDS.has(lower)) return false;
+
+  // 4. Placeholder text
+  if (PLACEHOLDER_RE.test(lower)) return false;
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Main check function
 // ---------------------------------------------------------------------------
 
@@ -163,18 +221,22 @@ export async function runAltTextChecks(
     images = deduplicateCmsImages(images);
   }
 
+  // 5. Pre-filter: auto-pass images whose alt text is clearly acceptable
+  //    (non-empty, not a filename/generic/placeholder, 5-250 chars)
+  images = images.filter((img) => !altTextPassesPreFilter(img.alt));
+
   if (images.length === 0) {
     return [];
   }
 
-  // 5. Get screenshots if provider available
+  // 6. Get screenshots if provider available
   if (screenshotProvider) {
     for (const img of images) {
       img.screenshotBase64 = await screenshotProvider(img.selector);
     }
   }
 
-  // 6. Send each image to Claude API for evaluation
+  // 7. Send each image to Claude API for evaluation
   const results: CheckResult[] = [];
   const promptInputs = images.map((img) => ({
     template: altTextQuality,
@@ -189,7 +251,7 @@ export async function runAltTextChecks(
 
   const evalResults = await runner.runPrompts<AltTextEvaluation>(promptInputs);
 
-  // 7. Map results to CheckResult[]
+  // 8. Map results to CheckResult[]
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
     const evalResult = evalResults[i];

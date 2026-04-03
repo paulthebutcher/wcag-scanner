@@ -144,7 +144,19 @@ export const inputPurposeMatching: PromptTemplate = {
 You are evaluating input purpose identification. WCAG 1.3.5 requires:
 - Form fields collecting personal information must have appropriate autocomplete attributes.
 - The autocomplete value must match the actual purpose of the field.
-- Common fields: name, email, tel, street-address, postal-code, cc-number, etc.
+
+Valid autocomplete tokens per the HTML spec include (this is not exhaustive):
+name, honorific-prefix, given-name, additional-name, family-name, honorific-suffix,
+nickname, email, username, new-password, current-password, one-time-code,
+organization-title, organization, street-address, address-line1, address-line2,
+address-line3, address-level4, address-level3, address-level2, address-level1,
+country, country-name, postal-code, cc-name, cc-given-name, cc-additional-name,
+cc-family-name, cc-number, cc-exp, cc-exp-month, cc-exp-year, cc-csc, cc-type,
+transaction-currency, transaction-amount, language, bday, bday-day, bday-month,
+bday-year, sex, tel, tel-country-code, tel-national, tel-area-code, tel-local,
+tel-extension, impp, url, photo.
+
+IMPORTANT: If the autocomplete attribute is present and its value is a valid token from this list that reasonably matches the field's purpose, the input PASSES 1.3.5. Do not flag a valid token as incorrect merely because a more specific token exists (e.g., "name" is valid even if "given-name" would be more precise; "tel" is valid even if "tel-national" would be more specific).
 
 Common failure types: ${INPUT_PURPOSE_FAILURE_MODES.join(", ")}
 
