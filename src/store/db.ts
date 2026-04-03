@@ -114,6 +114,13 @@ export function openDatabase(dbPath: string): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
+
+  // Migrate: add detection_manifest column if missing (for pre-existing databases)
+  const cols = db.pragma("table_info(scan_sessions)") as { name: string }[];
+  if (!cols.some((c) => c.name === "detection_manifest")) {
+    db.exec("ALTER TABLE scan_sessions ADD COLUMN detection_manifest TEXT");
+  }
+
   return db;
 }
 
