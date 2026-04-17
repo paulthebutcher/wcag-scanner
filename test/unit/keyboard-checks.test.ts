@@ -16,6 +16,9 @@ import {
 const fixturePath = join(import.meta.dirname, "..", "fixtures", "keyboard-test.html");
 const fixtureHtml = readFileSync(fixturePath, "utf-8");
 
+const autofocusFixturePath = join(import.meta.dirname, "..", "fixtures", "keyboard-autofocus-test.html");
+const autofocusFixtureHtml = readFileSync(autofocusFixturePath, "utf-8");
+
 // ---------------------------------------------------------------------------
 // Tab sequence recording tests (C2-01)
 // ---------------------------------------------------------------------------
@@ -275,6 +278,48 @@ describe("recordTabSequence", () => {
       }
     } finally {
       await page.close();
+    }
+  });
+
+  it("reaches elements that come before the autofocus anchor in document order", async () => {
+    // Regression: Webflow password pages autofocus the password input.
+    // Before the fix, recordTabSequence's first Tab advanced past the
+    // autofocused element (browser anchor stayed on it), so the full tab
+    // cycle was missed and elements before/including the autofocus target
+    // were falsely flagged as unreachable.
+    const p = await context.newPage();
+    try {
+      await p.setContent(autofocusFixtureHtml);
+
+      const result = await recordTabSequence(p, { maxTabs: 50 });
+
+      // All five tabbable elements must appear in the tab sequence
+      const reachedIds = new Set(
+        result.focusStops
+          .map((s) => {
+            const m = s.outerHtml.match(/id="([^"]+)"/);
+            return m ? m[1] : null;
+          })
+          .filter((id): id is string => id !== null),
+      );
+
+      expect(reachedIds).toContain("top-link");
+      expect(reachedIds).toContain("before-pass");
+      expect(reachedIds).toContain("pass");         // autofocus target — must be reached
+      expect(reachedIds).toContain("submit-btn");
+      expect(reachedIds).toContain("bottom-link");
+
+      // No element should end up in unreachableElements
+      const unreachableIds = result.unreachableElements
+        .map((e) => e.outerHtml.match(/id="([^"]+)"/)?.[1])
+        .filter((id): id is string | undefined => id !== undefined);
+      expect(unreachableIds).toEqual([]);
+
+      // Should end by cycle detection (revisit), not by max-tabs
+      expect(result.endedByCycle).toBe(true);
+      expect(result.endedByMax).toBe(false);
+    } finally {
+      await p.close();
     }
   });
 

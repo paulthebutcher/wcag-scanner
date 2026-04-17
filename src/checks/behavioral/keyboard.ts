@@ -218,11 +218,23 @@ async function isKeyboardReachable(handle: ElementHandle): Promise<boolean> {
 /**
  * Record the full tab sequence of a page.
  *
- * Tabs through the page starting from the body, recording each focused element.
- * Stops when:
- * - The same element is focused twice (cycle detected)
+ * Tabs through the page recording each distinct focused element. Stops when:
+ * - The same element is focused twice (cycle detected — full loop traversed)
  * - maxTabs is reached (default 500)
- * - Focus returns to the body element
+ * - Too many consecutive body-focus presses with no page element in between
+ *
+ * Body-focus is NOT a stop condition. The browser's tab cycle naturally
+ * passes through body (once per lap) and then wraps to the first tabbable
+ * element in document order. If we bailed on the first body-hit we'd miss
+ * every element that precedes the browser's initial focus anchor — a real
+ * problem on pages with `autofocus` or pages where the user's last focused
+ * element wasn't the first tab stop (e.g. Webflow password pages, where
+ * autofocus on #pass makes the FIRST Tab press advance past it to the
+ * submit button).
+ *
+ * To mirror what a real keyboard user would experience, we also press
+ * Shift+Tab once before the forward sweep to move the focus anchor to
+ * "before" the first tab stop, regardless of where autofocus left it.
  */
 export async function recordTabSequence(
   page: Page,
@@ -236,11 +248,19 @@ export async function recordTabSequence(
   let endedByMax = false;
   let totalTabs = 0;
 
-  // Start from the body
+  // Reset focus. Calling body.focus() alone doesn't always reset the
+  // browser's sequential-focus-navigation starting point; if something was
+  // autofocused, Tab advances from *there*, not from the top of document
+  // order. Pressing Shift+Tab after focusing body moves the anchor off the
+  // page entirely (into chrome), so the next Tab enters at document start.
   await page.evaluate(() => {
     (document.activeElement as HTMLElement)?.blur?.();
     document.body.focus();
   });
+  await page.keyboard.press("Shift+Tab");
+
+  let consecutiveBodyFocuses = 0;
+  const MAX_CONSECUTIVE_BODY = 3;
 
   for (let i = 0; i < maxTabs; i++) {
     await page.keyboard.press("Tab");
@@ -248,23 +268,18 @@ export async function recordTabSequence(
 
     const info = await getFocusedElementInfo(page);
 
-    // Focus returned to body or no focused element
     if (!info) {
-      // If we've already recorded stops, try one more Tab to see if focus wraps
-      // back to a page element (browser wraps tab order through address bar/body)
-      if (focusStops.length > 0 && i + 1 < maxTabs) {
-        await page.keyboard.press("Tab");
-        totalTabs++;
-        i++;
-        const wrapInfo = await getFocusedElementInfo(page);
-        if (wrapInfo && visitedSelectors.has(wrapInfo.selector)) {
-          endedByCycle = true;
-        }
-      }
-      break;
+      // Focus is on body — the browser passes through body between laps.
+      // Don't break; keep tabbing so we sweep the full cycle. But if we see
+      // body repeatedly with no page element in between, the page has
+      // nothing focusable left and we should stop.
+      consecutiveBodyFocuses++;
+      if (consecutiveBodyFocuses >= MAX_CONSECUTIVE_BODY) break;
+      continue;
     }
+    consecutiveBodyFocuses = 0;
 
-    // Cycle detection: same element focused twice
+    // Cycle detection: same element focused twice — we've completed a lap.
     if (visitedSelectors.has(info.selector)) {
       endedByCycle = true;
       break;

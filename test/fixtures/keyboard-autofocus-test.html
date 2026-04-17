@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Keyboard Autofocus Regression</title>
+</head>
+<body>
+  <!--
+    This fixture reproduces the Webflow password-page scenario that was
+    producing false positives in the tab-sequence recorder. The key
+    ingredients are:
+      1. autofocus on an element that is NOT the first tab stop — this
+         sets the browser's sequential-focus-navigation starting point
+         inside the middle of the cycle
+      2. more than one tab stop total — so the first Tab press lands on
+         a different element depending on whether the anchor was reset
+
+    Before the fix, recordTabSequence saw only the element AFTER the
+    autofocus anchor on Tab #1, then hit body, then bailed out without
+    recording the autofocused element (or any element that came BEFORE
+    it in document order).
+  -->
+
+  <a href="/home" id="top-link">Top link (first in document order)</a>
+  <input type="text" id="before-pass" placeholder="Before pass">
+
+  <input type="password" id="pass" autofocus>
+
+  <button type="submit" id="submit-btn">Submit</button>
+  <a href="/bottom" id="bottom-link">Bottom link</a>
+</body>
+</html>
