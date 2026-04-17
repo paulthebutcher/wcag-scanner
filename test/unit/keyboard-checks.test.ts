@@ -215,6 +215,89 @@ describe("recordTabSequence", () => {
       await page.close();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Ancestor-walk regression tests: the browser's tab order skips descendants
+  // of hidden / aria-hidden / inert / disabled-fieldset ancestors. The
+  // scanner's expected-reachable set must mirror this.
+  // ---------------------------------------------------------------------------
+
+  it("does NOT flag descendants of display:none ancestor as unreachable", async () => {
+    page = await loadFixturePage();
+    try {
+      const result = await recordTabSequence(page, { maxTabs: 200 });
+
+      for (const el of result.unreachableElements) {
+        expect(el.outerHtml).not.toContain("Link in display-none wrapper");
+        expect(el.outerHtml).not.toContain("Button in display-none wrapper");
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('does NOT flag descendants of aria-hidden="true" ancestor', async () => {
+    page = await loadFixturePage();
+    try {
+      const result = await recordTabSequence(page, { maxTabs: 200 });
+
+      for (const el of result.unreachableElements) {
+        expect(el.outerHtml).not.toContain("Link in aria-hidden wrapper");
+        expect(el.outerHtml).not.toContain("Button in aria-hidden wrapper");
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("does NOT flag descendants of an inert ancestor", async () => {
+    page = await loadFixturePage();
+    try {
+      const result = await recordTabSequence(page, { maxTabs: 200 });
+
+      for (const el of result.unreachableElements) {
+        expect(el.outerHtml).not.toContain("Link in inert wrapper");
+        expect(el.outerHtml).not.toContain("Button in inert wrapper");
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("does NOT flag form controls inside <fieldset disabled>", async () => {
+    page = await loadFixturePage();
+    try {
+      const result = await recordTabSequence(page, { maxTabs: 200 });
+
+      for (const el of result.unreachableElements) {
+        expect(el.outerHtml).not.toContain('id="f1"');
+        expect(el.outerHtml).not.toContain("Submit fieldset");
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("does NOT flag Webflow-style hidden mobile nav at desktop viewport", async () => {
+    page = await loadFixturePage();
+    try {
+      // Default viewport is desktop; mobile wrapper is display:none.
+      const result = await recordTabSequence(page, { maxTabs: 200 });
+
+      for (const el of result.unreachableElements) {
+        expect(el.outerHtml).not.toContain("Mobile Home");
+        expect(el.outerHtml).not.toContain("Mobile About");
+        expect(el.outerHtml).not.toContain("Menu trigger");
+      }
+
+      // Desktop nav links ARE reachable
+      const reachedHtml = result.focusStops.map((s) => s.outerHtml).join(" ");
+      expect(reachedHtml).toContain("Desktop Home");
+      expect(reachedHtml).toContain("Desktop About");
+    } finally {
+      await page.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

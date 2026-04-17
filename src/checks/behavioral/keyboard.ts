@@ -162,19 +162,51 @@ async function getFocusedElementInfo(page: Page): Promise<{
   return { selector, ...info, boundingBox };
 }
 
-/** Check whether an element is visible and not disabled */
-async function isVisibleAndEnabled(handle: ElementHandle): Promise<boolean> {
+/**
+ * Predicate mirroring whether the browser's native tab order would reach an
+ * element. Used to build the "expected" set in findUnreachableElements.
+ *
+ * Two layers:
+ *   1. Playwright's isVisible() — source of truth for CSS visibility (covers
+ *      display:none / visibility:hidden on self or any ancestor, empty
+ *      bounding boxes, and elements not in the render tree).
+ *   2. An ancestor walk for focusability properties CSS visibility doesn't
+ *      cover: aria-hidden="true", inert, hidden attr, and <fieldset disabled>.
+ *      Also checks self for disabled and negative tabindex.
+ *
+ * The previous implementation only checked aria-hidden / hidden on the
+ * element itself and used getBoundingClientRect as a proxy for visibility,
+ * which missed elements hidden by an ancestor's aria-hidden or inert — a
+ * common pattern in responsive nav markup (e.g. a mobile menu wrapper that
+ * stays in the DOM but is aria-hidden at desktop breakpoints).
+ */
+async function isKeyboardReachable(handle: ElementHandle): Promise<boolean> {
+  // Layer 1: browser-truth visibility.
+  if (!(await handle.isVisible())) return false;
+
+  // Layer 2: focusability properties and ancestor state.
   return handle.evaluate((el) => {
     const htmlEl = el as HTMLElement;
+
+    // Self-only checks.
     if ((htmlEl as HTMLInputElement).disabled) return false;
-    if (htmlEl.getAttribute("aria-hidden") === "true") return false;
-    if (htmlEl.hidden) return false;
-    const style = window.getComputedStyle(htmlEl);
-    if (style.display === "none" || style.visibility === "hidden") return false;
-    if (style.opacity === "0") return false;
-    // Check if element has any dimensions
-    const rect = htmlEl.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return false;
+    const ti = htmlEl.getAttribute("tabindex");
+    if (ti !== null && parseInt(ti, 10) < 0) return false;
+
+    // Walk self + ancestors — any of these on the chain excludes the element
+    // from the browser's tab order.
+    let cur: Element | null = htmlEl;
+    while (cur && cur !== document.documentElement) {
+      const curEl = cur as HTMLElement;
+      if (curEl.hasAttribute?.("inert")) return false;
+      if (cur.getAttribute("aria-hidden") === "true") return false;
+      if (curEl.hidden) return false;
+      // <fieldset disabled> disables all descendant form controls natively.
+      if (cur.tagName === "FIELDSET" && (cur as HTMLFieldSetElement).disabled) {
+        return false;
+      }
+      cur = cur.parentElement;
+    }
     return true;
   });
 }
@@ -277,17 +309,14 @@ async function findUnreachableElements(
   const unreachable: UnreachableElement[] = [];
 
   for (const handle of interactiveElements) {
-    const visible = await isVisibleAndEnabled(handle);
-    if (!visible) {
+    const reachable = await isKeyboardReachable(handle);
+    if (!reachable) {
       await handle.dispose();
       continue;
     }
 
     const info = await handle.evaluate((el) => {
       const htmlEl = el as HTMLElement;
-      // Skip elements explicitly removed from tab order via attribute
-      if (htmlEl.getAttribute("tabindex") === "-1") return null;
-
       const html = htmlEl.outerHTML;
       // Build selector
       let selector: string;

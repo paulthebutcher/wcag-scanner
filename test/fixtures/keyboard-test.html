@@ -68,6 +68,53 @@
     <!-- Element explicitly removed from tab order — should NOT be flagged -->
     <button tabindex="-1">Removed from tab order</button>
 
+    <!-- Descendants of hidden ancestors — should NOT be flagged.
+         These test the ancestor-walk logic in isKeyboardReachable. -->
+
+    <!-- display:none on wrapper: child <a>/<button> should inherit not-rendered status -->
+    <div class="hidden-element" id="display-none-wrapper">
+      <a href="/a1">Link in display-none wrapper</a>
+      <button type="button">Button in display-none wrapper</button>
+    </div>
+
+    <!-- aria-hidden="true" on wrapper: browser tab order skips descendants -->
+    <div aria-hidden="true" id="aria-hidden-wrapper">
+      <a href="/a2">Link in aria-hidden wrapper</a>
+      <button type="button">Button in aria-hidden wrapper</button>
+    </div>
+
+    <!-- inert on wrapper: descendants are not focusable -->
+    <div inert id="inert-wrapper">
+      <a href="/a3">Link in inert wrapper</a>
+      <button type="button">Button in inert wrapper</button>
+    </div>
+
+    <!-- <fieldset disabled>: all descendant form controls are disabled -->
+    <fieldset disabled id="disabled-fieldset">
+      <label for="f1">Field 1:</label>
+      <input type="text" id="f1" name="f1">
+      <button type="submit">Submit fieldset</button>
+    </fieldset>
+
+    <!-- Webflow-style desktop/mobile nav pair. At desktop viewport (default),
+         the mobile wrapper + its custom trigger are display:none and the
+         panel inside is aria-hidden. None of them should be flagged. -->
+    <style>
+      .wflow-desktop-nav { display: block; }
+      .wflow-mobile-wrapper { display: none; }
+    </style>
+    <nav class="wflow-desktop-nav" aria-label="Desktop navigation">
+      <a href="/desktop-home">Desktop Home</a>
+      <a href="/desktop-about">Desktop About</a>
+    </nav>
+    <div class="wflow-mobile-wrapper">
+      <div class="menu-button-mobile" role="button" tabindex="0" aria-controls="mobile-panel">Menu trigger</div>
+      <nav id="mobile-panel" aria-hidden="true" aria-label="Mobile navigation">
+        <a href="/mobile-home">Mobile Home</a>
+        <a href="/mobile-about">Mobile About</a>
+      </nav>
+    </div>
+
     <footer>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
