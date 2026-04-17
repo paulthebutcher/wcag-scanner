@@ -14,6 +14,8 @@ import {
   listFindingsByScan,
 } from "../store/db.js";
 import { WebflowAdapter, getRemediationTemplate, clearRemediationCache } from "../adapters/webflow.js";
+import { computeSummary, reconcileInMemory } from "../core/scanner.js";
+import { shouldFilterFromClientReport } from "./findings-dump.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -391,7 +393,15 @@ export function computeDiff(
  * - ScanSummary (aggregated statistics)
  * - ScanDiff (if comparison_scan_id is set on the session)
  */
-export function queryFindings(db: Database.Database, scanId: string): ReportData {
+export function queryFindings(
+  db: Database.Database,
+  scanId: string,
+  opts: { filterNoisy?: boolean } = {},
+): ReportData {
+  // Default behavior: filter low-confidence findings from the client-facing
+  // report. Callers that need EVERY finding (verbose dump) pass filterNoisy:false.
+  const filterNoisy = opts.filterNoisy ?? true;
+
   // Fetch scan session
   const scanSession = getScanSession(db, scanId);
   if (!scanSession) {
@@ -399,29 +409,56 @@ export function queryFindings(db: Database.Database, scanId: string): ReportData
   }
 
   // Fetch all findings for this scan
-  const findings = listFindingsByScan(db, scanId);
+  const rawFindings = listFindingsByScan(db, scanId);
 
   // Backfill Webflow remediation for findings with stub/empty remediation
   if (scanSession.platform === "webflow") {
-    backfillWebflowRemediation(findings);
+    backfillWebflowRemediation(rawFindings);
   }
+
+  // Filter low-confidence / noisy findings from the client report. This is
+  // THE hook point — everything downstream recomputes from the filtered set.
+  const findings = filterNoisy
+    ? rawFindings.filter((f) => !shouldFilterFromClientReport(f))
+    : rawFindings;
 
   // Group by finding_type_hash
   const groups = groupFindingsByHash(findings);
 
-  // Fetch criterion results and summary
-  const criterionResults = listCriterionResults(db, scanId);
+  // Fetch stored criterion results and summary
+  const storedCriterionResults = listCriterionResults(db, scanId);
   const storedSummary = getScanSummary(db, scanId) ?? null;
 
-  // Recalculate effort at the finding-type level (not per-instance)
-  const summary = storedSummary
-    ? { ...storedSummary, estimated_total_effort: estimateEffortByType(groups) }
-    : null;
+  // Re-reconcile criterion results against the filtered finding set. Criteria
+  // whose only findings were filtered out flip from "failed" to "passed".
+  const criterionResults = filterNoisy
+    ? reconcileInMemory(scanId, findings, storedCriterionResults)
+    : storedCriterionResults;
 
-  // Compute diff if comparison scan exists
+  // Recompute summary from the filtered findings + reconciled results ONLY
+  // when the filter actually changed the finding set. Otherwise the stored
+  // summary is accurate (or null), and we keep null-ness consistent with the
+  // no-filter path. Effort is always recalculated per-type.
+  const filterRemovedSome = filterNoisy && rawFindings.length !== findings.length;
+  let summary: ScanSummary | null;
+  if (filterRemovedSome) {
+    const recomputed = computeSummary(scanId, findings, criterionResults);
+    summary = { ...recomputed, estimated_total_effort: estimateEffortByType(groups) };
+  } else {
+    summary = storedSummary
+      ? { ...storedSummary, estimated_total_effort: estimateEffortByType(groups) }
+      : null;
+  }
+
+  // Compute diff if comparison scan exists. Apply the SAME filter to the
+  // comparison side — otherwise findings filtered out of the current scan
+  // would appear as phantom "resolved" items.
   let diff: ScanDiff | null = null;
   if (scanSession.comparison_scan_id) {
-    const comparisonFindings = listFindingsByScan(db, scanSession.comparison_scan_id);
+    const rawComparison = listFindingsByScan(db, scanSession.comparison_scan_id);
+    const comparisonFindings = filterNoisy
+      ? rawComparison.filter((f) => !shouldFilterFromClientReport(f))
+      : rawComparison;
     const comparisonGroups = groupFindingsByHash(comparisonFindings);
     diff = computeDiff(groups, comparisonGroups);
   }

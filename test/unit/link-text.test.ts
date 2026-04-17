@@ -4,6 +4,8 @@ import {
   deduplicateCmsLinks,
   hasDescriptiveAriaLabel,
   runLinkTextChecks,
+  linkTextPassesPreFilter,
+  findNearestLandmark,
   type LinkContext,
   type LinkTextEvaluation,
 } from "../../src/checks/semantic/link-text.js";
@@ -115,6 +117,115 @@ describe("collectLinks", () => {
 });
 
 // ---------------------------------------------------------------------------
+// findNearestLandmark
+// ---------------------------------------------------------------------------
+
+describe("findNearestLandmark", () => {
+  it("returns nav for links inside <nav>", () => {
+    const dom = '<html><body><nav><a href="/">Home</a></nav></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("nav");
+  });
+
+  it("returns header for links inside <header>", () => {
+    const dom = '<html><body><header><a href="/">Logo</a></header></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("header");
+  });
+
+  it("returns footer for links inside <footer>", () => {
+    const dom = '<html><body><footer><a href="/">Contact</a></footer></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("footer");
+  });
+
+  it("returns main for links inside <main>", () => {
+    const dom = '<html><body><main><a href="/">Inside main</a></main></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("main");
+  });
+
+  it("returns null for links outside any landmark", () => {
+    const dom = '<html><body><div><a href="/">Free-standing</a></div></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBeNull();
+  });
+
+  it("returns innermost landmark when nested", () => {
+    const dom = '<html><body><main><nav><a href="/">Nested</a></nav></main></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("nav");
+  });
+
+  it("treats role=navigation as nav landmark", () => {
+    const dom = '<html><body><div role="navigation"><a href="/">Home</a></div></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("nav");
+  });
+
+  it("treats role=contentinfo as footer landmark", () => {
+    const dom = '<html><body><div role="contentinfo"><a href="/">Contact</a></div></body></html>';
+    const pos = dom.indexOf("<a ");
+    expect(findNearestLandmark(dom, pos)).toBe("footer");
+  });
+
+  it("pops landmark stack when closing tag is seen", () => {
+    const dom = '<html><body><nav><a href="/a">Nav</a></nav><a href="/b">After</a></body></html>';
+    const afterPos = dom.indexOf('href="/b"');
+    expect(findNearestLandmark(dom, afterPos)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// linkTextPassesPreFilter
+// ---------------------------------------------------------------------------
+
+describe("linkTextPassesPreFilter", () => {
+  const base: LinkContext = {
+    selector: "a", html: "<a>x</a>", visibleText: "", href: "/x",
+    ariaLabel: null, surroundingContext: "",
+    isImageLink: false, imageAlt: null, landmark: null,
+  };
+
+  it("passes short nav link with descriptive text", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "Jury Duty", landmark: "nav" })).toBe(true);
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "About", landmark: "nav" })).toBe(true);
+  });
+
+  it("does not pass nav link with generic text", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "click here", landmark: "nav" })).toBe(false);
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "More", landmark: "nav" })).toBe(false);
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "Read more", landmark: "nav" })).toBe(false);
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "Learn more", landmark: "nav" })).toBe(false);
+  });
+
+  it("does not pass links outside landmarks", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "About", landmark: null })).toBe(false);
+  });
+
+  it("does not pass links inside <main> (content links)", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "About", landmark: "main" })).toBe(false);
+  });
+
+  it("does not pass links with text < 3 chars", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "Hi", landmark: "nav" })).toBe(false);
+  });
+
+  it("does not pass bare URLs", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "https://example.com/x", landmark: "nav" })).toBe(false);
+  });
+
+  it("does not pass image-only links", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "", isImageLink: true, landmark: "nav" })).toBe(false);
+  });
+
+  it("passes header and footer links too", () => {
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "Contact", landmark: "header" })).toBe(true);
+    expect(linkTextPassesPreFilter({ ...base, visibleText: "Privacy Policy", landmark: "footer" })).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // deduplicateCmsLinks
 // ---------------------------------------------------------------------------
 
@@ -130,9 +241,9 @@ describe("deduplicateCmsLinks", () => {
 
   it("keeps distinct text patterns", () => {
     const links: LinkContext[] = [
-      { selector: "a.a", html: '<a href="/a">View</a>', visibleText: "View", href: "/a", ariaLabel: null, surroundingContext: "", isImageLink: false, imageAlt: null },
-      { selector: "a.b", html: '<a href="/b">Details</a>', visibleText: "Details", href: "/b", ariaLabel: null, surroundingContext: "", isImageLink: false, imageAlt: null },
-      { selector: "a.c", html: '<a href="/c">View</a>', visibleText: "View", href: "/c", ariaLabel: null, surroundingContext: "", isImageLink: false, imageAlt: null },
+      { selector: "a.a", html: '<a href="/a">View</a>', visibleText: "View", href: "/a", ariaLabel: null, surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null },
+      { selector: "a.b", html: '<a href="/b">Details</a>', visibleText: "Details", href: "/b", ariaLabel: null, surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null },
+      { selector: "a.c", html: '<a href="/c">View</a>', visibleText: "View", href: "/c", ariaLabel: null, surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null },
     ];
     const deduped = deduplicateCmsLinks(links);
     expect(deduped.length).toBe(2);
@@ -152,7 +263,7 @@ describe("hasDescriptiveAriaLabel", () => {
     const link: LinkContext = {
       selector: "a", html: "<a>x</a>", visibleText: "Read more", href: "/x",
       ariaLabel: "Read more about our accessibility services",
-      surroundingContext: "", isImageLink: false, imageAlt: null,
+      surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null,
     };
     expect(hasDescriptiveAriaLabel(link)).toBe(true);
   });
@@ -161,7 +272,7 @@ describe("hasDescriptiveAriaLabel", () => {
     const link: LinkContext = {
       selector: "a", html: "<a>x</a>", visibleText: "Click here", href: "/x",
       ariaLabel: null,
-      surroundingContext: "", isImageLink: false, imageAlt: null,
+      surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null,
     };
     expect(hasDescriptiveAriaLabel(link)).toBe(false);
   });
@@ -172,7 +283,7 @@ describe("hasDescriptiveAriaLabel", () => {
       const link: LinkContext = {
         selector: "a", html: "<a>x</a>", visibleText: "x", href: "/x",
         ariaLabel: label,
-        surroundingContext: "", isImageLink: false, imageAlt: null,
+        surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null,
       };
       expect(hasDescriptiveAriaLabel(link)).toBe(false);
     }
@@ -182,7 +293,7 @@ describe("hasDescriptiveAriaLabel", () => {
     const link: LinkContext = {
       selector: "a", html: "<a>x</a>", visibleText: "x", href: "/x",
       ariaLabel: "",
-      surroundingContext: "", isImageLink: false, imageAlt: null,
+      surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null,
     };
     expect(hasDescriptiveAriaLabel(link)).toBe(false);
   });
@@ -191,7 +302,7 @@ describe("hasDescriptiveAriaLabel", () => {
     const link: LinkContext = {
       selector: "a", html: "<a>x</a>", visibleText: "x", href: "/x",
       ariaLabel: "   ",
-      surroundingContext: "", isImageLink: false, imageAlt: null,
+      surroundingContext: "", isImageLink: false, imageAlt: null, landmark: null,
     };
     expect(hasDescriptiveAriaLabel(link)).toBe(false);
   });

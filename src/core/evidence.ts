@@ -294,7 +294,26 @@ export function mapToSeverity(
   }
 
   // --- Tier 5: indicators — always advisory ---
-  if (failureType === "indicator" || failureType === "error_quality") {
+  // Indicator checks (src/checks/indicators/) emit a variety of specific
+  // failure_types — all should map to advisory severity. Match by
+  // failure_type only; relying on criterion alone would clash with Tier 4
+  // form checks that share criteria (e.g. 3.3.1 can be either error_quality
+  // [Tier 5 advisory] or error_message/error_not_associated [Tier 4 major]).
+  const tier5FailureTypes = new Set([
+    "indicator",
+    "error_quality",
+    "insufficient_navigation_methods",
+    "motion_actuation_detected",
+    "animated_content_needs_review",
+    "animated_content_no_pause",
+  ]);
+  const isTier5FailureType = failureType !== undefined && (
+    tier5FailureTypes.has(failureType) ||
+    failureType.startsWith("error_quality_") ||
+    failureType.startsWith("on_input_") ||
+    failureType.startsWith("potential_flash_")
+  );
+  if (isTier5FailureType) {
     return "advisory";
   }
 

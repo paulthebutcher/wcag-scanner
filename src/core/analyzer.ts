@@ -227,14 +227,17 @@ function buildLlmAnalysis(
   const failureType = raw?.failure_type as string | undefined;
   const requiresHuman = raw?.requires_human_verification as boolean | undefined;
 
-  // Build LLM input/output records for transparency
-  const llmInput: LlmInput = {
+  // Build LLM input/output records for transparency. Prefer the captured
+  // values set by the semantic check module (full rendered prompt + raw
+  // response). Fall back to a stub built from measured_values for older
+  // callers that haven't been wired up.
+  const llmInput: LlmInput = checkResult.llm_input ?? {
     prompt: (measured.prompt_name as string) ?? "unknown",
     dom_snippet: checkResult.element_html.slice(0, 500),
     screenshot_provided: checkResult.screenshot !== undefined,
   };
 
-  const llmOutput: LlmOutput = {
+  const llmOutput: LlmOutput = checkResult.llm_output ?? {
     raw_response: JSON.stringify(raw),
     model: (measured.model as string) ?? "claude-sonnet-4-6",
     tokens_used: (measured.tokens_used as number) ?? 0,

@@ -62,6 +62,7 @@ import { evaluateHighRiskForms } from "../checks/forms/high-risk.js";
 import { checkPauseStopHide, checkThreeFlashes } from "../checks/indicators/pause-stop-hide.js";
 import { checkMultipleWays, checkMotionActuation } from "../checks/indicators/multiple-ways.js";
 import { checkOnInput, surfaceErrorQualityFindings } from "../checks/indicators/on-input.js";
+import { dumpFindings } from "../report/findings-dump.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -419,6 +420,54 @@ function makeCriterionResult(
  * Also creates "failed" CriterionResults for criteria that have findings
  * but no existing CriterionResult entry.
  */
+/**
+ * Pure, DB-free variant of reconcileCriterionResults — used by the report
+ * pipeline after filtering findings client-side. Given the already-stored
+ * CriterionResult[] and a (possibly filtered) subset of findings, returns
+ * what the CriterionResult[] *should* be. A criterion that was marked
+ * "failed" but has no findings in the filtered set is flipped to "passed"
+ * (since its only violations came from findings the caller removed).
+ */
+export function reconcileInMemory(
+  scanId: string,
+  findings: Finding[],
+  criterionResults: CriterionResult[],
+): CriterionResult[] {
+  // Build map of criterion → finding IDs from the filtered set
+  const findingsByCriterion = new Map<string, string[]>();
+  for (const f of findings) {
+    const existing = findingsByCriterion.get(f.wcag_criterion) ?? [];
+    existing.push(f.id);
+    findingsByCriterion.set(f.wcag_criterion, existing);
+  }
+
+  // Clone every input CriterionResult — we don't mutate input.
+  const results = criterionResults.map((cr) => ({ ...cr, finding_ids: [...cr.finding_ids] }));
+
+  for (const cr of results) {
+    const criterion = cr.wcag_criterion;
+    const filteredFindingIds = findingsByCriterion.get(criterion);
+
+    if (filteredFindingIds && filteredFindingIds.length > 0) {
+      // Criterion still has violations after filtering → must be "failed".
+      const firstFinding = findings.find((f) => f.wcag_criterion === criterion);
+      cr.status = "failed";
+      cr.tested_by = firstFinding?.evidence.detected_by ?? cr.tested_by;
+      cr.finding_ids = filteredFindingIds;
+      cr.evidence_summary = `${filteredFindingIds.length} violation(s) found`;
+    } else if (cr.status === "failed") {
+      // Criterion was failed but all its findings were filtered out.
+      // Flip to "passed": no remaining violations. Keep tested_by.
+      cr.status = "passed";
+      cr.finding_ids = [];
+      cr.evidence_summary = "No issues detected";
+    }
+    // else: already pass / not_applicable / not_tested — leave alone.
+  }
+
+  return results;
+}
+
 function reconcileCriterionResults(
   scanId: string,
   findings: Finding[],
@@ -1456,6 +1505,18 @@ export async function scan(
     // --- Finalize scan session -------------------------------------------------
     scanSession.completed_at = new Date().toISOString();
     updateScanSession(db, scanId, { completed_at: scanSession.completed_at });
+
+    // --- Phase 10: Verbose findings dump --------------------------------------
+    // Always-on working file: per-finding markdown + aggregate + JSONL.
+    // This includes ALL findings (no filtering) so the user can audit what
+    // the client report dropped.
+    try {
+      const { dir, count } = dumpFindings(db, scanId, options.dataDir);
+      reporter.complete("dump", `Wrote ${count} finding(s) to ${dir}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reporter.warn("dump", `Findings dump failed: ${msg}`);
+    }
 
     reporter.complete("scan", `Complete: ${allFindings.length} finding(s)`);
 

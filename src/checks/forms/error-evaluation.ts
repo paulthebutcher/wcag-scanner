@@ -1,5 +1,5 @@
 import type { CheckResult } from "../../types.js";
-import type { PromptRunner, PromptResult } from "../../core/prompt-runner.js";
+import type { PromptRunner, PromptResult, PromptInput } from "../../core/prompt-runner.js";
 import type { FormInfo, FormFieldInfo } from "./discovery.js";
 import type { SubmissionState, DetectedError } from "./submission.js";
 import {
@@ -10,6 +10,7 @@ import {
   ERROR_MESSAGE_FAILURE_MODES,
   INPUT_PURPOSE_FAILURE_MODES,
 } from "../../prompts/form-interaction.js";
+import { buildLlmCapture } from "../semantic/llm-capture.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,7 +125,7 @@ export async function evaluateErrorMessages(
   for (let i = 0; i < relevantStates.length; i++) {
     const state = relevantStates[i];
     const evalResult = evalResults[i];
-    const checkResult = mapErrorEvalToCheckResult(state, evalResult);
+    const checkResult = mapErrorEvalToCheckResult(state, evalResult, promptInputs[i]);
     if (checkResult) results.push(checkResult);
   }
 
@@ -137,7 +138,9 @@ export async function evaluateErrorMessages(
 function mapErrorEvalToCheckResult(
   state: SubmissionState,
   evalResult: PromptResult<ErrorMessageEvaluation>,
+  promptInput: PromptInput,
 ): CheckResult | null {
+  const capture = buildLlmCapture(promptInput, evalResult);
   // Handle API failure
   if (!evalResult.success && !evalResult.data) {
     return {
@@ -157,6 +160,8 @@ function mapErrorEvalToCheckResult(
         failure_type: null,
         error_count: state.errorMessages.length,
       },
+      llm_input: capture.llm_input,
+      llm_output: capture.llm_output,
     };
   }
 
@@ -183,6 +188,8 @@ function mapErrorEvalToCheckResult(
       error_count: state.errorMessages.length,
       fields_evaluated: evaluation.form_fields_evaluated,
     },
+    llm_input: capture.llm_input,
+    llm_output: capture.llm_output,
   };
 }
 
@@ -210,8 +217,15 @@ export async function evaluateInputPurpose(
 
   if (personalFields.length === 0) return [];
 
+  // Pre-filter: skip fields that already have a valid, type-compatible
+  // autocomplete token. These are categorically passing 1.3.5 and don't
+  // need an API call.
+  const fieldsToCheck = personalFields.filter((f) => !inputPurposePassesPreFilter(f));
+
+  if (fieldsToCheck.length === 0) return [];
+
   // Build prompt inputs
-  const promptInputs = personalFields.map((field) => ({
+  const promptInputs = fieldsToCheck.map((field) => ({
     template: inputPurposeMatching,
     userMessage: buildInputPurposeUserPrompt({
       elementHtml: field.html,
@@ -226,10 +240,10 @@ export async function evaluateInputPurpose(
   const results: CheckResult[] = [];
 
   // Map results to CheckResults
-  for (let i = 0; i < personalFields.length; i++) {
-    const field = personalFields[i];
+  for (let i = 0; i < fieldsToCheck.length; i++) {
+    const field = fieldsToCheck[i];
     const evalResult = evalResults[i];
-    const checkResult = mapInputPurposeToCheckResult(field, evalResult);
+    const checkResult = mapInputPurposeToCheckResult(field, evalResult, promptInputs[i]);
     if (checkResult) results.push(checkResult);
   }
 
@@ -242,7 +256,9 @@ export async function evaluateInputPurpose(
 function mapInputPurposeToCheckResult(
   field: FormFieldInfo,
   evalResult: PromptResult<InputPurposeEvaluation>,
+  promptInput: PromptInput,
 ): CheckResult | null {
+  const capture = buildLlmCapture(promptInput, evalResult);
   // Handle API failure
   if (!evalResult.success && !evalResult.data) {
     return {
@@ -261,6 +277,8 @@ function mapInputPurposeToCheckResult(
         field_type: field.type,
         failure_type: null,
       },
+      llm_input: capture.llm_input,
+      llm_output: capture.llm_output,
     };
   }
 
@@ -282,7 +300,75 @@ function mapInputPurposeToCheckResult(
       failure_type: evaluation.failure_type,
       confidence: evaluation.confidence,
     },
+    llm_input: capture.llm_input,
+    llm_output: capture.llm_output,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Autocomplete pre-filter
+// ---------------------------------------------------------------------------
+
+/**
+ * Full set of valid HTML autocomplete tokens (WHATWG/W3C spec). Mirrors the
+ * list in the 1.3.5 prompt — kept in sync there as documentation.
+ */
+const VALID_AUTOCOMPLETE_TOKENS = new Set([
+  "name", "honorific-prefix", "given-name", "additional-name", "family-name",
+  "honorific-suffix", "nickname", "email", "username", "new-password",
+  "current-password", "one-time-code", "organization-title", "organization",
+  "street-address", "address-line1", "address-line2", "address-line3",
+  "address-level4", "address-level3", "address-level2", "address-level1",
+  "country", "country-name", "postal-code",
+  "cc-name", "cc-given-name", "cc-additional-name", "cc-family-name",
+  "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-csc", "cc-type",
+  "transaction-currency", "transaction-amount", "language",
+  "bday", "bday-day", "bday-month", "bday-year", "sex",
+  "tel", "tel-country-code", "tel-national", "tel-area-code",
+  "tel-local", "tel-extension", "impp", "url", "photo",
+]);
+
+/**
+ * When the input type is specific (email/tel/url/password), the autocomplete
+ * token should be compatible with it. Otherwise any valid token is acceptable
+ * since matching the field's semantic purpose is evaluated separately.
+ */
+const TYPE_COMPATIBLE_TOKENS: Record<string, Set<string>> = {
+  email: new Set(["email"]),
+  tel: new Set([
+    "tel", "tel-country-code", "tel-national", "tel-area-code",
+    "tel-local", "tel-extension",
+  ]),
+  url: new Set(["url", "photo", "impp"]),
+  password: new Set(["new-password", "current-password", "one-time-code"]),
+};
+
+/**
+ * Return true if the field already has a valid autocomplete token compatible
+ * with its input type. Pre-filter skips these fields — no API call needed.
+ *
+ * The autocomplete attribute can legally have multi-token values such as
+ * "shipping street-address" or "section-ship billing given-name". Per the
+ * HTML spec the final token is the "autofill field name" — we evaluate that.
+ */
+export function inputPurposePassesPreFilter(field: FormFieldInfo): boolean {
+  if (!field.autocomplete) return false;
+  const value = field.autocomplete.trim().toLowerCase();
+  if (value.length === 0) return false;
+  // "off" / "on" are valid attribute values but not autofill field names —
+  // they don't identify the input purpose and shouldn't auto-pass.
+  if (value === "off" || value === "on") return false;
+
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  const lastToken = tokens[tokens.length - 1];
+
+  if (!VALID_AUTOCOMPLETE_TOKENS.has(lastToken)) return false;
+
+  const compatible = TYPE_COMPATIBLE_TOKENS[field.type];
+  if (compatible && !compatible.has(lastToken)) return false;
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------

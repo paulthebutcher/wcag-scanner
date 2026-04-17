@@ -9,6 +9,7 @@ import {
   type ReportData,
   type ScanDiff,
 } from "./generator.js";
+import { shouldFilterFromClientReport } from "./findings-dump.js";
 import {
   getScanSession,
   listFindingsByScan,
@@ -66,14 +67,19 @@ export function buildReportDataWithComparison(
     data.groups = data.groups.filter(g => g.instanceCount > 0);
   }
 
-  // Compute diff against comparison scan if provided
+  // Compute diff against comparison scan if provided. Apply the same
+  // client-report filter to the comparison side so we don't report noisy
+  // findings as phantom "resolved" issues.
   if (comparisonScanId) {
     const comparisonSession = getScanSession(db, comparisonScanId);
     if (!comparisonSession) {
       throw new Error(`Comparison scan not found: ${comparisonScanId}`);
     }
 
-    const comparisonFindings = listFindingsByScan(db, comparisonScanId);
+    const rawComparisonFindings = listFindingsByScan(db, comparisonScanId);
+    const comparisonFindings = rawComparisonFindings.filter(
+      (f) => !shouldFilterFromClientReport(f),
+    );
     const comparisonGroups = groupFindingsByHash(comparisonFindings);
 
     const diff: ScanDiff = computeDiff(data.groups, comparisonGroups);

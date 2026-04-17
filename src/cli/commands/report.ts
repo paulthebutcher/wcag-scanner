@@ -7,6 +7,7 @@ import {
   buildPageUrlMap,
 } from "../../report/pdf-renderer.js";
 import { renderHtmlReport } from "../../report/templates/html-template.js";
+import { dumpFindings } from "../../report/findings-dump.js";
 import { ScanProgressReporter, QuietProgressReporter } from "../../core/progress.js";
 import type { Severity } from "../../types.js";
 
@@ -40,6 +41,7 @@ export function createReportCommand(): Command {
     .option("--output <path>", "Output file path (default: ./wcag-data/report-<id>.pdf)")
     .option("--format <type>", "Output format: pdf or html", "pdf")
     .option("--data-dir <path>", "Data directory for results", "./wcag-data")
+    .option("--dump", "Regenerate verbose findings dump (findings.md, findings.jsonl, per-finding markdown)")
     .option("--quiet", "Suppress progress output")
     .action(async (scanId: string, opts: Record<string, string>) => {
       const dataDir = opts["dataDir"] ?? "./wcag-data";
@@ -106,6 +108,12 @@ export function createReportCommand(): Command {
             reporter,
             dataDir,
           });
+        }
+
+        if ("dump" in opts) {
+          reporter.update("report", "Writing verbose findings dump...");
+          const { dir, count } = dumpFindings(db, scanId, dataDir);
+          reporter.complete("report", `Wrote ${count} finding(s) to ${dir}`);
         }
 
         process.stdout.write(outputPath + "\n");

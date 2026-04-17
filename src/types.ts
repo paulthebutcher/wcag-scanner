@@ -85,6 +85,10 @@ export interface CheckResult {
   measured_values?: Record<string, unknown>;
   keyboard_sequence?: unknown[];
   aria_attributes?: Record<string, string>;
+  /** LLM request data for audit trail (claude_api findings only) */
+  llm_input?: LlmInput;
+  /** LLM response data for audit trail (claude_api findings only) */
+  llm_output?: LlmOutput;
 }
 
 export interface PlatformAdapter {

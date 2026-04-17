@@ -4,6 +4,7 @@ import {
   linkTextQuality,
   buildLinkTextUserPrompt,
 } from "../../prompts/element-evaluation.js";
+import { buildLlmCapture } from "./llm-capture.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +28,12 @@ export interface LinkContext {
   isImageLink: boolean;
   /** Alt text of the image inside the link, if any */
   imageAlt: string | null;
+  /**
+   * Nearest enclosing landmark tag name: "nav" | "header" | "footer" |
+   * "main" | "aside" | "article", or null if link is not inside a landmark.
+   * Computed from ancestor tags and ARIA roles (role="navigation" etc.).
+   */
+  landmark: string | null;
 }
 
 /** Result from Claude's evaluation of a link */
@@ -78,6 +85,8 @@ export function collectLinks(dom: string): LinkContext[] {
     const surroundingRaw = dom.slice(contextStart, contextEnd);
     const surroundingContext = stripTags(surroundingRaw).trim().slice(0, 300);
 
+    const landmark = findNearestLandmark(dom, match.index);
+
     links.push({
       selector,
       html: fullMatch,
@@ -87,6 +96,7 @@ export function collectLinks(dom: string): LinkContext[] {
       surroundingContext,
       isImageLink,
       imageAlt,
+      landmark,
     });
   }
 
@@ -115,6 +125,113 @@ export function deduplicateCmsLinks(links: LinkContext[]): LinkContext[] {
   }
 
   return Array.from(seen.values());
+}
+
+// ---------------------------------------------------------------------------
+// Landmark detection
+// ---------------------------------------------------------------------------
+
+/** HTML5 landmark tag names */
+const LANDMARK_TAGS = new Set(["nav", "header", "footer", "main", "aside", "article"]);
+
+/** ARIA role → equivalent HTML5 landmark tag */
+const ROLE_TO_LANDMARK: Record<string, string> = {
+  navigation: "nav",
+  banner: "header",
+  contentinfo: "footer",
+  main: "main",
+  complementary: "aside",
+};
+
+/**
+ * Find the nearest enclosing landmark for a link at a given DOM position.
+ * Walks all opening/closing tags before the position, tracking a stack of
+ * open landmarks. Returns the innermost unclosed landmark, or null.
+ */
+export function findNearestLandmark(dom: string, position: number): string | null {
+  const before = dom.slice(0, position);
+  const tagRegex = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g;
+  const stack: string[] = [];
+  let m: RegExpExecArray | null;
+
+  while ((m = tagRegex.exec(before)) !== null) {
+    const closing = m[1] === "/";
+    const tagName = m[2].toLowerCase();
+    const attrs = m[3];
+
+    let landmark: string | null = null;
+    if (LANDMARK_TAGS.has(tagName)) {
+      landmark = tagName;
+    } else {
+      const roleMatch = attrs.match(/\brole\s*=\s*["']([^"']+)["']/i);
+      if (roleMatch) {
+        const role = roleMatch[1].toLowerCase();
+        if (ROLE_TO_LANDMARK[role]) landmark = ROLE_TO_LANDMARK[role];
+      }
+    }
+    if (!landmark) continue;
+
+    if (closing) {
+      const lastIdx = stack.lastIndexOf(landmark);
+      if (lastIdx !== -1) stack.splice(lastIdx, 1);
+    } else if (!attrs.trimEnd().endsWith("/")) {
+      stack.push(landmark);
+    }
+  }
+
+  return stack.length > 0 ? stack[stack.length - 1] : null;
+}
+
+// ---------------------------------------------------------------------------
+// Navigation-link pre-filter
+// ---------------------------------------------------------------------------
+
+/**
+ * Generic phrases that remain ambiguous even inside a navigation landmark.
+ * These must still go to the API for evaluation.
+ */
+const GENERIC_NAV_BLOCKLIST = new Set([
+  "click here",
+  "here",
+  "more",
+  "read more",
+  "learn more",
+  "link",
+  "go",
+  "continue",
+  "next",
+  "previous",
+]);
+
+/** URL-ish text — a link whose visible text is just its own URL. */
+function isBareUrl(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return /^https?:\/\/\S+$/.test(t) || /^www\.\S+$/.test(t);
+}
+
+/**
+ * Auto-pass filter for navigation links. Returns true if the link should
+ * skip the API call because it's a short, presumed-intentional nav label.
+ *
+ * Rule: link is inside <nav> / role=navigation (or header/footer) AND its
+ * visible text is ≥ 3 chars, not a bare URL, and not on the generic-phrase
+ * blocklist. Image-only links still go to the API (image alt evaluation is
+ * the actual signal there).
+ */
+export function linkTextPassesPreFilter(link: LinkContext): boolean {
+  if (link.isImageLink) return false;
+  if (!link.landmark) return false;
+  // Only apply inside navigation-style landmarks where short labels are
+  // intentional and conventional. Main/article links are content links.
+  const navLandmarks = new Set(["nav", "header", "footer"]);
+  if (!navLandmarks.has(link.landmark)) return false;
+
+  const text = link.visibleText.trim();
+  if (text.length < 3) return false;
+  if (isBareUrl(text)) return false;
+  if (GENERIC_NAV_BLOCKLIST.has(text.toLowerCase())) return false;
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +294,10 @@ export async function runLinkTextChecks(
   }
 
   // 3. Filter out links with descriptive aria-labels
-  const linksToCheck = links.filter((link) => !hasDescriptiveAriaLabel(link));
+  let linksToCheck = links.filter((link) => !hasDescriptiveAriaLabel(link));
+
+  // 3b. Navigation-landmark pre-filter: short nav labels auto-pass
+  linksToCheck = linksToCheck.filter((link) => !linkTextPassesPreFilter(link));
 
   if (linksToCheck.length === 0) {
     return [];
@@ -201,6 +321,7 @@ export async function runLinkTextChecks(
   for (let i = 0; i < linksToCheck.length; i++) {
     const link = linksToCheck[i];
     const evalResult = evalResults[i];
+    const capture = buildLlmCapture(promptInputs[i], evalResult);
 
     if (!evalResult.success && !evalResult.data) {
       results.push(createCheckResult(link, {
@@ -212,14 +333,14 @@ export async function runLinkTextChecks(
         suggestion: null,
         affected_users: ["screen_reader"],
         requires_human_verification: true,
-      }));
+      }, capture));
       continue;
     }
 
     const evaluation = evalResult.data!;
 
     if (evaluation.verdict === "fail" || evaluation.verdict === "needs_review") {
-      results.push(createCheckResult(link, evaluation));
+      results.push(createCheckResult(link, evaluation, capture));
     }
   }
 
@@ -233,6 +354,7 @@ export async function runLinkTextChecks(
 function createCheckResult(
   link: LinkContext,
   evaluation: LinkTextEvaluation,
+  capture?: ReturnType<typeof buildLlmCapture>,
 ): CheckResult {
   return {
     element_selector: link.selector,
@@ -247,8 +369,10 @@ function createCheckResult(
       failure_type: evaluation.failure_type,
       confidence: evaluation.confidence,
       is_image_link: link.isImageLink,
+      landmark: link.landmark,
     },
     aria_attributes: link.ariaLabel ? { "aria-label": link.ariaLabel } : {},
+    ...(capture ? { llm_input: capture.llm_input, llm_output: capture.llm_output } : {}),
   };
 }
 

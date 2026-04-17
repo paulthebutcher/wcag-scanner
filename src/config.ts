@@ -26,9 +26,24 @@ function parsePositiveInt(value: string, name: string): number {
  *   3. Built-in defaults
  */
 export function loadConfig(overrides?: Partial<Config>): Config {
-  // Load .env file into process.env (override existing vars — avoids issues
-  // when the shell exports an empty ANTHROPIC_API_KEY)
-  dotenvConfig({ override: true });
+  // Treat empty-string env vars as unset so .env can fill them in. This
+  // handles the case where a shell exports ANTHROPIC_API_KEY="" — without
+  // this, dotenv would see the key as "already set" and skip loading, and
+  // downstream code would get a truthy empty string.
+  const envKeys = [
+    "ANTHROPIC_API_KEY",
+    "WCAG_DATA_DIR",
+    "WCAG_MAX_PAGES",
+    "WCAG_CONCURRENCY",
+    "WCAG_PROMPT_MODE",
+  ];
+  for (const key of envKeys) {
+    if (process.env[key] === "") delete process.env[key];
+  }
+
+  // Default dotenv behavior (no override): won't clobber vars that tests or
+  // the shell have deliberately set.
+  dotenvConfig();
 
   // --- anthropicApiKey (required) ---
   const apiKey = overrides?.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;

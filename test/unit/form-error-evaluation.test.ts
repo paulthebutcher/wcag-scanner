@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   evaluateErrorMessages,
   evaluateInputPurpose,
+  inputPurposePassesPreFilter,
   isPersonalInfoField,
   ALL_ERROR_FAILURE_MODES,
   type ErrorMessageEvaluation,
@@ -501,6 +502,49 @@ describe("evaluateInputPurpose", () => {
     expect(inputs[0].template.name).toBe("input_purpose_matching");
   });
 
+  it("pre-filter skips API call for fields with valid autocomplete", async () => {
+    const form = makeForm({
+      fields: [
+        makeField({ selector: "#email", type: "email", name: "email", label: "Email", autocomplete: "email" }),
+        makeField({ selector: "#fname", type: "text", name: "fname", label: "First name", autocomplete: "given-name" }),
+      ],
+    });
+
+    const results = await evaluateInputPurpose(form, mockRunner);
+    expect(runPromptsSpy).not.toHaveBeenCalled();
+    expect(results).toEqual([]);
+  });
+
+  it("pre-filter sends to API only fields that don't already have valid autocomplete", async () => {
+    const form = makeForm({
+      fields: [
+        // Pre-filter passes — not sent to API
+        makeField({ selector: "#email", type: "email", name: "email", label: "Email", autocomplete: "email" }),
+        // Missing autocomplete — must be sent to API
+        makeField({ selector: "#phone", type: "tel", name: "phone", label: "Phone" }),
+      ],
+    });
+
+    runPromptsSpy.mockResolvedValue([
+      makeEvalResult<InputPurposeEvaluation>({
+        verdict: "fail",
+        confidence: 0.9,
+        reasoning: "phone field missing autocomplete",
+        wcag_criterion: "1.3.5",
+        failure_type: "missing_autocomplete",
+        suggestion: 'Add autocomplete="tel"',
+        affected_users: ["cognitive"],
+        requires_human_verification: false,
+      }),
+    ]);
+
+    await evaluateInputPurpose(form, mockRunner);
+    expect(runPromptsSpy).toHaveBeenCalledOnce();
+    const inputs = runPromptsSpy.mock.calls[0][0];
+    // Only the phone field (no autocomplete) should be in the prompt inputs
+    expect(inputs.length).toBe(1);
+  });
+
   it("detects wrong_autocomplete failure", async () => {
     const form = makeForm({
       fields: [
@@ -531,6 +575,57 @@ describe("evaluateInputPurpose", () => {
     expect(results.length).toBe(1);
     expect(results[0].measured_values?.failure_type).toBe("wrong_autocomplete");
     expect(results[0].measured_values?.current_autocomplete).toBe("tel");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inputPurposePassesPreFilter
+// ---------------------------------------------------------------------------
+
+describe("inputPurposePassesPreFilter", () => {
+  it("passes email field with autocomplete=email", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "email", autocomplete: "email" }))).toBe(true);
+  });
+
+  it("passes tel field with compatible tel-* token", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "tel", autocomplete: "tel" }))).toBe(true);
+    expect(inputPurposePassesPreFilter(makeField({ type: "tel", autocomplete: "tel-national" }))).toBe(true);
+  });
+
+  it("passes password field with new-password / current-password", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "password", autocomplete: "new-password" }))).toBe(true);
+    expect(inputPurposePassesPreFilter(makeField({ type: "password", autocomplete: "current-password" }))).toBe(true);
+  });
+
+  it("passes text field with any valid token (e.g. given-name)", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "text", autocomplete: "given-name" }))).toBe(true);
+    expect(inputPurposePassesPreFilter(makeField({ type: "text", autocomplete: "postal-code" }))).toBe(true);
+  });
+
+  it("passes multi-token autocomplete (shipping, section, etc.)", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "text", autocomplete: "shipping street-address" }))).toBe(true);
+    expect(inputPurposePassesPreFilter(makeField({ type: "text", autocomplete: "section-ship billing given-name" }))).toBe(true);
+  });
+
+  it("fails when no autocomplete present", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "email", autocomplete: null }))).toBe(false);
+    expect(inputPurposePassesPreFilter(makeField({ type: "text", autocomplete: "" }))).toBe(false);
+  });
+
+  it("fails when autocomplete token is incompatible with input type", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "email", autocomplete: "tel" }))).toBe(false);
+    expect(inputPurposePassesPreFilter(makeField({ type: "tel", autocomplete: "email" }))).toBe(false);
+    expect(inputPurposePassesPreFilter(makeField({ type: "password", autocomplete: "email" }))).toBe(false);
+  });
+
+  it("fails when autocomplete token is not in the valid list", () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "text", autocomplete: "bogus-token" }))).toBe(false);
+    expect(inputPurposePassesPreFilter(makeField({ type: "email", autocomplete: "emal" }))).toBe(false);
+  });
+
+  it('fails when autocomplete is "off" or "on"', () => {
+    expect(inputPurposePassesPreFilter(makeField({ type: "email", autocomplete: "off" }))).toBe(false);
+    expect(inputPurposePassesPreFilter(makeField({ type: "email", autocomplete: "on" }))).toBe(false);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   altTextQuality,
   buildAltTextUserPrompt,
 } from "../../prompts/element-evaluation.js";
+import { buildLlmCapture } from "./llm-capture.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -255,6 +256,7 @@ export async function runAltTextChecks(
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
     const evalResult = evalResults[i];
+    const capture = buildLlmCapture(promptInputs[i], evalResult);
 
     if (!evalResult.success && !evalResult.data) {
       // API failed and no fallback data — create needs_review result
@@ -267,14 +269,14 @@ export async function runAltTextChecks(
         suggestion: null,
         affected_users: ["screen_reader"],
         requires_human_verification: true,
-      }));
+      }, capture));
       continue;
     }
 
     const evaluation = evalResult.data!;
 
     if (evaluation.verdict === "fail" || evaluation.verdict === "needs_review") {
-      results.push(createCheckResult(img, evaluation));
+      results.push(createCheckResult(img, evaluation, capture));
     }
   }
 
@@ -288,6 +290,7 @@ export async function runAltTextChecks(
 function createCheckResult(
   img: ImageContext,
   evaluation: AltTextEvaluation,
+  capture?: ReturnType<typeof buildLlmCapture>,
 ): CheckResult {
   return {
     element_selector: img.selector,
@@ -303,6 +306,7 @@ function createCheckResult(
       is_inside_functional: img.isInsideFunctional,
     },
     aria_attributes: {},
+    ...(capture ? { llm_input: capture.llm_input, llm_output: capture.llm_output } : {}),
   };
 }
 

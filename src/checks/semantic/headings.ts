@@ -4,6 +4,7 @@ import {
   headingStructure,
   buildHeadingStructureUserPrompt,
 } from "../../prompts/element-evaluation.js";
+import { buildLlmCapture } from "./llm-capture.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,10 +151,12 @@ export async function runHeadingChecks(
     pageTitle,
   });
 
-  const evalResult = await runner.runPrompt<HeadingEvaluation>({
+  const promptInput = {
     template: headingStructure,
     userMessage,
-  });
+  };
+  const evalResult = await runner.runPrompt<HeadingEvaluation>(promptInput);
+  const capture = buildLlmCapture(promptInput, evalResult);
 
   // 4. Process result
   if (!evalResult.success && !evalResult.data) {
@@ -177,6 +180,8 @@ export async function runHeadingChecks(
         heading_levels: headings.map((h) => h.level),
         axe_corroboration: Array.from(axeCorroboration),
       },
+      llm_input: capture.llm_input,
+      llm_output: capture.llm_output,
     }];
   }
 
@@ -204,6 +209,8 @@ export async function runHeadingChecks(
       confidence: evaluation.confidence,
       axe_corroboration: Array.from(axeCorroboration),
     },
+    llm_input: capture.llm_input,
+    llm_output: capture.llm_output,
   }];
 }
 

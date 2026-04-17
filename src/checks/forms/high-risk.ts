@@ -1,11 +1,12 @@
 import type { CheckResult } from "../../types.js";
-import type { PromptRunner, PromptResult } from "../../core/prompt-runner.js";
+import type { PromptRunner, PromptResult, PromptInput } from "../../core/prompt-runner.js";
 import type { FormInfo } from "./discovery.js";
 import {
   highRiskFormDetection,
   buildHighRiskFormUserPrompt,
   HIGH_RISK_FORM_FAILURE_MODES,
 } from "../../prompts/form-interaction.js";
+import { buildLlmCapture } from "../semantic/llm-capture.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -216,7 +217,7 @@ export async function evaluateHighRiskForms(
   for (let i = 0; i < highRisk.length; i++) {
     const classification = highRisk[i];
     const evalResult = evalResults[i];
-    const checkResult = mapHighRiskToCheckResult(classification, evalResult);
+    const checkResult = mapHighRiskToCheckResult(classification, evalResult, promptInputs[i]);
     if (checkResult) results.push(checkResult);
   }
 
@@ -229,7 +230,10 @@ export async function evaluateHighRiskForms(
 function mapHighRiskToCheckResult(
   classification: FormRiskClassification,
   evalResult: PromptResult<HighRiskFormEvaluation>,
+  promptInput: PromptInput,
 ): CheckResult | null {
+  const capture = buildLlmCapture(promptInput, evalResult);
+
   // Handle API failure
   if (!evalResult.success && !evalResult.data) {
     return {
@@ -250,6 +254,8 @@ function mapHighRiskToCheckResult(
         risk_signals: classification.riskSignals,
         failure_type: null,
       },
+      llm_input: capture.llm_input,
+      llm_output: capture.llm_output,
     };
   }
 
@@ -272,6 +278,8 @@ function mapHighRiskToCheckResult(
       failure_type: evaluation.failure_type,
       confidence: evaluation.confidence,
     },
+    llm_input: capture.llm_input,
+    llm_output: capture.llm_output,
   };
 }
 
