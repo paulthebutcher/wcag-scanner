@@ -56,76 +56,94 @@ export async function verifySkipNav(
   page: Page,
   maxElementsToCheck: number = 3,
 ): Promise<SkipLinkResult> {
-  // Reset focus to body
-  await page.evaluate(() => {
-    (document.activeElement as HTMLElement)?.blur?.();
-    document.body.focus();
-  });
-
-  // Tab through the first N elements looking for a skip link
-  for (let i = 0; i < maxElementsToCheck; i++) {
-    await page.keyboard.press("Tab");
-
-    const linkInfo = await page.evaluate(() => {
-      const el = document.activeElement;
-      if (!el || el === document.body) return null;
-
-      const tagName = el.tagName.toLowerCase();
-      if (tagName !== "a") return null;
-
-      const href = el.getAttribute("href") ?? "";
-      const text = (el.textContent ?? "").trim();
-      const html = el.outerHTML;
-
-      // Build selector
-      let selector: string;
-      if (el.id) {
-        selector = `#${CSS.escape(el.id)}`;
-      } else {
-        const parts: string[] = [];
-        let current: Element | null = el;
-        while (current && current !== document.documentElement) {
-          let part = current.tagName.toLowerCase();
-          if (current.id) {
-            parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
-            break;
-          }
-          const parent: Element | null = current.parentElement;
-          if (parent) {
-            const currentTag = current.tagName;
-            const siblings = Array.from(parent.children).filter(
-              (c: Element) => c.tagName === currentTag,
-            );
-            if (siblings.length > 1) {
-              const index = siblings.indexOf(current) + 1;
-              part += `:nth-of-type(${index})`;
-            }
-          }
-          parts.unshift(part);
-          current = parent;
-        }
-        selector = parts.join(" > ");
+  // Enumerate the first N keyboard-reachable anchors in DOM order. We
+  // intentionally do NOT rely on Tab here — the browser's sequential-focus
+  // starting point is pollutable by prior checks (focus-visible, trap,
+  // keyboard) that run before us in the scanner pipeline, and body.focus()
+  // does not reset that anchor. DOM-order enumeration is deterministic and
+  // captures the same elements a keyboard user would reach from the top of
+  // the page regardless of current focus state.
+  const candidates = await page.evaluate((maxCheck) => {
+    // Standard tabbable selector: anchors, buttons, form controls, explicit
+    // positive-tabindex elements. We walk these in DOM order — for pages
+    // without tabindex > 0 overrides (the normal case) this matches native
+    // browser tab order. The old implementation used Tab to enumerate,
+    // which was unreliable after prior checks moved the focus anchor.
+    const focusableSel = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+    const focusables = Array.from(document.querySelectorAll(focusableSel)) as HTMLElement[];
+    const isReachable = (el: Element): boolean => {
+      let cur: Element | null = el;
+      while (cur && cur !== document.documentElement) {
+        const curEl = cur as HTMLElement;
+        if (curEl.hasAttribute?.("inert")) return false;
+        if (cur.getAttribute("aria-hidden") === "true") return false;
+        if (curEl.hidden) return false;
+        const style = window.getComputedStyle(curEl);
+        if (style.display === "none") return false;
+        if (style.visibility === "hidden") return false;
+        cur = cur.parentElement;
       }
+      const ti = (el as HTMLElement).getAttribute("tabindex");
+      if (ti !== null && parseInt(ti, 10) < 0) return false;
+      // Note: skip links are commonly positioned off-screen until focused,
+      // so we do NOT require the rect to be in-viewport.
+      return true;
+    };
 
-      return {
-        selector,
-        text,
-        href,
+    const buildSelector = (el: Element): string => {
+      if (el.id) return `#${CSS.escape(el.id)}`;
+      const parts: string[] = [];
+      let current: Element | null = el;
+      while (current && current !== document.documentElement) {
+        let part = current.tagName.toLowerCase();
+        if (current.id) {
+          parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
+          break;
+        }
+        const parent: Element | null = current.parentElement;
+        if (parent) {
+          const tag = current.tagName;
+          const siblings = Array.from(parent.children).filter((c) => c.tagName === tag);
+          if (siblings.length > 1) {
+            const index = siblings.indexOf(current) + 1;
+            part += `:nth-of-type(${index})`;
+          }
+        }
+        parts.unshift(part);
+        current = parent;
+      }
+      return parts.join(" > ");
+    };
+
+    // Take the first N reachable focusables in DOM order, then filter to
+    // anchors. A skip link at position 5 (after 4 buttons) is still missed
+    // because a keyboard user would have already tabbed through 4 elements
+    // before reaching it — defeating the purpose of a skip link.
+    const firstN: HTMLElement[] = [];
+    for (const el of focusables) {
+      if (firstN.length >= maxCheck) break;
+      if (!isReachable(el)) continue;
+      firstN.push(el);
+    }
+    const picked: Array<{ selector: string; text: string; href: string; outerHtml: string }> = [];
+    for (const el of firstN) {
+      if (el.tagName.toLowerCase() !== "a") continue;
+      const html = el.outerHTML;
+      picked.push({
+        selector: buildSelector(el),
+        text: (el.textContent ?? "").trim(),
+        href: (el as HTMLAnchorElement).getAttribute("href") ?? "",
         outerHtml: html.length > 500 ? html.slice(0, 500) + "..." : html,
-      };
-    });
+      });
+    }
+    return picked;
+  }, maxElementsToCheck);
 
-    if (!linkInfo) continue;
-
-    // Check if this looks like a skip link
-    const isSkipLink = isSkipNavLink(linkInfo.text, linkInfo.href);
-    if (!isSkipLink) continue;
-
-    // Found a skip link — activate it and verify
+  for (const linkInfo of candidates) {
+    if (!isSkipNavLink(linkInfo.text, linkInfo.href)) continue;
     return await activateAndVerifySkipLink(page, linkInfo);
   }
 
-  // No skip link found
   return {
     found: false,
     skipLink: null,
@@ -162,7 +180,17 @@ async function activateAndVerifySkipLink(
 ): Promise<SkipLinkResult> {
   const href = linkInfo.href;
 
-  // Activate the skip link (Enter key while focused)
+  // Focus the link first. DOM enumeration picked this element without
+  // tabbing, so we must explicitly set focus before simulating Enter.
+  // Use the locator so Playwright handles scrolling/pointer-events.
+  try {
+    await page.locator(linkInfo.selector).first().focus();
+  } catch {
+    // Fall through — press Enter anyway; if focus isn't on the link,
+    // the result will reflect that and we'll report it honestly.
+  }
+
+  // Activate the skip link
   await page.keyboard.press("Enter");
 
   // Wait for navigation/focus change

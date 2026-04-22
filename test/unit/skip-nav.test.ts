@@ -86,6 +86,37 @@ describe("verifySkipNav", () => {
     }
   });
 
+  it("finds skip link even after prior keyboard tabbing polluted focus anchor", async () => {
+    // Regression: in the real scanner pipeline runSkipNavChecks runs AFTER
+    // runKeyboardChecks, which tabs through the whole page. That leaves the
+    // browser's sequential-focus-navigation starting point deep in the DOM.
+    // Before the fix, body.focus() didn't reset that anchor, so Tab #1 in
+    // verifySkipNav advanced from mid-page and missed the skip link.
+    const page = await context.newPage();
+    try {
+      await page.setContent(fixtureHtml);
+
+      // Simulate the pollution by tabbing past several elements first.
+      await page.evaluate(() => {
+        (document.activeElement as HTMLElement)?.blur?.();
+        document.body.focus();
+      });
+      for (let i = 0; i < 5; i++) {
+        await page.keyboard.press("Tab");
+      }
+
+      // Now the browser anchor is deep in the page. verifySkipNav must
+      // still find the skip link at the top of document order.
+      const result = await verifySkipNav(page);
+
+      expect(result.found).toBe(true);
+      expect(result.skipLink).not.toBeNull();
+      expect(result.skipLink!.text).toMatch(/skip/i);
+    } finally {
+      await page.close();
+    }
+  });
+
   it("reports missing skip link when none exists", async () => {
     const page = await context.newPage();
     try {
