@@ -22,6 +22,23 @@ export interface CrawlOptions {
   cmsPattern?: RegExp | null;
   /** Progress reporter (optional — if omitted, no progress is reported) */
   reporter?: ProgressReporter;
+  /**
+   * When true, include pages marked noindex in the scan. Default false —
+   * noindex pages are detected via meta robots / googlebot / X-Robots-Tag
+   * and skipped, on the basis that they're hidden from SERPs and not the
+   * target of the accessibility assessment.
+   */
+  includeNoindex?: boolean;
+}
+
+export interface ExcludedPage {
+  url: string;
+  source: NoindexSource;
+}
+
+export interface CrawlResult {
+  snapshots: PageSnapshot[];
+  excludedByNoindex: ExcludedPage[];
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +282,68 @@ export function isAllowedByRobots(
 }
 
 // ---------------------------------------------------------------------------
+// Noindex detection
+// ---------------------------------------------------------------------------
+
+export type NoindexSource = "meta-robots" | "meta-googlebot" | "x-robots-tag";
+
+export interface NoindexDetection {
+  noindex: boolean;
+  source: NoindexSource | null;
+}
+
+/** Case-insensitive check for a `noindex` token in a comma-separated directive list. */
+function hasNoindexToken(directives: string): boolean {
+  return directives
+    .toLowerCase()
+    .split(",")
+    .map((d) => d.trim())
+    .some((d) => d === "noindex" || d.endsWith(": noindex") || d.endsWith(":noindex"));
+}
+
+/**
+ * Detect whether a page is marked "noindex" by any of:
+ *   - `<meta name="robots" content="...noindex...">` in the HTML
+ *   - `<meta name="googlebot" content="...noindex...">`
+ *   - `X-Robots-Tag` response header (may include a bot-name prefix)
+ *
+ * Returns the first signal found. Header check takes precedence for
+ * clarity in logs; HTML meta robots checked before googlebot variant.
+ */
+export function detectNoindex(
+  dom: string,
+  headers: Record<string, string>,
+): NoindexDetection {
+  // X-Robots-Tag response header. Playwright lowercases header names.
+  const xrt = headers["x-robots-tag"];
+  if (typeof xrt === "string" && hasNoindexToken(xrt)) {
+    return { noindex: true, source: "x-robots-tag" };
+  }
+
+  // <meta name="robots" ... content="..."> and googlebot variant.
+  // Tolerates attributes in either order and single or double quotes.
+  const metaRegex = /<meta\b[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = metaRegex.exec(dom)) !== null) {
+    const tag = m[0];
+    const nameMatch = tag.match(/\bname\s*=\s*["']([^"']+)["']/i);
+    if (!nameMatch) continue;
+    const name = nameMatch[1].toLowerCase();
+    if (name !== "robots" && name !== "googlebot") continue;
+    const contentMatch = tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i);
+    if (!contentMatch) continue;
+    if (hasNoindexToken(contentMatch[1])) {
+      return {
+        noindex: true,
+        source: name === "robots" ? "meta-robots" : "meta-googlebot",
+      };
+    }
+  }
+
+  return { noindex: false, source: null };
+}
+
+// ---------------------------------------------------------------------------
 // HTTP helpers (not exported — internal)
 // ---------------------------------------------------------------------------
 
@@ -346,7 +425,7 @@ export async function crawl(
   rootUrl: string,
   options: CrawlOptions,
   browser?: Browser,
-): Promise<PageSnapshot[]> {
+): Promise<CrawlResult> {
   const maxPages = options.maxPages ?? 50;
   const timeoutMs = options.timeoutMs ?? 30_000;
   const viewport = options.viewport ?? {
@@ -433,6 +512,8 @@ export async function crawl(
   }
 
   const snapshots: PageSnapshot[] = [];
+  const excludedByNoindex: ExcludedPage[] = [];
+  const includeNoindex = options.includeNoindex ?? false;
 
   const ownBrowser = !browser;
   if (!browser) {
@@ -487,30 +568,51 @@ export async function crawl(
 
       const page = await context.newPage();
       try {
-        await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
-
-        const title = await page.title();
-        const dom = await page.content();
-        const screenshotBuffer = await page.screenshot({ fullPage: true });
-
-        const screenshotPath = options.fileStore.store(
-          options.scanSessionId,
-          `page-${snapshots.length}.png`,
-          screenshotBuffer,
-        );
-
-        snapshots.push({
-          id: randomUUID(),
-          scan_session_id: options.scanSessionId,
-          url,
-          title,
-          captured_at: new Date().toISOString(),
-          full_dom: dom,
-          screenshot: screenshotPath,
-          viewport,
+        const response = await page.goto(url, {
+          waitUntil: "networkidle",
+          timeout: timeoutMs,
         });
+        const responseHeaders = response?.headers() ?? {};
 
-        // Extract links from the page
+        const dom = await page.content();
+
+        // Noindex filter: if the page is hidden from SERPs (meta robots /
+        // googlebot / X-Robots-Tag), record it and skip adding it to the
+        // snapshot list. We still crawl outbound links — noindex means
+        // "don't index this page", not "don't follow its links".
+        const noindex = detectNoindex(dom, responseHeaders);
+        const shouldExclude = noindex.noindex && !includeNoindex;
+
+        if (!shouldExclude) {
+          const title = await page.title();
+          const screenshotBuffer = await page.screenshot({ fullPage: true });
+
+          const screenshotPath = options.fileStore.store(
+            options.scanSessionId,
+            `page-${snapshots.length}.png`,
+            screenshotBuffer,
+          );
+
+          snapshots.push({
+            id: randomUUID(),
+            scan_session_id: options.scanSessionId,
+            url,
+            title,
+            captured_at: new Date().toISOString(),
+            full_dom: dom,
+            screenshot: screenshotPath,
+            viewport,
+          });
+        } else {
+          excludedByNoindex.push({ url, source: noindex.source! });
+          options.reporter?.update(
+            "crawl",
+            `Excluded noindex page: ${url} (${noindex.source})`,
+          );
+        }
+
+        // Extract links regardless of exclusion so BFS can still discover
+        // pages reached only via a noindex page's outbound links.
         const hrefs: string[] = await page.evaluate(() =>
           Array.from(document.querySelectorAll("a[href]")).map(
             (a) => a.getAttribute("href") ?? "",
@@ -543,5 +645,5 @@ export async function crawl(
     if (ownBrowser && browser) await browser.close();
   }
 
-  return snapshots;
+  return { snapshots, excludedByNoindex };
 }

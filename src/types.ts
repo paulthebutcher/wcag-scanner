@@ -141,6 +141,8 @@ export interface ScanSession {
   scan_type: ScanType;
   /** Audit trail: which rules, versions, and tiers were active */
   detection_manifest: DetectionManifest | null;
+  /** Pages skipped at crawl time because they're hidden from SERPs */
+  excluded_pages: Array<{ url: string; source: string }> | null;
 }
 
 export interface PageSnapshot {

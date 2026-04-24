@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
   completed_at TEXT NOT NULL,
   comparison_scan_id TEXT,
   scan_type TEXT NOT NULL,
-  detection_manifest TEXT
+  detection_manifest TEXT,
+  excluded_pages TEXT
 );
 
 CREATE TABLE IF NOT EXISTS page_snapshots (
@@ -115,10 +116,14 @@ export function openDatabase(dbPath: string): Database.Database {
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
 
-  // Migrate: add detection_manifest column if missing (for pre-existing databases)
+  // Migrate: add missing columns for pre-existing databases.
   const cols = db.pragma("table_info(scan_sessions)") as { name: string }[];
-  if (!cols.some((c) => c.name === "detection_manifest")) {
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has("detection_manifest")) {
     db.exec("ALTER TABLE scan_sessions ADD COLUMN detection_manifest TEXT");
+  }
+  if (!colNames.has("excluded_pages")) {
+    db.exec("ALTER TABLE scan_sessions ADD COLUMN excluded_pages TEXT");
   }
 
   return db;
@@ -132,10 +137,11 @@ export function insertScanSession(db: Database.Database, session: ScanSession): 
   const row = {
     ...session,
     detection_manifest: session.detection_manifest ? JSON.stringify(session.detection_manifest) : null,
+    excluded_pages: session.excluded_pages ? JSON.stringify(session.excluded_pages) : null,
   };
   db.prepare(`
-    INSERT INTO scan_sessions (id, url, platform, platform_detected_via, initiated_at, completed_at, comparison_scan_id, scan_type, detection_manifest)
-    VALUES (@id, @url, @platform, @platform_detected_via, @initiated_at, @completed_at, @comparison_scan_id, @scan_type, @detection_manifest)
+    INSERT INTO scan_sessions (id, url, platform, platform_detected_via, initiated_at, completed_at, comparison_scan_id, scan_type, detection_manifest, excluded_pages)
+    VALUES (@id, @url, @platform, @platform_detected_via, @initiated_at, @completed_at, @comparison_scan_id, @scan_type, @detection_manifest, @excluded_pages)
   `).run(row);
 }
 
@@ -146,6 +152,9 @@ function parseSessionRow(row: Record<string, unknown> | undefined): ScanSession 
     detection_manifest: typeof row.detection_manifest === "string"
       ? JSON.parse(row.detection_manifest)
       : row.detection_manifest ?? null,
+    excluded_pages: typeof row.excluded_pages === "string"
+      ? JSON.parse(row.excluded_pages)
+      : row.excluded_pages ?? null,
   } as ScanSession;
 }
 
@@ -157,12 +166,23 @@ export function getScanSession(db: Database.Database, id: string): ScanSession |
 export function updateScanSession(
   db: Database.Database,
   id: string,
-  updates: Partial<Pick<ScanSession, "completed_at" | "platform" | "platform_detected_via" | "comparison_scan_id">>,
+  updates: Partial<Pick<ScanSession, "completed_at" | "platform" | "platform_detected_via" | "comparison_scan_id" | "excluded_pages">>,
 ): void {
   const fields = Object.keys(updates) as (keyof typeof updates)[];
   if (fields.length === 0) return;
-  const sets = fields.map((f) => `${f} = @${f}`).join(", ");
-  db.prepare(`UPDATE scan_sessions SET ${sets} WHERE id = @id`).run({ id, ...updates });
+  const serialized: Record<string, unknown> = { id };
+  const sets: string[] = [];
+  for (const f of fields) {
+    sets.push(`${f} = @${f}`);
+    const val = updates[f];
+    // Serialize excluded_pages array to JSON for SQLite storage
+    if (f === "excluded_pages") {
+      serialized[f] = val == null ? null : JSON.stringify(val);
+    } else {
+      serialized[f] = val;
+    }
+  }
+  db.prepare(`UPDATE scan_sessions SET ${sets.join(", ")} WHERE id = @id`).run(serialized);
 }
 
 export function listScanSessions(db: Database.Database): ScanSession[] {

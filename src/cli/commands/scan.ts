@@ -55,6 +55,10 @@ export function createScanCommand(): Command {
     .option("--tiers <list>", "Comma-separated check tiers to run", "1,2,3,4,5")
     .option("--cms-samples <n>", "CMS collection pages to sample per collection", "5")
     .option("--data-dir <path>", "Data directory for results", "./wcag-data")
+    .option(
+      "--include-noindex",
+      "Also scan pages marked noindex (meta robots / X-Robots-Tag). Default: exclude them from the scan.",
+    )
     .option("--quiet", "Suppress progress output, only print results")
     .action(async (url: string, opts: Record<string, string>) => {
       const maxPages = parseInt(opts["maxPages"], 10);
@@ -92,6 +96,7 @@ export function createScanCommand(): Command {
           cmsSamples,
           tiers,
           reporter,
+          includeNoindex: "includeNoindex" in opts,
         });
 
         // Results go to stdout (allows piping)
@@ -99,9 +104,18 @@ export function createScanCommand(): Command {
         process.stdout.write(result.scanSession.id + "\n");
 
         if (outputFormat === "json") {
-          process.stdout.write(JSON.stringify(result.summary, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({
+            ...result.summary,
+            excluded_by_noindex: result.excludedByNoindex,
+          }, null, 2) + "\n");
         } else {
           process.stdout.write(formatTable(result.summary, result.scanSession.id) + "\n");
+          if (result.excludedByNoindex.length > 0) {
+            process.stdout.write(`\nExcluded from scan (noindex): ${result.excludedByNoindex.length} page(s)\n`);
+            for (const ex of result.excludedByNoindex) {
+              process.stdout.write(`  - ${ex.url}  [${ex.source}]\n`);
+            }
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

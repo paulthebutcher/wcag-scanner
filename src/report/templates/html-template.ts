@@ -1167,11 +1167,29 @@ function renderScanScope(data: ReportData, pageUrlMap: Map<string, string>): str
     ? `<ol class="scope-page-list">${urls.map(u => `<li><code>${esc(u)}</code></li>`).join("")}</ol>`
     : `<p>No page list available.</p>`;
 
+  const excluded = data.scanSession.excluded_pages ?? [];
+  const excludedHtml = excluded.length > 0
+    ? `
+      <h3>Excluded from Scan</h3>
+      <p>
+        <strong>${excluded.length} page${excluded.length !== 1 ? "s" : ""}</strong>
+        were fetched but excluded from this assessment because
+        they are hidden from search engine results
+        (<code>meta robots</code> / <code>X-Robots-Tag</code>). These pages are
+        not the intended target of the public-site assessment. Rescan with
+        <code>--include-noindex</code> to include them.
+      </p>
+      <ol class="scope-page-list">
+        ${excluded.map(e => `<li><code>${esc(e.url)}</code> <span class="scope-exclude-source">— ${esc(e.source)}</span></li>`).join("")}
+      </ol>`
+    : "";
+
   return `
     <section class="scan-scope" id="scan-scope">
       <h2>Scan Scope</h2>
       <p><strong>${pageCount} page${pageCount !== 1 ? "s" : ""}</strong> were scanned for this assessment.</p>
       ${pageListHtml}
+      ${excludedHtml}
       <h3>Not Covered</h3>
       <p>The following are outside the scope of this automated assessment and require separate evaluation:</p>
       <ul>

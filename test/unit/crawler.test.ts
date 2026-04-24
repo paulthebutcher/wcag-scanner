@@ -368,7 +368,7 @@ describe("crawl (link-following)", () => {
 
   it("discovers all 5 internal links from root page", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-scan",
@@ -386,7 +386,7 @@ describe("crawl (link-following)", () => {
 
   it("respects maxPages limit", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-limit",
@@ -402,7 +402,7 @@ describe("crawl (link-following)", () => {
 
   it("deduplicates URLs with trailing slash and fragments", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-dedup",
@@ -421,7 +421,7 @@ describe("crawl (link-following)", () => {
 
   it("captures title, DOM, screenshot, viewport for each page", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-capture",
@@ -446,7 +446,7 @@ describe("crawl (link-following)", () => {
 
   it("does not follow external links", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-external",
@@ -481,7 +481,7 @@ describe("crawl (link-following)", () => {
     const reporter = new CollectingReporter();
 
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${slowPort}/`,
       {
         scanSessionId: "test-timeout",
@@ -589,7 +589,7 @@ describe("crawl (sitemap)", () => {
 
   it("discovers all 10 sitemap URLs in crawl results", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-sitemap",
@@ -627,7 +627,7 @@ Disallow: /page-6
 `;
 
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-robots",
@@ -728,7 +728,7 @@ describe("crawl (sitemap index)", () => {
 
   it("follows sitemap index to child sitemaps and discovers all pages", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-idx",
@@ -990,7 +990,7 @@ describe("crawl (CMS sampling)", () => {
     const reporter = new CollectingReporter();
 
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-cms-sample",
@@ -1023,7 +1023,7 @@ describe("crawl (CMS sampling)", () => {
 
   it("crawls all CMS pages when fullCrawl is true", async () => {
     const fileStore = new LocalFileStore(tmpDir);
-    const snapshots = await crawl(
+    const { snapshots } = await crawl(
       `http://127.0.0.1:${port}/`,
       {
         scanSessionId: "test-cms-full",
@@ -1060,5 +1060,143 @@ describe("crawl (CMS sampling)", () => {
     expect(blogLog).toBeDefined();
     expect(blogLog!.message).toMatch(/CMS collection \/blog\//);
     expect(blogLog!.message).toMatch(/sampling \d+/);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// noindex filtering integration
+// ---------------------------------------------------------------------------
+
+describe("crawl (noindex filter)", () => {
+  let server: Server;
+  let port: number;
+  let tmpDir: string;
+  let browser: Browser;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      switch (req.url) {
+        case "/":
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(`<!DOCTYPE html><html><head><title>Home</title></head><body>
+            <h1>Home</h1>
+            <a href="/about">About</a>
+            <a href="/private-meta">Private via meta</a>
+            <a href="/private-header">Private via header</a>
+            <a href="/linked-only-from-noindex">(indirect)</a>
+          </body></html>`);
+          return;
+        case "/about":
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(`<!DOCTYPE html><html><head><title>About</title></head><body><h1>About</h1></body></html>`);
+          return;
+        case "/private-meta":
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(`<!DOCTYPE html><html><head>
+            <title>Private (meta)</title>
+            <meta name="robots" content="noindex, nofollow">
+          </head><body>
+            <h1>Private</h1>
+            <a href="/reached-via-noindex">reached</a>
+          </body></html>`);
+          return;
+        case "/private-header":
+          res.writeHead(200, {
+            "Content-Type": "text/html",
+            "X-Robots-Tag": "noindex",
+          });
+          res.end(`<!DOCTYPE html><html><head><title>Private (header)</title></head><body><h1>Private</h1></body></html>`);
+          return;
+        case "/reached-via-noindex":
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(`<!DOCTYPE html><html><head><title>Reached</title></head><body><h1>Reached</h1></body></html>`);
+          return;
+        case "/linked-only-from-noindex":
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(`<!DOCTYPE html><html><head><title>Leaf</title></head><body><h1>Leaf</h1></body></html>`);
+          return;
+        default:
+          res.writeHead(404);
+          res.end("Not Found");
+      }
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const addr = server.address();
+    port = typeof addr === "object" && addr ? addr.port : 0;
+
+    tmpDir = mkdtempSync(join(tmpdir(), "wcag-crawl-noindex-"));
+    browser = await chromium.launch({ headless: true });
+  }, 30_000);
+
+  afterAll(async () => {
+    await browser?.close();
+    server?.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 15_000);
+
+  it("excludes noindex pages by default and records them with their source", async () => {
+    const fileStore = new LocalFileStore(tmpDir);
+    const { snapshots, excludedByNoindex } = await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-noindex",
+        fileStore,
+        maxPages: 50,
+        timeoutMs: 10_000,
+      },
+      browser,
+    );
+
+    const urls = snapshots.map((s) => new URL(s.url).pathname).sort();
+    expect(urls).not.toContain("/private-meta");
+    expect(urls).not.toContain("/private-header");
+    expect(urls).toContain("/");
+    expect(urls).toContain("/about");
+
+    expect(excludedByNoindex).toHaveLength(2);
+    const meta = excludedByNoindex.find((e) => e.url.endsWith("/private-meta"));
+    const header = excludedByNoindex.find((e) => e.url.endsWith("/private-header"));
+    expect(meta?.source).toBe("meta-robots");
+    expect(header?.source).toBe("x-robots-tag");
+  }, 30_000);
+
+  it("still follows links from a noindex page so downstream pages are still discovered", async () => {
+    const fileStore = new LocalFileStore(tmpDir);
+    const { snapshots } = await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-noindex-links",
+        fileStore,
+        maxPages: 50,
+        timeoutMs: 10_000,
+      },
+      browser,
+    );
+
+    const urls = snapshots.map((s) => new URL(s.url).pathname);
+    // /private-meta itself is excluded but its outbound link is followed.
+    expect(urls).toContain("/reached-via-noindex");
+  }, 30_000);
+
+  it("includes noindex pages when includeNoindex is true", async () => {
+    const fileStore = new LocalFileStore(tmpDir);
+    const { snapshots, excludedByNoindex } = await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-noindex-opt-in",
+        fileStore,
+        maxPages: 50,
+        timeoutMs: 10_000,
+        includeNoindex: true,
+      },
+      browser,
+    );
+
+    const urls = snapshots.map((s) => new URL(s.url).pathname);
+    expect(urls).toContain("/private-meta");
+    expect(urls).toContain("/private-header");
+    expect(excludedByNoindex).toHaveLength(0);
   }, 30_000);
 });

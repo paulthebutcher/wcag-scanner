@@ -84,6 +84,12 @@ export interface ScanOptions {
   concurrency?: number;
   /** Inject a PromptRunner for testing */
   promptRunner?: PromptRunner;
+  /**
+   * Include pages marked noindex (meta robots / X-Robots-Tag). Default false.
+   * When false, SERP-hidden pages are fetched once, recorded in
+   * ScanResult.excludedByNoindex, and excluded from the scan.
+   */
+  includeNoindex?: boolean;
 }
 
 export interface ScanResult {
@@ -92,6 +98,8 @@ export interface ScanResult {
   findings: Finding[];
   criterionResults: CriterionResult[];
   pageSnapshots: PageSnapshot[];
+  /** Pages skipped because they're hidden from SERPs (meta robots / X-Robots-Tag). */
+  excludedByNoindex: Array<{ url: string; source: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -622,26 +630,39 @@ export async function scan(
     comparison_scan_id: null,
     scan_type: "initial",
     detection_manifest: buildDetectionManifest(tiers, options),
+    excluded_pages: null,
   };
   insertScanSession(db, scanSession);
 
   const allFindings: Finding[] = [];
   const allCriterionResults: CriterionResult[] = [];
   let pageSnapshots: PageSnapshot[] = [];
+  let excludedByNoindex: Array<{ url: string; source: string }> = [];
 
   try {
     // --- Phase 1: Crawl -------------------------------------------------------
     reporter.update("crawl", `Discovering pages at ${options.url}...`);
-    pageSnapshots = await crawl(options.url, {
+    const crawlResult = await crawl(options.url, {
       scanSessionId: scanId,
       fileStore,
       maxPages: options.maxPages ?? 50,
       cmsSamples: options.cmsSamples ?? 5,
       viewport,
       reporter,
+      includeNoindex: options.includeNoindex ?? false,
     });
+    pageSnapshots = crawlResult.snapshots;
+    excludedByNoindex = crawlResult.excludedByNoindex;
 
-    reporter.complete("crawl", `Discovered ${pageSnapshots.length} page(s)`);
+    // Persist excluded-page list on the scan session so the report can
+    // surface it after the scan completes.
+    scanSession.excluded_pages = excludedByNoindex.length > 0 ? excludedByNoindex : null;
+    updateScanSession(db, scanId, { excluded_pages: scanSession.excluded_pages });
+
+    const excludedMsg = excludedByNoindex.length > 0
+      ? ` (${excludedByNoindex.length} noindex page(s) excluded)`
+      : "";
+    reporter.complete("crawl", `Discovered ${pageSnapshots.length} page(s)${excludedMsg}`);
 
     // Persist page snapshots
     for (const snapshot of pageSnapshots) {
@@ -1526,6 +1547,7 @@ export async function scan(
       findings: allFindings,
       criterionResults: reconciledResults,
       pageSnapshots,
+      excludedByNoindex,
     };
   } catch (err) {
     // Save partial results on non-fatal errors
