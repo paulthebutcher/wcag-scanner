@@ -3,6 +3,7 @@ import {
   discoverForms,
   collectFields,
   detectFormPurpose,
+  formFingerprint,
   type FormFieldInfo,
   type FormInfo,
 } from "../../src/checks/forms/discovery.js";
@@ -359,5 +360,33 @@ describe("detectFormPurpose", () => {
       { selector: "#card", html: "", tagName: "input", type: "text", name: "card", label: "Credit Card", required: true, autocomplete: null, placeholder: null, ariaDescribedby: null, ariaInvalid: null },
     ];
     expect(detectFormPurpose("<form>payment info</form>", fields, "Pay Now")).toBe("payment");
+  });
+});
+
+describe("formFingerprint", () => {
+  const signup = (extra = "") => `
+    <html><body><main><p>Page-specific copy ${extra}</p></main>
+    <form class="grsf-signup-form" novalidate>
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" required>
+      <button type="submit">Join</button>
+    </form></body></html>`;
+
+  it("matches the same form on pages with different surrounding content", () => {
+    const [a] = discoverForms(makeSnapshot(signup("home")));
+    const [b] = discoverForms(makeSnapshot(signup("pricing")));
+    expect(formFingerprint(a)).toBe(formFingerprint(b));
+  });
+
+  it("differs when a field's validation attributes differ", () => {
+    const [a] = discoverForms(makeSnapshot(signup()));
+    const [b] = discoverForms(makeSnapshot(signup().replace(" required>", ">")));
+    expect(formFingerprint(a)).not.toBe(formFingerprint(b));
+  });
+
+  it("differs when the form action differs", () => {
+    const [a] = discoverForms(makeSnapshot(signup()));
+    const [b] = discoverForms(makeSnapshot(signup().replace("novalidate", 'novalidate action="/other"')));
+    expect(formFingerprint(a)).not.toBe(formFingerprint(b));
   });
 });

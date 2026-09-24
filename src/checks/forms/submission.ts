@@ -176,7 +176,8 @@ async function fillForm(
 
     try {
       const element = await page.$(field.selector);
-      if (!element) continue;
+      // Hidden fields would otherwise block for the full action timeout
+      if (!element || !(await element.isVisible())) continue;
 
       if (field.tagName === "select") {
         await element.selectOption(value);
@@ -187,6 +188,28 @@ async function fillForm(
       // Field might not be interactable — continue with other fields
     }
   }
+}
+
+/**
+ * Count the form's user-fillable fields that are visible on the live page.
+ *
+ * Forms rendered hidden at load (inside a closed modal, a collapsed panel, or
+ * a third-party embed that hasn't opened) can't be exercised by the
+ * submission or on-input tests; callers use this to skip them and report
+ * those criteria as not tested rather than passed.
+ */
+export async function countVisibleFields(page: Page, form: FormInfo): Promise<number> {
+  let visible = 0;
+  for (const field of form.fields) {
+    if (["hidden", "submit", "button", "image", "reset"].includes(field.type)) continue;
+    try {
+      const element = await page.$(field.selector);
+      if (element && (await element.isVisible())) visible++;
+    } catch {
+      // Invalid selector on the live DOM — treat as not visible
+    }
+  }
+  return visible;
 }
 
 /**

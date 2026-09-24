@@ -53,8 +53,9 @@ import { runTableStructureChecks } from "../checks/semantic/table-structure.js";
 import { runDuplicateLinkChecks } from "../checks/semantic/duplicate-links.js";
 import { createPromptRunner, type PromptRunner } from "./prompt-runner.js";
 // Form checks (Tier 4)
-import { discoverForms } from "../checks/forms/discovery.js";
-import { testFormSubmission } from "../checks/forms/submission.js";
+import { discoverForms, formFingerprint } from "../checks/forms/discovery.js";
+import type { FormInfo } from "../checks/forms/discovery.js";
+import { testFormSubmission, countVisibleFields } from "../checks/forms/submission.js";
 import type { SubmissionState } from "../checks/forms/submission.js";
 import { evaluateErrorMessages, evaluateInputPurpose } from "../checks/forms/error-evaluation.js";
 import { evaluateHighRiskForms } from "../checks/forms/high-risk.js";
@@ -692,6 +693,10 @@ export async function scan(
           viewport: { width: viewport.width, height: viewport.height },
           deviceScaleFactor: viewport.deviceScaleFactor,
         });
+        // tsx/esbuild (keepNames) wraps named functions in a `__name(fn, "name")`
+        // helper. Callbacks passed to page.evaluate are serialized into the
+        // browser, where that helper doesn't exist — define a no-op so they run.
+        await context.addInitScript({ content: "globalThis.__name = globalThis.__name || ((fn) => fn);" });
       }
 
       // Collect axe-flagged selectors per page for Tier 3 deduplication
@@ -1248,20 +1253,72 @@ export async function scan(
         // Track form criteria violations and whether any forms exist
         const formViolationCriteria = new Set<string>();
         let totalFormsFound = 0;
+        // Forms whose fields were visible and actually exercised in the browser
+        let formsExercised = 0;
+
+        // 4a: Discover forms on every page up front. The same form repeated
+        // across pages (site-wide signup, footer contact form, CMS template)
+        // behaves identically, so it's tested once on the first page it
+        // appears and the results are annotated with the other pages —
+        // mirroring deduplicateBehavioralResults.
+        const formsByPage = new Map<string, FormInfo[]>();
+        const formGroups = new Map<string, { snapshotId: string; otherUrls: string[] }>();
+        for (const snapshot of pageSnapshots) {
+          try {
+            const forms = discoverForms(snapshot);
+            formsByPage.set(snapshot.id, forms);
+            totalFormsFound += forms.length;
+            for (const form of forms) {
+              const fp = formFingerprint(form);
+              const group = formGroups.get(fp);
+              if (!group) formGroups.set(fp, { snapshotId: snapshot.id, otherUrls: [] });
+              else if (group.snapshotId !== snapshot.id && !group.otherUrls.includes(snapshot.url)) {
+                group.otherUrls.push(snapshot.url);
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("forms", `Form discovery failed for ${snapshot.url}: ${msg}`);
+          }
+        }
+        if (totalFormsFound > 0) {
+          reporter.update("forms", `Discovered ${totalFormsFound} form instance(s), ${formGroups.size} unique`);
+        }
+
+        const annotateShared = (results: CheckResult[], form: FormInfo): CheckResult[] => {
+          const otherUrls = formGroups.get(formFingerprint(form))?.otherUrls ?? [];
+          if (otherUrls.length === 0) return results;
+          return results.map((r) => ({
+            ...r,
+            measured_values: {
+              ...(r.measured_values ?? {}),
+              also_found_on_pages: otherUrls.length,
+              dedup_note: `Same form also found on ${otherUrls.length} other page${otherUrls.length !== 1 ? "s" : ""}`,
+            },
+          }));
+        };
 
         for (const snapshot of pageSnapshots) {
           try {
-            // 4a: Discover forms from DOM
-            const forms = discoverForms(snapshot);
-            totalFormsFound += forms.length;
-            reporter.update("forms", `${snapshot.url}: discovered ${forms.length} form(s)`);
+            // Only test forms whose first occurrence is on this page
+            const seenOnPage = new Set<string>();
+            const forms = (formsByPage.get(snapshot.id) ?? []).filter((form) => {
+              const fp = formFingerprint(form);
+              if (seenOnPage.has(fp) || formGroups.get(fp)?.snapshotId !== snapshot.id) return false;
+              seenOnPage.add(fp);
+              return true;
+            });
 
             if (forms.length === 0) continue;
+            reporter.update("forms", `${snapshot.url}: testing ${forms.length} form(s)`);
 
             // 4b: High-risk form evaluation (LLM)
             if (formRunner) {
               try {
-                const highRiskResults = await evaluateHighRiskForms(forms, formRunner);
+                const highRiskResults = (await evaluateHighRiskForms(forms, formRunner)).flatMap((r) => {
+                  const form = forms.find((f) => f.selector === r.element_selector);
+                  return form ? annotateShared([r], form) : [r];
+                });
                 if (highRiskResults.length > 0) {
                   formViolationCriteria.add("3.3.4");
                   const findings = await processCheckResults(highRiskResults, {
@@ -1286,12 +1343,28 @@ export async function scan(
             if (context) {
               for (const form of forms) {
                 const page = await context.newPage();
+                // The page is already loaded when fields are filled; anything
+                // not actionable within 5s won't become actionable at 30s.
+                page.setDefaultTimeout(5_000);
                 try {
                   await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
                   const fullScreenshot = await page.screenshot({ fullPage: true });
 
+                  // Forms hidden at load (closed modal, unopened embed) can't be
+                  // exercised; skip the browser tests so their criteria are
+                  // reported as not tested instead of silently passing.
+                  const interactive = (await countVisibleFields(page, form)) > 0;
+                  if (interactive) {
+                    formsExercised++;
+                  } else {
+                    reporter.warn("forms", `${snapshot.url}: ${form.selector} has no visible fields at page load — submission and on-input tests skipped`);
+                  }
+
                   // Test form submission
-                  const { states, results: submissionResults } = await testFormSubmission(page, form);
+                  const { states, results: rawSubmissionResults } = interactive
+                    ? await testFormSubmission(page, form)
+                    : { states: [], results: [] };
+                  const submissionResults = annotateShared(rawSubmissionResults, form);
                   allSubmissionStates.push(...states);
 
                   if (submissionResults.length > 0) {
@@ -1312,7 +1385,7 @@ export async function scan(
                   // Error message evaluation (LLM)
                   if (formRunner && states.length > 0) {
                     try {
-                      const errorResults = await evaluateErrorMessages(states, formRunner);
+                      const errorResults = annotateShared(await evaluateErrorMessages(states, formRunner), form);
                       if (errorResults.length > 0) {
                         for (const er of errorResults) formViolationCriteria.add(er.wcag_criterion);
                         const findings = await processCheckResults(errorResults, {
@@ -1336,7 +1409,7 @@ export async function scan(
                   // Input purpose evaluation (LLM)
                   if (formRunner) {
                     try {
-                      const purposeResults = await evaluateInputPurpose(form, formRunner);
+                      const purposeResults = annotateShared(await evaluateInputPurpose(form, formRunner), form);
                       if (purposeResults.length > 0) {
                         formViolationCriteria.add("1.3.5");
                         const findings = await processCheckResults(purposeResults, {
@@ -1358,8 +1431,8 @@ export async function scan(
                   }
 
                   // On-input state changes (3.2.2)
-                  try {
-                    const { results: onInputResults } = await checkOnInput(page, form);
+                  if (interactive) try {
+                    const onInputResults = annotateShared((await checkOnInput(page, form)).results, form);
                     if (onInputResults.length > 0) {
                       formViolationCriteria.add("3.2.2");
                       const findings = await processCheckResults(onInputResults, {
@@ -1425,12 +1498,23 @@ export async function scan(
           ["3.3.4", "Error prevention (legal, financial, data)"],
           ["3.2.2", "On input — no unexpected context changes"],
         ];
+        // These criteria are only evidenced by interacting with a visible form
+        const interactionCriteria = new Set(["3.3.1", "3.3.3", "3.2.2"]);
+        const formCountDesc = `${totalFormsFound} form instance(s), ${formGroups.size} unique`;
         for (const [criterion, desc] of formCriteria) {
           if (!formViolationCriteria.has(criterion)) {
-            const status = totalFormsFound === 0 ? "not_applicable" : "passed";
-            const summary = totalFormsFound === 0
-              ? `${desc}: no forms found on scanned pages`
-              : `${desc}: no violations found across ${totalFormsFound} form(s)`;
+            let status: "not_applicable" | "passed" | "not_tested";
+            let summary: string;
+            if (totalFormsFound === 0) {
+              status = "not_applicable";
+              summary = `${desc}: no forms found on scanned pages`;
+            } else if (interactionCriteria.has(criterion) && formsExercised === 0) {
+              status = "not_tested";
+              summary = `${desc}: ${formCountDesc} found, but none had visible fields to test at page load`;
+            } else {
+              status = "passed";
+              summary = `${desc}: no violations found across ${formCountDesc}`;
+            }
             const cr = makeCriterionResult(scanId, criterion, status, "playwright", summary);
             upsertCriterionResult(db, cr);
             allCriterionResults.push(cr);

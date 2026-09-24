@@ -59,6 +59,11 @@ export async function checkOnInput(
     }
 
     try {
+      // Hidden fields can't be changed by a user; filling them would block
+      // for the full action timeout and then fail.
+      const element = await page.$(field.selector);
+      if (!element || !(await element.isVisible())) continue;
+
       const change = await testSingleInput(page, field, originalUrl);
       stateChanges.push(change);
 
@@ -134,7 +139,11 @@ async function testSingleInput(
 
     // Change the input value
     if (field.type === "checkbox" || field.type === "radio") {
-      await element.click();
+      // Webflow custom checkboxes overlay the native input with its label
+      // span; Playwright's actionability check rejects the click, but a user
+      // clicking there toggles the input via the label. Visibility was
+      // already confirmed by the caller, so force the click through.
+      await element.click({ force: true });
     } else if (field.tagName === "select") {
       // Try to select second option if available
       const options = await element.evaluate((el) => {

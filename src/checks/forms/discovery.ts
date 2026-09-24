@@ -405,6 +405,32 @@ function isWebflowFormComponent(formHtml: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Build a structural fingerprint for a form so the same form repeated across
+ * pages (site-wide newsletter signup, footer contact form, CMS template form)
+ * can be tested once.
+ *
+ * Built from the form selector, action, method, submit button, and each
+ * field's type/name/label/validation attributes. Deliberately excludes the
+ * page URL and raw HTML so per-page noise doesn't defeat matching, but
+ * includes everything that drives validation behavior.
+ */
+export function formFingerprint(form: FormInfo): string {
+  const fields = form.fields.map((f) =>
+    [f.tagName, f.type, f.name ?? "", f.label, f.required ? "req" : "", f.autocomplete ?? "",
+      f.placeholder ?? "", f.ariaDescribedby ?? ""].join("~"),
+  );
+  return [
+    form.selector,
+    form.action ?? "",
+    form.method,
+    form.isDivBased ? "div" : "form",
+    form.submitButtonSelector ?? "",
+    form.submitButtonText,
+    ...fields,
+  ].join("|");
+}
+
+/**
  * Discover all forms on a page from its DOM snapshot.
  *
  * Finds:

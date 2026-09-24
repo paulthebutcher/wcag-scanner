@@ -5,3 +5,5 @@ wcag-data/
 *.tgz
 coverage/
 .DS_Store
+.claude/worktrees/
+wcag-data-*/
