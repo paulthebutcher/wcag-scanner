@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   collectLinksForDuplication,
   runDuplicateLinkChecks,
-  type LinkInfo,
 } from "../../src/checks/semantic/duplicate-links.js";
 
 // ---------------------------------------------------------------------------
@@ -178,5 +177,109 @@ describe("runDuplicateLinkChecks", () => {
     expect(results).toHaveLength(1);
     expect(results[0].measured_values?.duplicate_count).toBe(3);
     expect(results[0].measured_values?.distinct_urls).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Same-origin URL normalization
+// ---------------------------------------------------------------------------
+
+describe("runDuplicateLinkChecks — same-origin URL normalization", () => {
+  it("treats relative and absolute same-origin URLs as the same destination", () => {
+    // The FAQ page at lakewoodcourtoh.gov links to /court-forms (relative)
+    // and https://www.lakewoodcourtoh.gov/court-forms (absolute same origin).
+    // These should be treated as the same URL — no false positive.
+    const dom = `
+      <html><body>
+        <a href="/court-forms">Court Forms</a>
+        <a href="https://www.lakewoodcourtoh.gov/court-forms">Court Forms</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://www.lakewoodcourtoh.gov/faq");
+    expect(results).toHaveLength(0);
+  });
+
+  it("still flags same text pointing to genuinely different same-origin destinations", () => {
+    const dom = `
+      <html><body>
+        <a href="/court-forms">Learn More</a>
+        <a href="/about">Learn More</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://www.lakewoodcourtoh.gov/faq");
+    expect(results).toHaveLength(1);
+    expect(results[0].measured_values?.distinct_urls).toBe(2);
+  });
+
+  it("does NOT merge same text pointing to different origins", () => {
+    const dom = `
+      <html><body>
+        <a href="/court-forms">Court Forms</a>
+        <a href="https://www.othercourt.gov/court-forms">Court Forms</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://www.lakewoodcourtoh.gov/faq");
+    expect(results).toHaveLength(1);
+    expect(results[0].measured_values?.distinct_urls).toBe(2);
+  });
+
+  it("normalises trailing slash equivalence", () => {
+    const dom = `
+      <html><body>
+        <a href="/about">About</a>
+        <a href="/about/">About</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://example.com/");
+    expect(results).toHaveLength(0);
+  });
+
+  it("normalises hostname case", () => {
+    const dom = `
+      <html><body>
+        <a href="https://EXAMPLE.COM/page">Read</a>
+        <a href="https://example.com/page">Read</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://example.com/");
+    expect(results).toHaveLength(0);
+  });
+
+  it("removes default https port 443", () => {
+    const dom = `
+      <html><body>
+        <a href="https://example.com:443/page">Info</a>
+        <a href="https://example.com/page">Info</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://example.com/");
+    expect(results).toHaveLength(0);
+  });
+
+  it("strips fragment differences only — preserves query strings as distinct", () => {
+    // Two different query strings → different destinations → should still flag.
+    const dom = `
+      <html><body>
+        <a href="/search?q=forms">Search</a>
+        <a href="/search?q=faq">Search</a>
+      </body></html>
+    `;
+    const results = runDuplicateLinkChecks(dom, "https://example.com/");
+    expect(results).toHaveLength(1);
+  });
+
+  it("works without pageUrl (falls back to string normalisation)", () => {
+    // Without pageUrl, relative hrefs cannot be resolved — the existing
+    // string-based logic applies and /court-forms != full absolute URL.
+    const dom = `
+      <html><body>
+        <a href="/court-forms">Court Forms</a>
+        <a href="https://www.lakewoodcourtoh.gov/court-forms">Court Forms</a>
+      </body></html>
+    `;
+    // No pageUrl → relative + absolute look different → flagged (expected behaviour
+    // when caller does not supply the page URL).
+    const results = runDuplicateLinkChecks(dom);
+    expect(results).toHaveLength(1);
   });
 });

@@ -988,6 +988,15 @@ export async function scan(
         })();
 
         if (runner) {
+          // Collect per-page semantic results before processing so we can
+          // dedup shared-element findings (e.g. footer links, template icons)
+          // across pages before they become Findings.
+          const semanticPageEntries: Array<{
+            snapshotId: string;
+            snapshotUrl: string;
+            results: CheckResult[];
+          }> = [];
+
           for (const snapshot of pageSnapshots) {
             const dom = snapshot.full_dom;
             const pageResults: CheckResult[] = [];
@@ -1061,7 +1070,7 @@ export async function scan(
 
             // 3g: Duplicate link text (structural, no Claude needed)
             try {
-              const dupLinkResults = runDuplicateLinkChecks(dom);
+              const dupLinkResults = runDuplicateLinkChecks(dom, snapshot.url);
               pageResults.push(...dupLinkResults);
               if (dupLinkResults.length > 0) semanticViolationCriteria.add("2.4.4");
             } catch (err) {
@@ -1069,11 +1078,59 @@ export async function scan(
               reporter.warn("semantic", `Duplicate link checks failed for ${snapshot.url}: ${msg}`);
             }
 
-            // Process semantic results
-            if (pageResults.length > 0) {
-              const findings = await processCheckResults(pageResults, {
+            semanticPageEntries.push({ snapshotId: snapshot.id, snapshotUrl: snapshot.url, results: pageResults });
+            reporter.update("semantic", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+          }
+
+          // Cross-page dedup for semantic findings.
+          // Same element in a shared template (footer, nav) produces one finding
+          // per crawled page — collapse to one canonical finding annotated with
+          // also_found_on_pages, same as behavioral dedup.
+          const SEMANTIC_DEDUP = new Set(["1.1.1", "2.4.4"]);
+          const semSeen = new Map<string, { snapshotId: string; otherUrls: string[] }>();
+
+          // First pass: identify canonical (first) occurrence per unique element+criterion
+          for (const entry of semanticPageEntries) {
+            for (const result of entry.results) {
+              if (!SEMANTIC_DEDUP.has(result.wcag_criterion)) continue;
+              const key = `${result.wcag_criterion}|${result.element_selector}|${result.element_html}`;
+              if (!semSeen.has(key)) {
+                semSeen.set(key, { snapshotId: entry.snapshotId, otherUrls: [] });
+              } else {
+                semSeen.get(key)!.otherUrls.push(entry.snapshotUrl);
+              }
+            }
+          }
+
+          // Second pass: annotate canonical results and remove duplicates
+          for (const entry of semanticPageEntries) {
+            const kept: CheckResult[] = [];
+            for (const result of entry.results) {
+              if (!SEMANTIC_DEDUP.has(result.wcag_criterion)) {
+                kept.push(result);
+                continue;
+              }
+              const key = `${result.wcag_criterion}|${result.element_selector}|${result.element_html}`;
+              const info = semSeen.get(key)!;
+              if (info.snapshotId !== entry.snapshotId) continue; // duplicate page — skip
+              if (info.otherUrls.length > 0) {
+                result.measured_values = {
+                  ...result.measured_values,
+                  also_found_on_pages: info.otherUrls.length,
+                  dedup_note: `Also found on ${info.otherUrls.length} other page${info.otherUrls.length !== 1 ? "s" : ""}`,
+                };
+              }
+              kept.push(result);
+            }
+            entry.results = kept;
+          }
+
+          // Process deduplicated semantic results
+          for (const entry of semanticPageEntries) {
+            if (entry.results.length > 0) {
+              const findings = await processCheckResults(entry.results, {
                 scanId,
-                pageSnapshotId: snapshot.id,
+                pageSnapshotId: entry.snapshotId,
                 platform: scanSession.platform,
                 failureType: "semantic",
                 fullPageScreenshot: null,
@@ -1083,8 +1140,6 @@ export async function scan(
               allFindings.push(...findings);
               semanticCount += findings.length;
             }
-
-            reporter.update("semantic", `${snapshot.url}: ${pageResults.length} issue(s) found`);
           }
 
           // Create pass CriterionResults for semantic criteria that were

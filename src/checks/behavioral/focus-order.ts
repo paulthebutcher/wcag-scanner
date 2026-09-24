@@ -235,6 +235,7 @@ export function runFocusOrderChecks(
       large_gaps: result.issues.filter((i) => i.issueType === "large_gap").length,
       confidence: hasHighConfidence ? "high" : "moderate",
       tab_stops_with_boxes: result.tabOrder.length,
+      divergence_index: result.issues[0]?.fromStop.sequenceIndex ?? null,
     },
   }];
 }

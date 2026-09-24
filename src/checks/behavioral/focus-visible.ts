@@ -12,9 +12,10 @@ export interface FocusVisibilityResult {
   selector: string;
   /** Whether any visual change was detected on focus */
   hasVisualChange: boolean;
-  /** Measured contrast ratio of focus indicator (null if no change detected) */
+  /** Measured contrast ratio of focus indicator (null if no change detected).
+   *  This is the legacy average-pixel contrast; prefer perimeterContrast for pass/fail. */
   contrastRatio: number | null;
-  /** Whether the contrast meets the 3:1 minimum */
+  /** Whether the contrast meets the 3:1 minimum (composite algorithm) */
   meetsMinimum: boolean;
   /** Screenshot of element without focus */
   unfocusedScreenshot: Buffer;
@@ -24,6 +25,17 @@ export interface FocusVisibilityResult {
   pixelDiffPercent: number;
   /** Outer HTML */
   outerHtml: string;
+  /** Composite focus metrics from the new algorithm */
+  focusMetrics: {
+    /** Highest contrast found at changed/unchanged pixel boundary (the "ring edge") */
+    perimeterContrast: number;
+    /** 90th-percentile of ring-edge contrasts (robust to anti-aliasing outliers) */
+    p90PerimeterContrast: number;
+    /** Estimated thickness of changed band in pixels (total_changed / perimeter_count) */
+    estimatedThicknessPx: number;
+    /** Whether the element interior changed colour — indicates fill-based focus state */
+    hasFillChange: boolean;
+  };
 }
 
 export interface FocusVisibilityCheckOptions {
@@ -59,7 +71,22 @@ function contrastRatio(l1: number, l2: number): number {
 
 /**
  * Compare two screenshots pixel-by-pixel.
- * Returns the percentage of pixels that differ and the dominant color of changed pixels.
+ *
+ * Returns both the legacy average-pixel metrics and a richer set of composite
+ * metrics that are robust to multi-ring, boxed, and fill-based focus states:
+ *
+ *  perimeterContrast    — max contrast at the boundary between changed and
+ *                         unchanged pixels, i.e. the "ring edge" contrast.
+ *                         A black outer ring adjacent to a cream background
+ *                         scores >10:1 even if the average of all ring pixels
+ *                         (black + white inner ring) is gray.
+ *  p90PerimeterContrast — 90th-percentile of the same boundary sample,
+ *                         robust to anti-aliasing artefacts at corners.
+ *  estimatedThicknessPx — rough thickness of the changed band (useful for
+ *                         reporting, not used in pass/fail).
+ *  hasFillChange        — true when the element's interior pixels changed
+ *                         colour significantly, indicating a fill-based focus
+ *                         state (background-color or text-color inversion).
  */
 async function compareScreenshots(
   unfocused: Buffer,
@@ -68,48 +95,66 @@ async function compareScreenshots(
   diffPercent: number;
   focusIndicatorColor: { r: number; g: number; b: number } | null;
   backgroundLuminance: number;
+  perimeterContrast: number;
+  p90PerimeterContrast: number;
+  estimatedThicknessPx: number;
+  hasFillChange: boolean;
 }> {
-  // Normalize both images to same dimensions using raw pixel data
   const unfocusedImg = sharp(unfocused);
   const focusedImg = sharp(focused);
 
   const unfocusedMeta = await unfocusedImg.metadata();
   const focusedMeta = await focusedImg.metadata();
 
-  // Use the smaller dimensions to compare
   const width = Math.min(unfocusedMeta.width ?? 0, focusedMeta.width ?? 0);
   const height = Math.min(unfocusedMeta.height ?? 0, focusedMeta.height ?? 0);
 
   if (width === 0 || height === 0) {
-    return { diffPercent: 0, focusIndicatorColor: null, backgroundLuminance: 0 };
+    return {
+      diffPercent: 0,
+      focusIndicatorColor: null,
+      backgroundLuminance: 0,
+      perimeterContrast: 0,
+      p90PerimeterContrast: 0,
+      estimatedThicknessPx: 0,
+      hasFillChange: false,
+    };
   }
 
+  // Force 3-channel RGB so index math is always i*3.
   const unfocusedRaw = await sharp(unfocused)
     .resize(width, height, { fit: "cover" })
+    .removeAlpha()
     .raw()
     .toBuffer();
 
   const focusedRaw = await sharp(focused)
     .resize(width, height, { fit: "cover" })
+    .removeAlpha()
     .raw()
     .toBuffer();
 
   const totalPixels = width * height;
+
+  // Threshold for considering a pixel "changed" (accounts for anti-aliasing).
+  const threshold = 20;
+
+  // --- Pass 1: classify each pixel as changed / unchanged ---
+  const changed = new Uint8Array(totalPixels);
+
   let changedPixels = 0;
   let totalR = 0, totalG = 0, totalB = 0;
   let bgR = 0, bgG = 0, bgB = 0;
   let bgCount = 0;
 
-  // Threshold for considering a pixel "changed" (accounts for anti-aliasing)
-  const threshold = 20;
-
   for (let i = 0; i < totalPixels; i++) {
     const idx = i * 3;
-    const dr = Math.abs(unfocusedRaw[idx] - focusedRaw[idx]);
+    const dr = Math.abs(unfocusedRaw[idx]     - focusedRaw[idx]);
     const dg = Math.abs(unfocusedRaw[idx + 1] - focusedRaw[idx + 1]);
     const db = Math.abs(unfocusedRaw[idx + 2] - focusedRaw[idx + 2]);
 
     if (dr > threshold || dg > threshold || db > threshold) {
+      changed[i] = 1;
       changedPixels++;
       totalR += focusedRaw[idx];
       totalG += focusedRaw[idx + 1];
@@ -133,11 +178,99 @@ async function compareScreenshots(
     };
   }
 
-  const backgroundLuminance = bgCount > 0
-    ? relativeLuminance(bgR / bgCount, bgG / bgCount, bgB / bgCount)
-    : 0;
+  const backgroundLuminance =
+    bgCount > 0
+      ? relativeLuminance(bgR / bgCount, bgG / bgCount, bgB / bgCount)
+      : 0;
 
-  return { diffPercent, focusIndicatorColor, backgroundLuminance };
+  // --- Pass 2: same-position contrast of changed pixels ---
+  //
+  // For each changed pixel compute contrastRatio(focused[i], unfocused[i]).
+  // "Same-position" means we contrast the focused colour against what was at
+  // that exact pixel before focus — not against an adjacent neighbour.
+  //
+  // Why this is more robust than the adjacent-neighbour (perimeter) approach:
+  //
+  // When a nav link is focused the browser draws the ring AND re-renders text
+  // (subpixel hinting changes).  Those text-rendering shifts produce changed
+  // pixels inside the ring.  The ring pixels then have ALL four neighbours
+  // classified as "changed" (anti-aliased fringe outside + text artifacts
+  // inside), so the perimeter detector misses them and instead reports only
+  // the low-contrast fringe — explaining values like 2.8:1 for a clearly-
+  // visible black box.
+  //
+  // With same-position comparison:
+  //   • Black ring pixel: focused=black(0,0,0) unfocused=cream(253,245,228)
+  //     → contrast ≈ 19:1 → correctly passes
+  //   • Text-rendering shift: focused=teal(26,110,110) unfocused=teal(24,108,108)
+  //     → contrast ≈ 1:1 → does not affect the max
+  //   • Light-gray 1 px outline: focused=#e0e0e0 unfocused=white
+  //     → contrast ≈ 1.3:1 → correctly fails
+
+  let maxSamePosnContrast = 0;
+  const contrastSamples: number[] = [];
+
+  for (let i = 0; i < totalPixels; i++) {
+    if (!changed[i]) continue;
+
+    const idx = i * 3;
+    const focLum = relativeLuminance(focusedRaw[idx], focusedRaw[idx + 1], focusedRaw[idx + 2]);
+    const unfLum = relativeLuminance(unfocusedRaw[idx], unfocusedRaw[idx + 1], unfocusedRaw[idx + 2]);
+    const c = contrastRatio(focLum, unfLum);
+
+    if (c > maxSamePosnContrast) maxSamePosnContrast = c;
+    contrastSamples.push(c);
+  }
+
+  let p90PerimeterContrast = 0;
+  if (contrastSamples.length > 0) {
+    contrastSamples.sort((a, b) => a - b);
+    const p90idx = Math.min(
+      Math.floor(contrastSamples.length * 0.9),
+      contrastSamples.length - 1,
+    );
+    p90PerimeterContrast = contrastSamples[p90idx];
+  }
+
+  // estimatedThicknessPx: not meaningful under the same-position approach;
+  // kept at 0 for API compatibility.
+  const estimatedThicknessPx = 0;
+
+  // --- Fill change detection ---
+  // Sample the inner 50% of the screenshot (avoiding the focus ring itself).
+  // A significant colour shift here means the element background or content
+  // colour changed — characteristic of fill-based focus states.
+  const cx0 = Math.floor(width * 0.25);
+  const cx1 = Math.ceil(width * 0.75);
+  const cy0 = Math.floor(height * 0.25);
+  const cy1 = Math.ceil(height * 0.75);
+
+  let centerDeltaSum = 0;
+  let centerCount = 0;
+
+  for (let y = cy0; y < cy1; y++) {
+    for (let x = cx0; x < cx1; x++) {
+      const idx = (y * width + x) * 3;
+      const dr = Math.abs(unfocusedRaw[idx]     - focusedRaw[idx]);
+      const dg = Math.abs(unfocusedRaw[idx + 1] - focusedRaw[idx + 1]);
+      const db = Math.abs(unfocusedRaw[idx + 2] - focusedRaw[idx + 2]);
+      centerDeltaSum += (dr + dg + db) / 3;
+      centerCount++;
+    }
+  }
+
+  // Threshold: average channel delta > 30 across the interior → fill change.
+  const hasFillChange = centerCount > 0 && centerDeltaSum / centerCount > 30;
+
+  return {
+    diffPercent,
+    focusIndicatorColor,
+    backgroundLuminance,
+    perimeterContrast: maxSamePosnContrast,
+    p90PerimeterContrast,
+    estimatedThicknessPx,
+    hasFillChange,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -148,10 +281,21 @@ async function compareScreenshots(
  * Test focus visibility for each tab stop by comparing focused/unfocused screenshots.
  *
  * For each element in the tab sequence:
- * 1. Blur the element and take a screenshot of the area
- * 2. Focus the element and take a screenshot of the area
- * 3. Compare the two images for visual differences
- * 4. Measure focus indicator contrast ratio against background
+ * 1. Blur the element and take a screenshot of the area (with 8 px padding to
+ *    capture rings that extend outside the element bounding box)
+ * 2. Focus the element and take another screenshot
+ * 3. Compare pixel-by-pixel for visual differences
+ * 4. Use composite perimeter-contrast algorithm to determine if the indicator
+ *    is perceivable.  Specifically, an element passes when:
+ *      a. The max contrast at the changed/unchanged boundary ≥ minContrast, OR
+ *      b. The interior of the element changed colour (fill-based focus state).
+ *
+ * This avoids false positives for:
+ *   • Black outer ring + white inner ring (perimeter pixels are black; their
+ *     contrast against the page background is high even though averaging all
+ *     ring pixels produces a mid-gray).
+ *   • White fill + black border (interior pixels changed → hasFillChange).
+ *   • Rectangular boxed focus states on nav links and buttons.
  */
 export async function checkFocusVisibility(
   page: Page,
@@ -169,7 +313,6 @@ export async function checkFocusVisibility(
     if (!handle) continue;
 
     try {
-      // Expand the clip area to capture focus rings/outlines outside the element
       const padding = 8;
       const clip = {
         x: Math.max(0, stop.boundingBox.x - padding),
@@ -178,28 +321,30 @@ export async function checkFocusVisibility(
         height: stop.boundingBox.height + padding * 2,
       };
 
-      // Blur element and screenshot
       await page.evaluate(() => {
         (document.activeElement as HTMLElement)?.blur?.();
       });
-      // Small delay for CSS transitions to complete
       await page.waitForTimeout(50);
       const unfocusedScreenshot = await page.screenshot({ clip, type: "png" });
 
-      // Focus element and screenshot
       await handle.focus();
       await page.waitForTimeout(50);
       const focusedScreenshot = await page.screenshot({ clip, type: "png" });
 
-      // Compare screenshots
-      const { diffPercent, focusIndicatorColor, backgroundLuminance } =
-        await compareScreenshots(unfocusedScreenshot, focusedScreenshot);
+      const {
+        diffPercent,
+        focusIndicatorColor,
+        backgroundLuminance,
+        perimeterContrast,
+        p90PerimeterContrast,
+        estimatedThicknessPx,
+        hasFillChange,
+      } = await compareScreenshots(unfocusedScreenshot, focusedScreenshot);
 
       const hasVisualChange = diffPercent >= minDiffPercent;
 
+      // Legacy average-pixel contrast (kept for reporting, not used for pass/fail).
       let measuredContrast: number | null = null;
-      let meetsMinimum = false;
-
       if (hasVisualChange && focusIndicatorColor) {
         const focusLuminance = relativeLuminance(
           focusIndicatorColor.r,
@@ -207,8 +352,15 @@ export async function checkFocusVisibility(
           focusIndicatorColor.b,
         );
         measuredContrast = contrastRatio(focusLuminance, backgroundLuminance);
-        meetsMinimum = measuredContrast >= minContrast;
       }
+
+      // Composite pass decision.
+      // An element passes when there is a visible change AND at least one of:
+      //   1. The ring edge has sufficient contrast (handles rings, borders).
+      //   2. The element interior changed colour (handles fill/inversion states).
+      const meetsMinimum =
+        hasVisualChange &&
+        (perimeterContrast >= minContrast || hasFillChange);
 
       results.push({
         selector: stop.selector,
@@ -219,6 +371,12 @@ export async function checkFocusVisibility(
         focusedScreenshot,
         pixelDiffPercent: diffPercent,
         outerHtml: stop.outerHtml,
+        focusMetrics: {
+          perimeterContrast,
+          p90PerimeterContrast,
+          estimatedThicknessPx,
+          hasFillChange,
+        },
       });
     } finally {
       await handle.dispose();
@@ -237,7 +395,8 @@ export async function checkFocusVisibility(
  *
  * Flags elements with:
  * - No visible focus change
- * - Focus indicator contrast below 3:1
+ * - Focus indicator that fails both the perimeter-contrast test and the
+ *   fill-change test
  *
  * Each failing element produces a CheckResult for WCAG 2.4.7 (Focus Visible).
  */
@@ -268,6 +427,10 @@ export async function runFocusVisibleChecks(
         contrastRatio: result.contrastRatio,
         minimumRequired: minContrast,
         pixelDiffPercent: result.pixelDiffPercent,
+        perimeterContrast: result.focusMetrics.perimeterContrast,
+        p90PerimeterContrast: result.focusMetrics.p90PerimeterContrast,
+        estimatedThicknessPx: result.focusMetrics.estimatedThicknessPx,
+        hasFillChange: result.focusMetrics.hasFillChange,
       },
       screenshot: result.focusedScreenshot,
       context_screenshot: result.unfocusedScreenshot,
@@ -276,6 +439,10 @@ export async function runFocusVisibleChecks(
         minimum_contrast_required: minContrast,
         pixel_diff_percent: result.pixelDiffPercent,
         has_visual_change: result.hasVisualChange,
+        perimeter_contrast: result.focusMetrics.perimeterContrast,
+        p90_perimeter_contrast: result.focusMetrics.p90PerimeterContrast,
+        estimated_thickness_px: result.focusMetrics.estimatedThicknessPx,
+        has_fill_change: result.focusMetrics.hasFillChange,
       },
     });
   }

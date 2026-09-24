@@ -222,6 +222,18 @@ export async function runAltTextChecks(
     images = deduplicateCmsImages(images);
   }
 
+  // 4a. Skip images with alt="" that are inside labeled functional elements.
+  //     When an <img alt=""> sits inside a link or button that already has
+  //     visible text content, the empty alt is correct (image is decorative).
+  //     Sending these to Claude produces hedged needs_review findings that are
+  //     always false positives.
+  images = images.filter((img) => {
+    if (img.alt === "" && img.isInsideFunctional && img.surroundingContext.trim().length > 0) {
+      return false;
+    }
+    return true;
+  });
+
   // 5. Pre-filter: auto-pass images whose alt text is clearly acceptable
   //    (non-empty, not a filename/generic/placeholder, 5-250 chars)
   images = images.filter((img) => !altTextPassesPreFilter(img.alt));

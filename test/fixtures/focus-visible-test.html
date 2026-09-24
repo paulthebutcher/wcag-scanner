@@ -7,6 +7,8 @@
   <style>
     body { font-family: sans-serif; margin: 20px; background: #ffffff; }
 
+    /* ---- Original elements ---- */
+
     /* Good focus: default browser outline */
     .good-focus {
       padding: 8px 16px;
@@ -52,6 +54,113 @@
       margin-right: 15px;
       padding: 4px 8px;
     }
+
+    /* ---- New patterns: should PASS the composite focus algorithm ---- */
+
+    /*
+     * Pattern 1: Multi-ring focus indicator (black outer + white inner ring).
+     * The average of black+white pixels is gray, which has low contrast against
+     * the cream background — the old algorithm incorrectly flagged these.
+     * The new perimeter-contrast algorithm looks at the outer edge pixels
+     * (black against cream) and correctly scores them as high-contrast.
+     */
+    .teal-text-nav {
+      color: #007b7b;
+      background: #fdf6e3; /* cream */
+      text-decoration: none;
+      padding: 6px 12px;
+      margin: 4px;
+      display: inline-block;
+      border: none;
+      outline: none;
+      font-weight: 600;
+    }
+    .teal-text-nav:focus {
+      /* black outer ring + white inner ring */
+      outline: 3px solid #000000;
+      outline-offset: 2px;
+      box-shadow: 0 0 0 5px #ffffff;
+    }
+
+    /*
+     * Pattern 2: CTA pill button with thick focus ring.
+     * Common pattern: rounded pill shape with a thick, high-contrast ring.
+     */
+    .cta-pill {
+      background: #1a73e8;
+      color: #ffffff;
+      border: none;
+      border-radius: 999px;
+      padding: 12px 28px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      margin: 8px;
+    }
+    .cta-pill:focus {
+      outline: 4px solid #000000;
+      outline-offset: 3px;
+    }
+
+    /*
+     * Pattern 3: TOC / nav link with visible black boxed focus state.
+     * The focus ring forms a rectangular box around the element —
+     * clearly visible to any human observer.
+     */
+    .toc-link {
+      display: block;
+      color: #2c5f8a;
+      text-decoration: none;
+      padding: 4px 8px;
+      margin: 2px 0;
+      outline: none;
+    }
+    .toc-link:focus {
+      outline: 2px solid #000000;
+      outline-offset: 1px;
+      background: transparent;
+    }
+
+    /*
+     * Pattern 4: Tab-like links with border + background inversion on focus.
+     * The element's interior (fill) changes from transparent to a dark colour,
+     * triggering the hasFillChange detection path.
+     */
+    .tab-link {
+      display: inline-block;
+      color: #333333;
+      text-decoration: none;
+      padding: 8px 16px;
+      border: 2px solid #cccccc;
+      margin-right: 4px;
+      outline: none;
+      background: #ffffff;
+    }
+    .tab-link:focus {
+      background: #1a1a1a;   /* dark fill on focus */
+      color: #ffffff;
+      border-color: #000000;
+    }
+
+    /*
+     * Pattern 5: White-fill focus box with black border.
+     * The interior changes from a coloured background to white, while
+     * the border turns black — a common Webflow focus treatment.
+     */
+    .search-btn {
+      background: #e8e0f0;
+      color: #333;
+      border: 2px solid #b0a0c8;
+      padding: 10px 20px;
+      cursor: pointer;
+      outline: none;
+      font-size: 15px;
+    }
+    .search-btn:focus {
+      background: #ffffff;
+      border: 3px solid #000000;
+    }
   </style>
 </head>
 <body>
@@ -69,5 +178,41 @@
   <button id="btn-custom" class="custom-focus">Custom Focus</button>
 
   <input type="text" id="input-default" class="good-focus" placeholder="Default input">
+
+  <!-- New patterns (should NOT produce violations) -->
+
+  <section style="background:#fdf6e3; padding:16px; margin-top:20px;">
+    <h2>Multi-ring nav links (teal on cream)</h2>
+    <a href="/home" class="teal-text-nav" id="nav-teal-home">Home</a>
+    <a href="/about" class="teal-text-nav" id="nav-teal-about">About</a>
+    <a href="/contact" class="teal-text-nav" id="nav-teal-contact">Contact</a>
+  </section>
+
+  <section style="margin-top:20px;">
+    <h2>CTA pill buttons</h2>
+    <button class="cta-pill" id="btn-pay-bill">Pay Bill</button>
+    <button class="cta-pill" id="btn-search-docket">Search Court Docket</button>
+  </section>
+
+  <section style="margin-top:20px;">
+    <h2>Table of contents links</h2>
+    <nav aria-label="Contents">
+      <a href="#section-1" class="toc-link" id="toc-link-1">Section 1: Overview</a>
+      <a href="#section-2" class="toc-link" id="toc-link-2">Section 2: Filing</a>
+      <a href="#section-3" class="toc-link" id="toc-link-3">Section 3: Fees</a>
+    </nav>
+  </section>
+
+  <section style="margin-top:20px;">
+    <h2>Tab-like links (fill inversion)</h2>
+    <a href="/tab-a" class="tab-link" id="tab-link-forms">Court Forms</a>
+    <a href="/tab-b" class="tab-link" id="tab-link-faq">FAQ</a>
+    <a href="/tab-c" class="tab-link" id="tab-link-calendar">Calendar</a>
+  </section>
+
+  <section style="margin-top:20px;">
+    <h2>White-fill focus box</h2>
+    <button class="search-btn" id="btn-search">Search</button>
+  </section>
 </body>
 </html>

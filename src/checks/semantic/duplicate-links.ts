@@ -59,19 +59,59 @@ function buildSelector(attrStr: string, index: number): string {
 // URL normalization
 // ---------------------------------------------------------------------------
 
-/** Normalize a URL for comparison: lowercase, strip trailing slash, strip fragment */
-function normalizeUrl(href: string): string {
-  let url = href.trim().toLowerCase();
-  // Strip fragment
-  const hashIdx = url.indexOf("#");
-  if (hashIdx !== -1) {
-    url = url.slice(0, hashIdx);
+/**
+ * Normalize a URL for duplicate-link comparison.
+ *
+ * When a page URL is supplied, relative hrefs are resolved to absolute form
+ * before comparison so that "/court-forms" and
+ * "https://www.lakewoodcourtoh.gov/court-forms" are treated as the same
+ * destination.
+ *
+ * Normalization steps applied to absolute URLs:
+ *   - Hostname lowercased
+ *   - Default port removed (443 for https, 80 for http)
+ *   - Fragment (#anchor) stripped
+ *   - Trailing slash removed (except bare "/")
+ *
+ * Cross-origin URLs are never merged — only same-origin relative/absolute
+ * pairs that resolve to the same canonical path are de-duped.
+ * Query strings are preserved as distinct (tracking params are not stripped).
+ */
+function normalizeUrl(href: string, pageUrl?: string): string {
+  const raw = href.trim();
+
+  // Attempt to resolve and fully normalise via the URL constructor.
+  try {
+    const base = pageUrl ? new URL(pageUrl) : undefined;
+    const parsed = base ? new URL(raw, base) : new URL(raw);
+
+    // Lowercase hostname; remove default ports.
+    parsed.hostname = parsed.hostname.toLowerCase();
+    if (
+      (parsed.protocol === "https:" && parsed.port === "443") ||
+      (parsed.protocol === "http:" && parsed.port === "80")
+    ) {
+      parsed.port = "";
+    }
+
+    // Strip fragment.
+    parsed.hash = "";
+
+    // Strip trailing slash (except bare "/").
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+
+    return parsed.href;
+  } catch {
+    // Fall back to simple string normalisation for non-parseable values
+    // (e.g. mailto:, javascript:, data:).
+    let url = raw.toLowerCase();
+    const hashIdx = url.indexOf("#");
+    if (hashIdx !== -1) url = url.slice(0, hashIdx);
+    if (url.length > 1 && url.endsWith("/")) url = url.slice(0, -1);
+    return url;
   }
-  // Strip trailing slash (but keep "/" alone)
-  if (url.length > 1 && url.endsWith("/")) {
-    url = url.slice(0, -1);
-  }
-  return url;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +174,14 @@ export function collectLinksForDuplication(dom: string): LinkInfo[] {
  * WCAG 2.4.4 requires link text (combined with context) to identify the link purpose.
  * Identical link text pointing to different destinations is confusing for all users,
  * especially screen reader users who navigate by link list.
+ *
+ * @param dom     Serialized page DOM string.
+ * @param pageUrl The URL of the page being scanned.  When supplied, relative
+ *                hrefs are resolved to absolute form before comparison, so
+ *                "/court-forms" and "https://example.com/court-forms" are
+ *                treated as the same destination and do not produce a finding.
  */
-export function runDuplicateLinkChecks(dom: string): CheckResult[] {
+export function runDuplicateLinkChecks(dom: string, pageUrl?: string): CheckResult[] {
   const links = collectLinksForDuplication(dom);
 
   // Group by accessible name (case-insensitive, trimmed)
@@ -159,7 +205,7 @@ export function runDuplicateLinkChecks(dom: string): CheckResult[] {
     // Collect distinct normalized URLs
     const distinctUrls = new Set<string>();
     for (const link of group) {
-      distinctUrls.add(normalizeUrl(link.href));
+      distinctUrls.add(normalizeUrl(link.href, pageUrl));
     }
 
     // Same name + same URL = not a problem

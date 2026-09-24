@@ -52,6 +52,17 @@ export function detectNavMenu(dom: string): NavigationMethod[] {
     }
   }
 
+  // Webflow navbar: <div class="w-nav …"> (no semantic <nav> or role by default)
+  const wNavPattern = /class\s*=\s*"[^"]*\bw-nav\b[^"]*"/gi;
+  while ((match = wNavPattern.exec(dom)) !== null) {
+    const ctx = extractContext(dom, match.index, 200);
+    const selector = extractSelector(ctx);
+    if (!seen.has(selector)) {
+      seen.add(selector);
+      results.push({ type: "nav_menu", selector, html: truncate(ctx, 200) });
+    }
+  }
+
   return results;
 }
 
