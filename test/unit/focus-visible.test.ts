@@ -458,6 +458,36 @@ describe("checkFocusVisibility", () => {
     }
   });
 
+  it("does NOT flag below-the-fold buttons with a visible ring after the page has scrolled", async () => {
+    // Mirrors the Popfly /insights "Read the Post" buttons: dark page, pill
+    // buttons with a white ring on focus, far below the first viewport.
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1000, height: 600 });
+    try {
+      const buttons = Array.from({ length: 6 }, (_, i) =>
+        `<div style="height:500px"></div><a class="btn" href="/post-${i}">Read the Post</a>`).join("");
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>Scrolled</title>
+        <style>
+          body { background: #1c1c1c; margin: 0; }
+          .btn { display: inline-block; color: #fff; border: 1px solid #888; border-radius: 999px;
+                 padding: 10px 24px; text-decoration: none; outline: none; }
+          .btn:focus-visible { outline: 3px solid #fff; box-shadow: 0 0 0 6px #000; }
+        </style></head>
+        <body>${buttons}</body></html>
+      `);
+
+      const tabSeq = await recordTabSequence(page, { maxTabs: 20 });
+      expect(tabSeq.focusStops).toHaveLength(6);
+      const results = await runFocusVisibleChecks(page, tabSeq);
+
+      expect(results).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
   it("DOES flag elements with outline:none (regression guard)", async () => {
     const page = await context.newPage();
     try {

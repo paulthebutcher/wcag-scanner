@@ -313,12 +313,19 @@ export async function checkFocusVisibility(
     if (!handle) continue;
 
     try {
+      // The box recorded during the tab sweep is relative to the viewport
+      // at that moment; the page has scrolled since. Scroll the element to
+      // the middle of the viewport (clear of fixed headers and bottom
+      // banners) and measure it now, so both screenshots show the element
+      // and focusing it below doesn't scroll the page between them.
+      await handle.evaluate((el) => el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" })).catch(() => {});
+      const box = (await handle.boundingBox()) ?? stop.boundingBox;
       const padding = 8;
       const clip = {
-        x: Math.max(0, stop.boundingBox.x - padding),
-        y: Math.max(0, stop.boundingBox.y - padding),
-        width: stop.boundingBox.width + padding * 2,
-        height: stop.boundingBox.height + padding * 2,
+        x: Math.max(0, box.x - padding),
+        y: Math.max(0, box.y - padding),
+        width: box.width + padding * 2,
+        height: box.height + padding * 2,
       };
 
       await page.evaluate(() => {

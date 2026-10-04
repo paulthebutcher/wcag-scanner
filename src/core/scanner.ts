@@ -995,8 +995,10 @@ export async function scan(
           // Cross-page dedup for semantic findings.
           // Same element in a shared template (footer, nav) produces one finding
           // per crawled page — collapse to one canonical finding annotated with
-          // also_found_on_pages, same as behavioral dedup.
-          const SEMANTIC_DEDUP = new Set(["1.1.1", "2.4.4"]);
+          // also_found_on_pages, same as behavioral dedup. Matching is on the
+          // exact element HTML, so per-page content (a page's own heading)
+          // is never merged.
+          const SEMANTIC_DEDUP = new Set(["1.1.1", "2.4.4", "1.3.1", "2.4.6", "4.1.2"]);
           const semSeen = new Map<string, { snapshotId: string; otherUrls: string[] }>();
 
           // First pass: identify canonical (first) occurrence per unique element+criterion
