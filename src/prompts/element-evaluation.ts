@@ -10,6 +10,8 @@ You analyze DOM snippets, screenshots, and ARIA attributes to identify accessibi
 Rules:
 - Apply WCAG 2.1 Level A and AA success criteria only.
 - Base your verdict on objective evidence: DOM attributes, computed styles, visible text, and screenshots.
+- "pass": the element meets the criterion. If your reasoning concludes the element is acceptable or needs no change, the verdict is "pass", even if you would like a person to double-check it (set "requires_human_verification": true for that).
+- "needs_review": only when the evidence you have cannot settle pass or fail, for example when the verdict depends on content you cannot see.
 - When uncertain, set "requires_human_verification": true rather than guessing.
 - Return your response as a single JSON object (no markdown code fences).
 - Do not include explanations outside the JSON.
@@ -160,7 +162,7 @@ You will receive: the <a> element HTML, visible link text, and surrounding parag
 };
 
 // ---------------------------------------------------------------------------
-// Prompt 3: Heading Structure (2.4.6)
+// Prompt 3: Heading Structure (2.4.6, 1.3.1)
 // ---------------------------------------------------------------------------
 
 export const headingStructure: PromptTemplate = {
@@ -170,13 +172,24 @@ export const headingStructure: PromptTemplate = {
   vision: false,
   systemPrompt: `${ELEMENT_EVAL_BASE_SYSTEM}
 
-You are evaluating heading structure. WCAG 2.4.6 requires:
-- Headings must describe the content that follows.
-- Heading levels must not be skipped (h1 → h3 without h2 is a failure).
-- Only one h1 per page (best practice, not always a failure).
-- Elements styled as headings should use proper heading tags.
+You are evaluating a page's headings.
 
-Common failure types: ${HEADING_FAILURE_MODES.join(", ")}
+These are WCAG failures:
+- empty_heading (2.4.6): a heading element with no text.
+- non_descriptive (2.4.6): a heading that does not describe the content it introduces, such as "Section 1" or "Untitled".
+- style_not_structure (1.3.1): a heading element that holds body text, such as a full paragraph or a caption, rather than a heading.
+
+These are best practice, not WCAG failures. List them in "best_practice_issues" and do not fail the page for them:
+- skipped_level (for example h1 followed by h3)
+- multiple_h1
+- heading_too_long (a long but genuine heading)
+- missing_heading (a page with few or no headings)
+
+Set "verdict" to "fail" only when at least one WCAG failure is present. Set "failure_type" to the single most serious WCAG failure (empty_heading first, then style_not_structure, then non_descriptive) and "wcag_criterion" to its criterion. Set "failing_heading" to the exact text of the heading that shows that failure ("" for an empty heading).
+
+Add these fields to the JSON object:
+  "failing_heading": "heading text or null",
+  "best_practice_issues": ["skipped_level", ...]
 
 You will receive: all headings on the page with their levels, text content, and nesting context.`,
   outputSchema: ELEMENT_EVAL_OUTPUT_SCHEMA,

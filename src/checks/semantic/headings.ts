@@ -32,6 +32,28 @@ export interface HeadingEvaluation {
   suggestion: string | null;
   affected_users: string[];
   requires_human_verification: boolean;
+  /** Text of the heading that shows the failure */
+  failing_heading?: string | null;
+  /** Best-practice problems that are not WCAG failures */
+  best_practice_issues?: string[];
+}
+
+/**
+ * Heading problems that fail WCAG, most serious first, with the criterion
+ * each one fails. Anything else the model reports (skipped levels,
+ * multiple h1, long headings, no headings) is best practice only.
+ */
+const WCAG_HEADING_FAILURES: Array<[string, string]> = [
+  ["empty_heading", "2.4.6"],
+  ["style_not_structure", "1.3.1"],
+  ["non_descriptive", "2.4.6"],
+  ["heading_too_generic", "2.4.6"],
+];
+
+/** Split a model failure_type ("a, b") into normalized type names. */
+function parseFailureTypes(failureType: string | null | undefined): string[] {
+  if (!failureType) return [];
+  return failureType.split(/[,;\s]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
 }
 
 /** All 6 heading failure modes from the prompt library */
@@ -120,7 +142,9 @@ export function getAxeHeadingCorroboration(
  *
  * 1. Extracts all headings from the page DOM in document order.
  * 2. Calls Prompt 3 (heading_structure) once per page.
- * 3. Returns ONE CheckResult per page with the most severe failure type.
+ * 3. Returns at most ONE CheckResult per page, for the most serious WCAG
+ *    failure (2.4.6 or 1.3.1). Best-practice problems are recorded in
+ *    measured_values only.
  * 4. Notes heading hierarchy violations already caught by axe-core.
  */
 export async function runHeadingChecks(
@@ -192,21 +216,37 @@ export async function runHeadingChecks(
     return [];
   }
 
-  // 5. Return ONE CheckResult with the most severe failure
-  // Find the most relevant heading element for the selector
-  const failureHeading = findFailureHeading(headings, evaluation.failure_type);
+  // 5. Keep only WCAG failures, choosing the most serious one in code so
+  // the same page produces the same finding type from run to run.
+  const reported = parseFailureTypes(evaluation.failure_type);
+  const primary = WCAG_HEADING_FAILURES.find(([type]) => reported.includes(type));
+  const bestPractice = Array.from(new Set([
+    ...reported.filter((t) => !WCAG_HEADING_FAILURES.some(([type]) => type === t)),
+    ...(evaluation.best_practice_issues ?? []).map((t) => t.trim().toLowerCase()),
+  ])).sort();
+
+  // A fail made only of best-practice problems is not a WCAG failure. A
+  // needs_review with no failure type is genuine uncertainty and is kept.
+  if (!primary && (evaluation.verdict === "fail" || reported.length > 0)) {
+    return [];
+  }
+
+  const [failureType, criterion] = primary ?? [null, "2.4.6"];
+  const failureHeading = findHeadingByText(headings, evaluation.failing_heading)
+    ?? findFailureHeading(headings, failureType);
 
   return [{
     element_selector: failureHeading?.selector ?? "body",
     element_html: failureHeading?.html ?? "<body>",
-    wcag_criterion: "2.4.6",
+    wcag_criterion: criterion,
     detected_by: "claude_api",
-    raw_result: evaluation,
+    raw_result: { ...evaluation, failure_type: failureType, wcag_criterion: criterion },
     measured_values: {
       heading_count: headings.length,
       heading_levels: headings.map((h) => h.level),
-      failure_type: evaluation.failure_type,
+      failure_type: failureType,
       confidence: evaluation.confidence,
+      best_practice_issues: bestPractice,
       axe_corroboration: Array.from(axeCorroboration),
     },
     llm_input: capture.llm_input,
@@ -217,6 +257,18 @@ export async function runHeadingChecks(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Find the heading whose text matches what the model named. */
+function findHeadingByText(
+  headings: HeadingInfo[],
+  text: string | null | undefined,
+): HeadingInfo | undefined {
+  if (text === null || text === undefined) return undefined;
+  const wanted = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (wanted === "") return headings.find((h) => h.text.trim() === "");
+  return headings.find((h) => h.text.trim().toLowerCase() === wanted)
+    ?? headings.find((h) => h.text.trim().toLowerCase().startsWith(wanted.slice(0, 40)));
+}
 
 /**
  * Find the most relevant heading for a given failure type.

@@ -34,8 +34,11 @@ export interface CrawlOptions {
   concurrency?: number;
   /**
    * After the load event, wait at most this long for the network to go
-   * quiet before capturing the page (default 5000). Pages that keep making
-   * background requests are captured anyway instead of being skipped.
+   * quiet before capturing the page (default 15000). Pages that go quiet
+   * are captured as soon as they do; pages that keep making background
+   * requests are captured at the cap instead of being skipped. Third-party
+   * widgets are often injected just before the network goes quiet, so a
+   * short cap loses them when the machine is busy.
    */
   idleTimeoutMs?: number;
   /**
@@ -509,7 +512,7 @@ export async function crawl(
 ): Promise<CrawlResult> {
   const maxPages = options.maxPages ?? 50;
   const timeoutMs = options.timeoutMs ?? 30_000;
-  const idleTimeoutMs = options.idleTimeoutMs ?? 5_000;
+  const idleTimeoutMs = options.idleTimeoutMs ?? 15_000;
   const concurrency = Math.max(1, options.concurrency ?? 4);
   const viewport = options.viewport ?? {
     width: 1280,
@@ -656,6 +659,7 @@ export async function crawl(
 
   let context: BrowserContext | undefined;
   let screenshotIndex = 0;
+  const capturedBeforeIdle: string[] = [];
 
   const visit = async (ctx: BrowserContext, url: string): Promise<void> => {
     const page = await ctx.newPage();
@@ -667,7 +671,9 @@ export async function crawl(
       });
       // Give late requests a bounded chance to settle. Pages with video,
       // animation or analytics traffic never go idle; capture them anyway.
-      await page.waitForLoadState("networkidle", { timeout: idleTimeoutMs }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: idleTimeoutMs }).catch(() => {
+        capturedBeforeIdle.push(url);
+      });
       const responseHeaders = response?.headers() ?? {};
 
       // A URL that redirects off-site or onto a page we already have is
@@ -773,6 +779,13 @@ export async function crawl(
   } finally {
     if (context) await context.close();
     if (ownBrowser && browser) await browser.close();
+  }
+
+  if (capturedBeforeIdle.length > 0) {
+    options.reporter?.complete(
+      "crawl",
+      `${capturedBeforeIdle.length} page(s) never went network-quiet within ${Math.round(idleTimeoutMs / 1000)}s and were captured anyway; late-loading content on them may be missing`,
+    );
   }
 
   return { snapshots, excludedByNoindex };

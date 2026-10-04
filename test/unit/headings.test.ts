@@ -231,9 +231,9 @@ describe("runHeadingChecks", () => {
       data: {
         verdict: "fail",
         confidence: 0.92,
-        reasoning: "Multiple h1 headings and skipped levels",
+        reasoning: "A heading is empty",
         wcag_criterion: "2.4.6",
-        failure_type: "skipped_level",
+        failure_type: "empty_heading",
         suggestion: "Fix heading hierarchy",
         affected_users: ["screen_reader", "cognitive"],
         requires_human_verification: false,
@@ -247,7 +247,7 @@ describe("runHeadingChecks", () => {
     expect(results[0].detected_by).toBe("claude_api");
   });
 
-  it("detects skipped_level failure", async () => {
+  it("does not report skipped levels as a WCAG failure", async () => {
     runPromptSpy.mockResolvedValue({
       success: true,
       data: {
@@ -264,9 +264,57 @@ describe("runHeadingChecks", () => {
     });
 
     const results = await runHeadingChecks(BAD_HEADINGS_HTML, "Bad Page", mockRunner);
-    expect(results[0].measured_values?.failure_type).toBe("skipped_level");
-    // The selector should point to the h3 that skipped
-    expect(results[0].element_html).toContain("h3");
+    expect(results).toHaveLength(0);
+  });
+
+  it("keeps the WCAG failure from a mixed failure_type and records the rest as best practice", async () => {
+    runPromptSpy.mockResolvedValue({
+      success: true,
+      data: {
+        verdict: "fail",
+        confidence: 0.9,
+        reasoning: "Skipped levels, and the second h1 is empty",
+        wcag_criterion: "2.4.6",
+        failure_type: "skipped_level, multiple_h1, empty_heading",
+        suggestion: "Fix",
+        affected_users: ["screen_reader"],
+        requires_human_verification: false,
+        failing_heading: "",
+        best_practice_issues: ["heading_too_long"],
+      },
+      rawResponse: "{}", model: "claude-sonnet-4-6", tokensUsed: 100, latencyMs: 500, retries: 0,
+    });
+
+    const html = '<html><body><h1>Title</h1><h3>Skipped</h3><h2></h2></body></html>';
+    const results = await runHeadingChecks(html, "Mixed", mockRunner);
+    expect(results).toHaveLength(1);
+    expect(results[0].wcag_criterion).toBe("2.4.6");
+    expect(results[0].measured_values?.failure_type).toBe("empty_heading");
+    expect(results[0].element_html).toBe("<h2></h2>");
+    expect(results[0].measured_values?.best_practice_issues).toEqual(["heading_too_long", "multiple_h1", "skipped_level"]);
+  });
+
+  it("points at the heading the model named", async () => {
+    runPromptSpy.mockResolvedValue({
+      success: true,
+      data: {
+        verdict: "fail",
+        confidence: 0.8,
+        reasoning: "The h3 holds a paragraph of body text",
+        wcag_criterion: "1.3.1",
+        failure_type: "style_not_structure",
+        suggestion: "Use a paragraph",
+        affected_users: ["screen_reader"],
+        requires_human_verification: false,
+        failing_heading: "We're stoked to show you around the platform. You're in good company",
+      },
+      rawResponse: "{}", model: "claude-sonnet-4-6", tokensUsed: 100, latencyMs: 500, retries: 0,
+    });
+
+    const html = "<html><body><h1>Thanks</h1><h3 class=\"p\">We're stoked to show you around the platform. <br>You're in good company</h3></body></html>";
+    const results = await runHeadingChecks(html, "Thanks", mockRunner);
+    expect(results[0].wcag_criterion).toBe("1.3.1");
+    expect(results[0].element_html).toContain("stoked");
   });
 
   it("detects style_not_structure failure", async () => {
@@ -287,9 +335,10 @@ describe("runHeadingChecks", () => {
 
     const results = await runHeadingChecks(BAD_HEADINGS_HTML, "Bad Page", mockRunner);
     expect(results[0].measured_values?.failure_type).toBe("style_not_structure");
+    expect(results[0].wcag_criterion).toBe("1.3.1");
   });
 
-  it("detects multiple_h1 failure", async () => {
+  it("does not report multiple h1 as a WCAG failure", async () => {
     runPromptSpy.mockResolvedValue({
       success: true,
       data: {
@@ -306,9 +355,7 @@ describe("runHeadingChecks", () => {
     });
 
     const results = await runHeadingChecks(BAD_HEADINGS_HTML, "Bad Page", mockRunner);
-    expect(results[0].measured_values?.failure_type).toBe("multiple_h1");
-    // Should point to the second h1
-    expect(results[0].element_html).toContain("Another H1");
+    expect(results).toHaveLength(0);
   });
 
   it("detects non_descriptive failure", async () => {
@@ -331,7 +378,7 @@ describe("runHeadingChecks", () => {
     expect(results[0].measured_values?.failure_type).toBe("non_descriptive");
   });
 
-  it("detects missing_headings failure", async () => {
+  it("does not report a page without headings as a WCAG failure", async () => {
     runPromptSpy.mockResolvedValue({
       success: true,
       data: {
@@ -348,8 +395,7 @@ describe("runHeadingChecks", () => {
     });
 
     const results = await runHeadingChecks(NO_HEADINGS_HTML, "No Headings Page", mockRunner);
-    expect(results.length).toBe(1);
-    expect(results[0].measured_values?.failure_type).toBe("missing_heading");
+    expect(results).toHaveLength(0);
   });
 
   it("detects heading_too_generic failure", async () => {
@@ -381,7 +427,7 @@ describe("runHeadingChecks", () => {
         confidence: 0.9,
         reasoning: "Issues found",
         wcag_criterion: "2.4.6",
-        failure_type: "skipped_level",
+        failure_type: "non_descriptive",
         suggestion: "Fix",
         affected_users: ["screen_reader"],
         requires_human_verification: false,
@@ -410,7 +456,7 @@ describe("runHeadingChecks", () => {
         confidence: 0.98,
         reasoning: "Skipped heading level",
         wcag_criterion: "2.4.6",
-        failure_type: "skipped_level",
+        failure_type: "non_descriptive",
         suggestion: "Fix",
         affected_users: ["screen_reader"],
         requires_human_verification: false,

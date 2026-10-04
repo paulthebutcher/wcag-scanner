@@ -126,6 +126,14 @@ describe("collectImages", () => {
     expect(product!.alt).toBe("IMG_20230415.jpg");
   });
 
+  it("treats an element with role=button as a functional container", () => {
+    const html = `<div class="dropdown-toggle w-dropdown-toggle" role="button" aria-haspopup="menu"><div>For Brands</div><img src="chevron.png" alt="" class="nav-chevron"></div><p><img src="photo.jpg" alt=""></p>`;
+    const images = collectImages(html);
+    expect(images.find((i) => i.src === "chevron.png")!.isInsideFunctional).toBe(true);
+    // After the role=button element closes, images are no longer inside it
+    expect(images.find((i) => i.src === "photo.jpg")!.isInsideFunctional).toBe(false);
+  });
+
   it("detects images inside links", () => {
     const images = collectImages(BASIC_HTML);
     const ctaIcon = images.find((i) => i.html.includes("cta-arrow.svg"));
@@ -216,6 +224,13 @@ describe("runAltTextChecks", () => {
     // Default mock: returns fail for all prompts
     runPromptsSpy = vi.fn().mockResolvedValue([]);
     mockRunner.runPrompts = runPromptsSpy;
+  });
+
+  it("does not send an empty-alt icon inside a labelled role=button control", async () => {
+    const html = `<html><body><div class="w-dropdown-toggle" role="button"><div>For Brands</div><img src="chevron.png" alt=""></div></body></html>`;
+    const results = await runAltTextChecks(html, mockRunner);
+    expect(runPromptsSpy).not.toHaveBeenCalled();
+    expect(results).toEqual([]);
   });
 
   it("skips images flagged by axe-core", async () => {

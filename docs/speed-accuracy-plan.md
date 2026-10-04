@@ -125,7 +125,7 @@ Steps 1 and 2 together (both small), then the dedupe-before-call part of step 4,
 Done, with tests passing (1,218 tests):
 
 - **Step 1.** Per-phase timings and per-prompt statistics, written to `timings.json` and printed at the end of the scan.
-- **Step 2.** `load` plus a 5 s idle cap; queue deduped; a URL prefix is sampled only after two of its pages share a template (`data-wf-page` on Webflow, a structural hash elsewhere); the root URL is resolved through its redirect first.
+- **Step 2.** `load` plus an idle cap (5 s at first, now 15 s, see below); queue deduped; a URL prefix is sampled only after two of its pages share a template (`data-wf-page` on Webflow, a structural hash elsewhere); the root URL is resolved through its redirect first.
 - **Step 3, in part.** Crawl and behavioral checks run 4 pages at a time (`--page-concurrency`). axe runs on the crawl's page load. Tier 3 starts as soon as axe results are processed and overlaps Tiers 2, 4 and 5. Forms are still tested one at a time. The check registry was not built.
 - **Step 4, in part.** One prompt runner per scan with a cache keyed on prompt and input, so identical elements across pages cost one call. All pages and checks share the global concurrency limit (`WCAG_CONCURRENCY` is now honoured). Rate-limit and server errors back off before retrying.
 - **Step 5, in part.** The alt-text prompt receives the image (fetched by `src`, downsized), and says so explicitly when no image could be fetched.
@@ -140,3 +140,12 @@ Not done, and why:
 - **Screenshot for the high-risk form prompt (step 5).**
 - **Wiring the four unused prompts (step 6).**
 - **Golden set (step 7).** No findings have been human-reviewed yet, so there is nothing to export.
+
+## Second comparison and follow-up fixes (2026-10-04)
+
+Old code `1d4f7d24` against new code `ba241ce6`, both with a working key, run at the same time: 48m 42s against 6m 46s. Findings matched closely; the differences were page selection and the items below.
+
+- **Keyboard false positives (fixed in `06cf882`).** The tab recorder stopped early on duplicate ids and on iframes, reporting 146 critical 2.1.1 findings on 8 pages that were all reachable.
+- **Hedged alt-text verdicts.** The base element prompt now says that a verdict whose reasoning concludes "acceptable" is `pass`, and that `needs_review` is only for evidence that cannot settle the question. Empty-alt images inside an element with `role="button"`, `link`, `menuitem` or `tab` and visible text are now skipped like images inside `<a>` and `<button>`.
+- **Heading findings.** Only WCAG failures fail a page: empty headings and non-descriptive headings (2.4.6), and body text marked up as a heading (1.3.1). Skipped levels, multiple `h1`, long headings and missing headings are best practice and are recorded in `measured_values.best_practice_issues` without creating a finding. The failure type and the heading are chosen in code (the most serious type; the heading the model names), so reruns produce the same finding.
+- **Late-loading widgets.** GrowSurf injects its widget 2–3 s after load, just before the network goes quiet. With two scans running at once, 8 pages hit the 5 s cap first. The cap is now 15 s; pages that go quiet are captured as soon as they do, so normal pages are unaffected. The crawl reports how many pages hit the cap.

@@ -380,5 +380,18 @@ function isInsideLinkOrButton(preceding: string): boolean {
   const openButtons = (preceding.match(/<button\b/gi) || []).length;
   const closeButtons = (preceding.match(/<\/button>/gi) || []).length;
 
-  return openLinks > closeLinks || openButtons > closeButtons;
+  if (openLinks > closeLinks || openButtons > closeButtons) return true;
+
+  // Custom controls: an element with an interactive role that hasn't been
+  // closed yet (e.g. Webflow's <div class="w-dropdown-toggle" role="button">).
+  const roleOpen = /<([a-z][a-z0-9]*)\b[^>]*\brole\s*=\s*["'](?:button|link|menuitem|tab)["'][^>]*>/gi;
+  let last: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = roleOpen.exec(preceding)) !== null) last = m;
+  if (!last) return false;
+  const tag = last[1];
+  const after = preceding.slice(last.index + last[0].length);
+  const opens = (after.match(new RegExp(`<${tag}\\b`, "gi")) || []).length;
+  const closes = (after.match(new RegExp(`</${tag}>`, "gi")) || []).length;
+  return closes <= opens;
 }
