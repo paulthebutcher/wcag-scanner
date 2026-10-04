@@ -79,12 +79,12 @@ export async function findModalTriggers(page: Page): Promise<ModalTrigger[]> {
 
     // Helper: build a CSS selector for an element
     function buildSelector(el: Element): string {
-      if (el.id) return `#${CSS.escape(el.id)}`;
+      if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) return `#${CSS.escape(el.id)}`;
       const parts: string[] = [];
       let current: Element | null = el;
       while (current && current !== document.documentElement) {
         let part = current.tagName.toLowerCase();
-        if (current.id) {
+        if (current.id && document.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
           parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
           break;
         }

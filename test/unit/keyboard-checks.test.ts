@@ -114,6 +114,60 @@ describe("recordTabSequence", () => {
     }
   });
 
+  it("does not stop early when elements share a duplicate id", async () => {
+    // Webflow gives every checkbox in a filter list id="checkbox"; the
+    // recorder used to treat the second one as the first again (a lap).
+    page = await context.newPage();
+    try {
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>Duplicate ids</title></head>
+        <body>
+          <a href="/a">A</a>
+          <label><input type="checkbox" id="checkbox"> One</label>
+          <label><input type="checkbox" id="checkbox"> Two</label>
+          <label><input type="checkbox" id="checkbox"> Three</label>
+          <a href="/post-1">Post 1</a>
+          <a href="/post-2">Post 2</a>
+        </body></html>
+      `);
+
+      const result = await recordTabSequence(page, { maxTabs: 30 });
+
+      expect(result.focusStops).toHaveLength(6);
+      expect(new Set(result.focusStops.map((s) => s.selector)).size).toBe(6);
+      expect(result.unreachableElements).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("tabs through an iframe's own controls without treating it as a lap", async () => {
+    page = await context.newPage();
+    try {
+      const inner = "<button>Play</button><button>Mute</button><button>Settings</button>";
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>Embed</title></head>
+        <body>
+          <a href="/a">Before</a>
+          <iframe title="Player" srcdoc="${inner}"></iframe>
+          <a href="/b">After 1</a>
+          <a href="/c">After 2</a>
+        </body></html>
+      `);
+      await page.frameLocator("iframe").locator("button").first().waitFor();
+
+      const result = await recordTabSequence(page, { maxTabs: 30 });
+
+      const html = result.focusStops.map((s) => s.outerHtml);
+      expect(html.some((h) => h.includes("After 2"))).toBe(true);
+      expect(result.unreachableElements).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
   it("records sequence as ordered array with correct indices", async () => {
     page = await loadFixturePage();
     try {

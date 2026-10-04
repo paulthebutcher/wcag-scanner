@@ -89,14 +89,14 @@ async function getElementSelector(page: Page): Promise<string> {
     if (!el || el === document.body) return "body";
 
     // Try ID first
-    if (el.id) return `#${CSS.escape(el.id)}`;
+    if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) return `#${CSS.escape(el.id)}`;
 
     // Build a path from tag + nth-of-type
     const parts: string[] = [];
     let current: Element | null = el;
     while (current && current !== document.documentElement) {
       let part = current.tagName.toLowerCase();
-      if (current.id) {
+      if (current.id && document.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
         parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
         break;
       }
@@ -261,6 +261,12 @@ export async function recordTabSequence(
 
   let consecutiveBodyFocuses = 0;
   const MAX_CONSECUTIVE_BODY = 3;
+  // Tabbing through the controls inside an iframe (a YouTube player, a
+  // form embed) leaves document.activeElement on the iframe itself, so it
+  // reads as the same element several presses in a row. That is not a lap.
+  let lastSelector: string | null = null;
+  let consecutiveRepeats = 0;
+  const MAX_CONSECUTIVE_REPEATS = 50;
 
   for (let i = 0; i < maxTabs; i++) {
     await page.keyboard.press("Tab");
@@ -275,11 +281,22 @@ export async function recordTabSequence(
       // nothing focusable left and we should stop.
       consecutiveBodyFocuses++;
       if (consecutiveBodyFocuses >= MAX_CONSECUTIVE_BODY) break;
+      lastSelector = null;
       continue;
     }
     consecutiveBodyFocuses = 0;
 
-    // Cycle detection: same element focused twice — we've completed a lap.
+    if (info.selector === lastSelector) {
+      // Still inside the same embedded document. Past the cap, focus is
+      // stuck there; the keyboard-trap check reports that case.
+      consecutiveRepeats++;
+      if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) break;
+      continue;
+    }
+    consecutiveRepeats = 0;
+    lastSelector = info.selector;
+
+    // Cycle detection: an earlier element focused again — we've completed a lap.
     if (visitedSelectors.has(info.selector)) {
       endedByCycle = true;
       break;
@@ -335,14 +352,14 @@ async function findUnreachableElements(
       const html = htmlEl.outerHTML;
       // Build selector
       let selector: string;
-      if (htmlEl.id) {
+      if (htmlEl.id && document.querySelectorAll(`#${CSS.escape(htmlEl.id)}`).length === 1) {
         selector = `#${CSS.escape(htmlEl.id)}`;
       } else {
         const parts: string[] = [];
         let current: Element | null = htmlEl;
         while (current && current !== document.documentElement) {
           let part = current.tagName.toLowerCase();
-          if (current.id) {
+          if (current.id && document.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
             parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
             break;
           }
@@ -542,14 +559,14 @@ async function findTrapCandidates(page: Page): Promise<string[]> {
 
       // Build a selector for this element
       let sel: string;
-      if (el.id) {
+      if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
         sel = `#${CSS.escape(el.id)}`;
       } else {
         const parts: string[] = [];
         let current: Element | null = el;
         while (current && current !== document.documentElement) {
           let part = current.tagName.toLowerCase();
-          if (current.id) {
+          if (current.id && document.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
             parts.unshift(`#${CSS.escape(current.id)} > ${part}`);
             break;
           }
