@@ -1,4 +1,5 @@
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import type { PageSnapshot, Viewport } from "../types.js";
 import type { FileStore } from "../store/files.js";
@@ -29,6 +30,19 @@ export interface CrawlOptions {
    * target of the accessibility assessment.
    */
   includeNoindex?: boolean;
+  /** Pages loaded in parallel (default 4) */
+  concurrency?: number;
+  /**
+   * After the load event, wait at most this long for the network to go
+   * quiet before capturing the page (default 5000). Pages that keep making
+   * background requests are captured anyway instead of being skipped.
+   */
+  idleTimeoutMs?: number;
+  /**
+   * Called with the live page after its snapshot is captured and before the
+   * page is closed, so callers can run checks without loading the page again.
+   */
+  onPage?: (page: Page, snapshot: PageSnapshot, screenshot: Buffer) => Promise<void>;
 }
 
 export interface ExcludedPage {
@@ -405,8 +419,69 @@ async function fetchAllSitemapUrls(
 }
 
 // ---------------------------------------------------------------------------
+// Template signature (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a signature that is equal for pages rendered from the same
+ * template. Webflow stamps every page with `data-wf-page`; CMS items share
+ * their template page's id, while static pages each have their own. For
+ * other platforms, fall back to a hash of the body's structural skeleton
+ * (tag + class names, three levels deep).
+ */
+export function templateSignature(dom: string, skeleton: string): string {
+  const htmlTag = dom.match(/<html\b[^>]*>/i)?.[0] ?? "";
+  const wfPage = htmlTag.match(/\bdata-wf-page\s*=\s*["']([^"']+)["']/i);
+  if (wfPage) return `wf:${wfPage[1]}`;
+  return `sk:${createHash("sha1").update(skeleton).digest("hex").slice(0, 16)}`;
+}
+
+async function pageSkeleton(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const parts: string[] = [];
+    const walk = (el: Element, depth: number): void => {
+      if (depth > 3) return;
+      for (const child of Array.from(el.children)) {
+        const tag = child.tagName.toLowerCase();
+        if (tag === "script" || tag === "style" || tag === "noscript") continue;
+        const cls = typeof child.className === "string" ? child.className.trim().split(/\s+/).sort().join(".") : "";
+        parts.push(`${depth}:${tag}.${cls}`);
+        walk(child, depth + 1);
+      }
+    };
+    if (document.body) walk(document.body, 1);
+    return parts.join("|");
+  });
+}
+
+/** Follow redirects from `url` and return the final URL, or null on failure. */
+async function resolveFinalUrl(url: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal, redirect: "follow" });
+    clearTimeout(timer);
+    await res.body?.cancel().catch(() => {});
+    return res.url || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Crawler
 // ---------------------------------------------------------------------------
+
+interface CollectionState {
+  /** unknown until two pages of the prefix have been loaded and compared */
+  status: "unknown" | "collection" | "static";
+  /** Pages started (in flight or done) under this prefix */
+  started: number;
+  /** Template signatures of loaded pages */
+  signatures: string[];
+  /** URLs held back while the status is unknown */
+  deferred: string[];
+}
 
 /**
  * BFS-crawl from `rootUrl`, returning a PageSnapshot for every discovered
@@ -414,12 +489,18 @@ async function fetchAllSitemapUrls(
  * for testing; otherwise Chromium is launched and closed automatically.
  *
  * Discovery order:
- *   1. Fetch /robots.txt — extract Disallow paths + Sitemap directives
- *   2. Fetch /sitemap.xml (+ any Sitemap: URLs from robots.txt)
- *   3. Seed the BFS queue with root URL + sitemap URLs
- *   4. BFS link-following from each visited page
+ *   1. Resolve the root URL through any redirect (e.g. apex → www)
+ *   2. Fetch /robots.txt — extract Disallow paths + Sitemap directives
+ *   3. Fetch /sitemap.xml (+ any Sitemap: URLs from robots.txt)
+ *   4. Seed the BFS queue with root URL + sitemap URLs
+ *   5. BFS link-following, `concurrency` pages at a time
  *
  * All URLs are deduplicated and filtered against robots.txt Disallow rules.
+ *
+ * CMS sampling: a URL prefix (`/blog/*`) is only treated as a collection
+ * once two of its pages turn out to share a template. Until then at most
+ * two pages of the prefix are loaded; sections of distinct static pages are
+ * crawled in full.
  */
 export async function crawl(
   rootUrl: string,
@@ -428,15 +509,29 @@ export async function crawl(
 ): Promise<CrawlResult> {
   const maxPages = options.maxPages ?? 50;
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const idleTimeoutMs = options.idleTimeoutMs ?? 5_000;
+  const concurrency = Math.max(1, options.concurrency ?? 4);
   const viewport = options.viewport ?? {
     width: 1280,
     height: 800,
     deviceScaleFactor: 1,
   };
 
-  const normalizedRoot = normalizeUrl(rootUrl, rootUrl);
+  let normalizedRoot = normalizeUrl(rootUrl, rootUrl);
   if (!normalizedRoot) {
     throw new Error(`Invalid root URL: ${rootUrl}`);
+  }
+
+  // ----- Phase 0: resolve root redirect ---------------------------------------
+  // If the site redirects (apex → www, http → https), crawl from the final
+  // URL so sitemap and link same-origin checks use the real origin.
+  const finalRoot = await resolveFinalUrl(normalizedRoot, timeoutMs);
+  if (finalRoot) {
+    const normalizedFinal = normalizeUrl(finalRoot, finalRoot);
+    if (normalizedFinal && new URL(normalizedFinal).origin !== new URL(normalizedRoot).origin) {
+      options.reporter?.complete("crawl", `${normalizedRoot} redirects to ${normalizedFinal}; crawling from there`);
+      normalizedRoot = normalizedFinal;
+    }
   }
   const rootOrigin = new URL(normalizedRoot).origin;
 
@@ -455,61 +550,27 @@ export async function crawl(
 
   // ----- Phase 3: seed queue ---------------------------------------------------
   const visited = new Set<string>();
+  // Every URL ever queued, so each is queued (and counted) once.
+  const queued = new Set<string>([normalizedRoot]);
   const queue: string[] = [normalizedRoot];
 
-  // Add sitemap URLs to the queue (normalised, deduped, same-origin, robots-ok)
-  for (const raw of sitemapPageUrls) {
-    const normalized = normalizeUrl(raw, rootOrigin);
+  const enqueue = (raw: string, base: string): void => {
+    const normalized = normalizeUrl(raw, base);
     if (
       normalized &&
+      !queued.has(normalized) &&
       isSameOrigin(normalized, rootOrigin) &&
-      !visited.has(normalized) &&
       isAllowedByRobots(new URL(normalized).pathname, robotsRules.disallowedPaths)
     ) {
-      // Avoid duplicate entries in the queue — normalizedRoot is already there
-      if (normalized !== normalizedRoot && !queue.includes(normalized)) {
-        queue.push(normalized);
-      }
+      queued.add(normalized);
+      queue.push(normalized);
     }
-  }
+  };
 
-  // ----- Phase 3b: CMS collection sampling ------------------------------------
+  for (const raw of sitemapPageUrls) enqueue(raw, rootOrigin);
+
   const cmsSamples = options.cmsSamples ?? 5;
   const fullCrawl = options.fullCrawl ?? false;
-
-  if (!fullCrawl) {
-    const collections = detectCMSCollections(
-      queue,
-      options.cmsPattern,
-    );
-
-    if (collections.length > 0) {
-      // Build a set of URLs to keep (non-collection URLs + sampled URLs)
-      const collectionUrls = new Set<string>();
-      for (const col of collections) {
-        for (const u of col.urls) {
-          collectionUrls.add(u);
-        }
-      }
-
-      // Keep all non-collection URLs
-      const keptUrls = queue.filter((u) => !collectionUrls.has(u));
-
-      // Add sampled URLs from each collection
-      for (const col of collections) {
-        const sampled = sampleCollectionUrls(col.urls, cmsSamples);
-        options.reporter?.complete(
-          "crawl",
-          `CMS collection ${col.prefix}/ (~${col.urls.length} pages), sampling ${sampled.length}`,
-        );
-        keptUrls.push(...sampled);
-      }
-
-      // Replace queue contents
-      queue.length = 0;
-      queue.push(...keptUrls);
-    }
-  }
 
   const snapshots: PageSnapshot[] = [];
   const excludedByNoindex: ExcludedPage[] = [];
@@ -521,124 +582,193 @@ export async function crawl(
   }
 
   // ----- Phase 4: BFS crawl ---------------------------------------------------
-  // Track per-collection visit counts for BFS-discovered CMS pages
-  const collectionVisits = new Map<string, number>();
+  const collections = new Map<string, CollectionState>();
+  const collectionFor = (prefix: string): CollectionState => {
+    let state = collections.get(prefix);
+    if (!state) {
+      state = { status: "unknown", started: 0, signatures: [], deferred: [] };
+      collections.set(prefix, state);
+    }
+    return state;
+  };
+
+  /** Pop the next URL that may be loaded now, applying the CMS sampling guard. */
+  const nextUrl = (): string | null => {
+    while (queue.length > 0) {
+      const url = queue.shift()!;
+      if (visited.has(url)) continue;
+
+      if (!fullCrawl) {
+        const prefix = getCollectionPrefix(url);
+        if (prefix) {
+          const state = collectionFor(prefix);
+          if (state.status === "collection" && state.started >= cmsSamples) {
+            visited.add(url);
+            continue;
+          }
+          if (state.status === "unknown" && state.started >= 2) {
+            // Two probe pages are loading; hold the rest until we know
+            // whether this prefix is a collection.
+            state.deferred.push(url);
+            continue;
+          }
+          state.started++;
+        }
+      }
+
+      visited.add(url);
+      return url;
+    }
+    return null;
+  };
+
+  /** Record a loaded page's template signature and settle the prefix status. */
+  const recordSignature = (url: string, signature: string | null): void => {
+    if (fullCrawl) return;
+    const prefix = getCollectionPrefix(url);
+    if (!prefix) return;
+    const state = collectionFor(prefix);
+    if (state.status !== "unknown") return;
+
+    if (signature === null) {
+      // The probe failed to load; let another page take its place.
+      state.started = Math.max(0, state.started - 1);
+    } else {
+      state.signatures.push(signature);
+      if (state.signatures.length >= 2) {
+        state.status = state.signatures[0] === state.signatures[1] ? "collection" : "static";
+        if (state.status === "collection") {
+          let known = 0;
+          for (const u of queued) if (getCollectionPrefix(u) === prefix) known++;
+          options.reporter?.complete(
+            "crawl",
+            `CMS collection ${prefix}/ (~${known} pages), sampling ${Math.min(known, cmsSamples)}`,
+          );
+        }
+      }
+    }
+
+    if (state.deferred.length > 0 && (state.status !== "unknown" || state.started < 2)) {
+      queue.unshift(...state.deferred);
+      state.deferred = [];
+    }
+  };
 
   let context: BrowserContext | undefined;
+  let screenshotIndex = 0;
+
+  const visit = async (ctx: BrowserContext, url: string): Promise<void> => {
+    const page = await ctx.newPage();
+    let signature: string | null = null;
+    try {
+      const response = await page.goto(url, {
+        waitUntil: "load",
+        timeout: timeoutMs,
+      });
+      // Give late requests a bounded chance to settle. Pages with video,
+      // animation or analytics traffic never go idle; capture them anyway.
+      await page.waitForLoadState("networkidle", { timeout: idleTimeoutMs }).catch(() => {});
+      const responseHeaders = response?.headers() ?? {};
+
+      // A URL that redirects off-site or onto a page we already have is
+      // not a new page.
+      const finalUrl = normalizeUrl(page.url(), page.url());
+      if (finalUrl && finalUrl !== url) {
+        if (!isSameOrigin(finalUrl, rootOrigin) || visited.has(finalUrl)) {
+          return;
+        }
+        visited.add(finalUrl);
+        queued.add(finalUrl);
+      }
+
+      const dom = await page.content();
+      signature = templateSignature(dom, await pageSkeleton(page).catch(() => ""));
+
+      // Noindex filter: if the page is hidden from SERPs (meta robots /
+      // googlebot / X-Robots-Tag), record it and skip adding it to the
+      // snapshot list. We still crawl outbound links — noindex means
+      // "don't index this page", not "don't follow its links".
+      const noindex = detectNoindex(dom, responseHeaders);
+      const shouldExclude = noindex.noindex && !includeNoindex;
+
+      if (!shouldExclude && snapshots.length < maxPages) {
+        const title = await page.title();
+        const screenshotBuffer = await page.screenshot({ fullPage: true });
+
+        const screenshotPath = options.fileStore.store(
+          options.scanSessionId,
+          `page-${screenshotIndex++}.png`,
+          screenshotBuffer,
+        );
+
+        const snapshot: PageSnapshot = {
+          id: randomUUID(),
+          scan_session_id: options.scanSessionId,
+          url,
+          title,
+          captured_at: new Date().toISOString(),
+          full_dom: dom,
+          screenshot: screenshotPath,
+          viewport,
+        };
+        snapshots.push(snapshot);
+        options.reporter?.update("crawl", `Discovering pages... ${snapshots.length} captured, ${queued.size} known`);
+
+        if (options.onPage) {
+          try {
+            await options.onPage(page, snapshot, screenshotBuffer);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            options.reporter?.warn("crawl", `Page hook failed for ${url}: ${msg}`);
+          }
+        }
+      } else if (shouldExclude) {
+        excludedByNoindex.push({ url, source: noindex.source! });
+        options.reporter?.update(
+          "crawl",
+          `Excluded noindex page: ${url} (${noindex.source})`,
+        );
+      }
+
+      // Extract links regardless of exclusion so BFS can still discover
+      // pages reached only via a noindex page's outbound links.
+      const hrefs: string[] = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("a[href]")).map(
+          (a) => a.getAttribute("href") ?? "",
+        ),
+      );
+      for (const href of hrefs) enqueue(href, url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      options.reporter?.warn("crawl", `Skipping ${url}: ${msg}`);
+    } finally {
+      recordSignature(url, signature);
+      await page.close().catch(() => {});
+    }
+  };
+
   try {
     context = await browser.newContext({
       viewport: { width: viewport.width, height: viewport.height },
       deviceScaleFactor: viewport.deviceScaleFactor,
     });
+    // tsx/esbuild (keepNames) wraps named functions in a `__name(fn, "name")`
+    // helper. Callbacks passed to page.evaluate are serialized into the
+    // browser, where that helper doesn't exist — define a no-op so they run.
+    await context.addInitScript({ content: "globalThis.__name = globalThis.__name || ((fn) => fn);" });
 
-    while (queue.length > 0 && snapshots.length < maxPages) {
-      const url = queue.shift()!;
-      if (visited.has(url)) continue;
-
-      // CMS sampling guard — skip if we've hit the sample limit for this collection
-      if (!fullCrawl) {
-        const prefix = getCollectionPrefix(url);
-        if (prefix) {
-          const count = collectionVisits.get(prefix) ?? 0;
-          if (count >= cmsSamples) {
-            visited.add(url);
-            continue;
-          }
-          if (count === 0) {
-            // Log first encounter of a new collection during BFS
-            // (count of remaining queued URLs with this prefix is approximate)
-            const queuedCount = queue.filter((u) => {
-              const p = getCollectionPrefix(u);
-              return p === prefix;
-            }).length + 1; // +1 for current URL
-            if (queuedCount >= 2) {
-              options.reporter?.complete(
-                "crawl",
-                `CMS collection ${prefix}/ (~${queuedCount} pages), sampling ${Math.min(queuedCount, cmsSamples)}`,
-              );
-            }
-          }
-          collectionVisits.set(prefix, count + 1);
-        }
-      }
-
-      visited.add(url);
-
-      options.reporter?.update("crawl", `Discovering pages... ${snapshots.length} found`);
-
-      const page = await context.newPage();
-      try {
-        const response = await page.goto(url, {
-          waitUntil: "networkidle",
-          timeout: timeoutMs,
+    const inFlight = new Set<Promise<void>>();
+    for (;;) {
+      while (inFlight.size < concurrency && snapshots.length + inFlight.size < maxPages) {
+        const url = nextUrl();
+        if (!url) break;
+        const task: Promise<void> = visit(context, url).finally(() => {
+          inFlight.delete(task);
         });
-        const responseHeaders = response?.headers() ?? {};
-
-        const dom = await page.content();
-
-        // Noindex filter: if the page is hidden from SERPs (meta robots /
-        // googlebot / X-Robots-Tag), record it and skip adding it to the
-        // snapshot list. We still crawl outbound links — noindex means
-        // "don't index this page", not "don't follow its links".
-        const noindex = detectNoindex(dom, responseHeaders);
-        const shouldExclude = noindex.noindex && !includeNoindex;
-
-        if (!shouldExclude) {
-          const title = await page.title();
-          const screenshotBuffer = await page.screenshot({ fullPage: true });
-
-          const screenshotPath = options.fileStore.store(
-            options.scanSessionId,
-            `page-${snapshots.length}.png`,
-            screenshotBuffer,
-          );
-
-          snapshots.push({
-            id: randomUUID(),
-            scan_session_id: options.scanSessionId,
-            url,
-            title,
-            captured_at: new Date().toISOString(),
-            full_dom: dom,
-            screenshot: screenshotPath,
-            viewport,
-          });
-        } else {
-          excludedByNoindex.push({ url, source: noindex.source! });
-          options.reporter?.update(
-            "crawl",
-            `Excluded noindex page: ${url} (${noindex.source})`,
-          );
-        }
-
-        // Extract links regardless of exclusion so BFS can still discover
-        // pages reached only via a noindex page's outbound links.
-        const hrefs: string[] = await page.evaluate(() =>
-          Array.from(document.querySelectorAll("a[href]")).map(
-            (a) => a.getAttribute("href") ?? "",
-          ),
-        );
-
-        for (const href of hrefs) {
-          const normalized = normalizeUrl(href, url);
-          if (
-            normalized &&
-            isSameOrigin(normalized, rootOrigin) &&
-            !visited.has(normalized) &&
-            isAllowedByRobots(
-              new URL(normalized).pathname,
-              robotsRules.disallowedPaths,
-            )
-          ) {
-            queue.push(normalized);
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        options.reporter?.warn("crawl", `Skipping ${url}: ${msg}`);
-      } finally {
-        await page.close();
+        inFlight.add(task);
       }
+      if (inFlight.size === 0) break;
+      await Promise.race(inFlight);
     }
   } finally {
     if (context) await context.close();

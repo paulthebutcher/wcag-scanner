@@ -6,7 +6,7 @@ AI-powered WCAG 2.x AA compliance scanner. It crawls a site, runs automated, beh
 
 Point it at a URL and it:
 
-1. **Crawls** the site (sitemap, robots.txt, link discovery), skipping `noindex` pages by default and sampling CMS collection pages rather than crawling hundreds of near-identical ones.
+1. **Crawls** the site (sitemap, robots.txt, link discovery), several pages at a time, skipping `noindex` pages by default and sampling CMS collection pages (sections whose pages share a template) rather than crawling hundreds of near-identical ones.
 2. **Detects the platform** (currently Webflow) so fixes can be given in the platform's own terms.
 3. **Runs five tiers of checks** against every page (see below).
 4. **Analyzes and scores** each result: what it means for real users, how confident the scanner is, and how to fix it.
@@ -26,7 +26,9 @@ Point it at a URL and it:
 | 4 | Form discovery, submission, error-message quality, input purpose, high-risk forms (3.3.x) | Playwright + Claude API | Partly |
 | 5 | Human-judgment triage indicators: pause/stop/hide, multiple ways to find pages, on-input changes | Heuristics that flag items for review | No |
 
-Without `ANTHROPIC_API_KEY`, Tiers 3 and 4's LLM checks are skipped and those criteria are reported as `not_tested`, never as passed.
+Without `ANTHROPIC_API_KEY`, Tiers 3 and 4's LLM checks are skipped and those criteria are reported as `not_tested`, never as passed. Criteria that no check exercises are also reported as `not_tested`.
+
+axe-core runs on the crawl's own page load, and the Tier 3 LLM checks run in the background while the browser-based tiers work through the pages.
 
 ### Design principles
 
@@ -84,6 +86,8 @@ WCAG_PROMPT_MODE=realtime
 | `WCAG_MAX_PAGES` | `50` | Page cap for a crawl |
 | `WCAG_CONCURRENCY` | `5` | Parallel Claude API calls |
 | `WCAG_PROMPT_MODE` | `realtime` | `realtime` or `batch` |
+| `WCAG_MODEL_SONNET` | `claude-sonnet-4-6` | Model for element, form and remediation prompts |
+| `WCAG_MODEL_OPUS` | `claude-opus-4-6` | Model for the executive summary |
 
 Build the CLI (or run it directly with `tsx`):
 
@@ -112,10 +116,11 @@ npx wcag scan https://example.com --tiers 1,2          # no API key needed
 | `--tiers <list>` | `1,2,3,4,5` | Comma-separated tiers to run |
 | `--cms-samples <n>` | `5` | CMS collection pages sampled per collection |
 | `--data-dir <path>` | `./wcag-data` | Where results are stored |
+| `--page-concurrency <n>` | `4` | Pages loaded and tested in parallel |
 | `--include-noindex` | off | Also scan pages marked `noindex` |
 | `--quiet` | off | Suppress progress output |
 
-Each scan also writes a verbose findings dump to `<data-dir>/<scan-id>/` (`findings.md`, `findings.jsonl`, and one markdown file per finding), grouped into triage buckets: fix now, verify manually, possibly noisy, advisory.
+Each scan also writes a verbose findings dump to `<data-dir>/<scan-id>/` (`findings.md`, `findings.jsonl`, and one markdown file per finding), grouped into triage buckets: fix now, verify manually, possibly noisy, advisory. The same directory gets `timings.json`: time per phase, and API calls, cache hits and tokens per prompt.
 
 ### `wcag report <scan-id>`
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -12,6 +12,7 @@ import {
 } from "../../src/core/scanner.js";
 import { openDatabase } from "../../src/store/db.js";
 import type { Finding, CriterionResult } from "../../src/types.js";
+import type { PromptRunner, PromptInput } from "../../src/core/prompt-runner.js";
 
 // ---------------------------------------------------------------------------
 // detectPlatform — pure function tests
@@ -402,6 +403,77 @@ describe("scan (integration)", () => {
     for (const cr of passedResults) {
       expect(failedCriteria.has(cr.wcag_criterion)).toBe(false);
     }
+  });
+
+  it("reports criteria no check exercises as not_tested, never passed", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 2, tiers: [1, 2, 5] },
+      browser,
+    );
+
+    for (const criterion of ["1.4.10", "1.4.13", "2.5.2", "3.2.1"]) {
+      const cr = result.criterionResults.find((r) => r.wcag_criterion === criterion);
+      expect(cr?.status, criterion).toBe("not_tested");
+    }
+    expect(result.summary.wcag_criteria_passed).not.toContain("1.4.10");
+  });
+
+  it("runs Tier 3 through the injected runner alongside the other tiers", async () => {
+    const seen: PromptInput[] = [];
+    const runPrompt = async (input: PromptInput) => {
+      seen.push(input);
+      return {
+        success: true,
+        data: {
+          verdict: input.template.name === "alt_text_quality" ? "fail" : "pass",
+          confidence: 0.9,
+          reasoning: "test verdict",
+          wcag_criterion: "1.1.1",
+          failure_type: "alt_not_descriptive",
+          suggestion: null,
+          affected_users: ["screen_reader"],
+          requires_human_verification: false,
+        },
+        rawResponse: "{}",
+        model: "test-model",
+        tokensUsed: 1,
+        latencyMs: 1,
+        retries: 0,
+      };
+    };
+    const fakeRunner = {
+      runPrompt,
+      runPrompts: (inputs: PromptInput[]) => Promise.all(inputs.map(runPrompt)),
+    } as unknown as PromptRunner;
+
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 2, tiers: [1, 2, 3], promptRunner: fakeRunner },
+      browser,
+    );
+
+    const altInputs = seen.filter((i) => i.template.name === "alt_text_quality");
+    expect(altInputs.length).toBeGreaterThan(0);
+    // logo.png is a 404 on the fixture server, so the prompt says so
+    expect(altInputs[0].userMessage).toContain("No image is attached");
+
+    const llmFindings = result.findings.filter((f) => f.evidence.detected_by === "claude_api");
+    expect(llmFindings.some((f) => f.wcag_criterion === "1.1.1")).toBe(true);
+    // Behavioral tier still ran
+    expect(result.criterionResults.some((cr) => cr.tested_by === "playwright")).toBe(true);
+  });
+
+  it("writes timings.json for the scan", async () => {
+    const result = await scan(
+      { url: baseUrl, dataDir: tmpDir, maxPages: 2, tiers: [1] },
+      browser,
+    );
+
+    const timingsPath = join(tmpDir, result.scanSession.id, "timings.json");
+    expect(existsSync(timingsPath)).toBe(true);
+    const timings = JSON.parse(readFileSync(timingsPath, "utf8"));
+    expect(timings.pages).toBe(result.pageSnapshots.length);
+    expect(timings.total_ms).toBeGreaterThan(0);
+    expect(timings.phases_ms.crawl).toBeGreaterThan(0);
   });
 
   it("detects platform as unknown for non-platform pages", async () => {

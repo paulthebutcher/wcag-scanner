@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type {
   ScanSession,
@@ -30,6 +30,7 @@ import {
 import { LocalFileStore } from "../store/files.js";
 import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
+import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
 import { scoreConfidence } from "./confidence.js";
@@ -81,8 +82,10 @@ export interface ScanOptions {
   reporter?: ProgressReporter;
   /** Anthropic API key (required for Tier 3 semantic checks) */
   apiKey?: string;
-  /** Prompt runner concurrency (default: 5) */
+  /** Prompt runner concurrency (default: WCAG_CONCURRENCY or 5) */
   concurrency?: number;
+  /** Pages loaded and tested in parallel in the browser (default: 4) */
+  pageConcurrency?: number;
   /** Inject a PromptRunner for testing */
   promptRunner?: PromptRunner;
   /**
@@ -592,18 +595,92 @@ function buildDetectionManifest(tiers: number[], options: ScanOptions): Detectio
 }
 
 // ---------------------------------------------------------------------------
+// Concurrency + timing helpers
+// ---------------------------------------------------------------------------
+
+/** Run `fn` over `items` with at most `limit` in flight. Never rejects early: `fn` must handle its own errors. */
+async function runPool<T>(items: T[], limit: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+type AxeOutput = Awaited<ReturnType<typeof runAxeChecks>>;
+
+/**
+ * Criteria that no check in this engine exercises. They are reported as
+ * not_tested (unless a finding or another check covered them) so the report
+ * never claims a pass that nothing verified.
+ */
+const UNTESTED_BY_TIER: Array<{ tier: number; testedBy: DetectedBy; criteria: Array<[string, string]> }> = [
+  {
+    tier: 1,
+    testedBy: "axe_core",
+    criteria: [
+      ["1.3.2", "Meaningful Sequence"],
+      ["1.3.3", "Sensory Characteristics"],
+      ["1.3.4", "Orientation"],
+      ["1.3.6", "Identify Purpose"],
+      ["1.4.5", "Images of Text"],
+      ["1.4.10", "Reflow"],
+      ["1.4.11", "Non-text Contrast"],
+      ["1.4.12", "Text Spacing"],
+      ["1.4.13", "Content on Hover or Focus"],
+      ["3.1.2", "Language of Parts"],
+    ],
+  },
+  {
+    tier: 2,
+    testedBy: "playwright",
+    criteria: [
+      ["2.1.4", "Character Key Shortcuts"],
+      ["2.5.1", "Pointer Gestures"],
+      ["2.5.2", "Pointer Cancellation"],
+      ["3.2.1", "On Focus"],
+    ],
+  },
+  {
+    tier: 3,
+    testedBy: "claude_api",
+    criteria: [
+      ["3.2.4", "Consistent Identification"],
+      ["3.3.2", "Labels or Instructions"],
+    ],
+  },
+  {
+    tier: 5,
+    testedBy: "playwright",
+    criteria: [
+      ["2.2.1", "Timing Adjustable"],
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
 // Main scan function
 // ---------------------------------------------------------------------------
 
 /**
  * Run the full scan pipeline:
- * 1. Crawl pages → PageSnapshot[]
+ * 1. Crawl pages → PageSnapshot[] (Tier 1 axe-core runs on the same page load)
  * 2. Detect platform
- * 3. Tier 1: axe-core automated checks
- * 4. Tier 2: Playwright behavioral checks (keyboard, focus, skip nav, modals)
- * 5. Tier 3: Claude API semantic checks (alt text, link text, headings, consistent nav)
+ * 3. Tier 3: Claude API semantic checks start in the background (DOM only)
+ * 4. Tier 2: Playwright behavioral checks, several pages at a time
+ * 5. Tier 4 forms, Tier 5 indicators
  * 6. Analyze and score all findings
- * 7. Compute and store ScanSummary
+ * 7. Compute and store ScanSummary, timings and findings dump
  *
  * An external `browser` can be injected for testing.
  */
@@ -615,6 +692,34 @@ export async function scan(
   const tiers = options.tiers ?? [1];
   const viewport = options.viewport ?? { width: 1280, height: 800, deviceScaleFactor: 1 };
   const reporter = options.reporter ?? new ScanProgressReporter();
+  const pageConcurrency = Math.max(1, options.pageConcurrency ?? 4);
+  const envConcurrency = Number(process.env.WCAG_CONCURRENCY);
+  const llmConcurrency = options.concurrency
+    ?? (Number.isInteger(envConcurrency) && envConcurrency > 0 ? envConcurrency : 5);
+
+  // Wall-clock time per phase. Phases that overlap (semantic runs alongside
+  // behavioral/forms) each record their own elapsed time, so the parts can
+  // sum to more than the total.
+  const scanStart = Date.now();
+  const phaseMs: Record<string, number> = {};
+  const startPhase = (name: string): (() => void) => {
+    const t0 = Date.now();
+    return () => {
+      phaseMs[name] = (phaseMs[name] ?? 0) + (Date.now() - t0);
+    };
+  };
+
+  // One prompt runner for the whole scan so the concurrency limit and the
+  // identical-input cache are shared by every LLM check.
+  let sharedRunner: PromptRunner | null | undefined;
+  const getRunner = (): PromptRunner | null => {
+    if (sharedRunner === undefined) {
+      const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+      sharedRunner = options.promptRunner
+        ?? (apiKey ? createPromptRunner(apiKey, { concurrency: llmConcurrency }) : null);
+    }
+    return sharedRunner;
+  };
 
   // --- Setup ----------------------------------------------------------------
   const dbPath = join(options.dataDir, "wcag.db");
@@ -643,6 +748,15 @@ export async function scan(
   try {
     // --- Phase 1: Crawl -------------------------------------------------------
     reporter.update("crawl", `Discovering pages at ${options.url}...`);
+    const ownBrowser = !browser;
+    if (!browser) {
+      browser = await chromium.launch({ headless: true });
+    }
+
+    // Tier 1 runs on the crawl's own page load. Results are held until the
+    // platform is known (findings are hashed and remediated per platform).
+    const axeByPage = new Map<string, { output: AxeOutput; screenshot: Buffer }>();
+    const endCrawl = startPhase("crawl");
     const crawlResult = await crawl(options.url, {
       scanSessionId: scanId,
       fileStore,
@@ -651,7 +765,26 @@ export async function scan(
       viewport,
       reporter,
       includeNoindex: options.includeNoindex ?? false,
+      concurrency: pageConcurrency,
+      onPage: tiers.includes(1)
+        ? async (page, snapshot, screenshot) => {
+            const endAxe = startPhase("axe_in_crawl");
+            try {
+              const output = await runAxeChecks(page, scanId);
+              axeByPage.set(snapshot.id, { output, screenshot });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("axe", `Failed for ${snapshot.url}: ${msg}`);
+            } finally {
+              endAxe();
+            }
+          }
+        : undefined,
+    }, browser).catch(async (err) => {
+      if (ownBrowser && browser) await browser.close().catch(() => {});
+      throw err;
     });
+    endCrawl();
     pageSnapshots = crawlResult.snapshots;
     excludedByNoindex = crawlResult.excludedByNoindex;
 
@@ -679,12 +812,8 @@ export async function scan(
       reporter.complete("platform", `Detected: ${platform} (via ${detected_via})`);
     }
 
-    // --- Browser setup (shared by Tier 1 and Tier 2) --------------------------
-    const needsBrowser = tiers.includes(1) || tiers.includes(2) || tiers.includes(4);
-    const ownBrowser = needsBrowser && !browser;
-    if (needsBrowser && !browser) {
-      browser = await chromium.launch({ headless: true });
-    }
+    // --- Browser context (Tier 2 and Tier 4) -----------------------------------
+    const needsBrowser = tiers.includes(2) || tiers.includes(4);
 
     let context: BrowserContext | undefined;
     try {
@@ -703,19 +832,17 @@ export async function scan(
       const axeFlaggedByPage = new Map<string, Set<string>>();
 
       // --- Phase 3: Tier 1 — axe-core checks ----------------------------------
-      if (tiers.includes(1) && context) {
-        reporter.update("axe", "Running axe-core checks...");
+      if (tiers.includes(1)) {
+        reporter.update("axe", "Processing axe-core results...");
+        const endAxeProcess = startPhase("axe_process");
 
         for (const snapshot of pageSnapshots) {
-          const page = await context.newPage();
+          const stash = axeByPage.get(snapshot.id);
+          if (!stash) continue; // hook failed; already warned
+          const axeOutput = stash.output;
+          const fullScreenshot = stash.screenshot;
+          axeByPage.delete(snapshot.id);
           try {
-            await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
-
-            const axeOutput = await runAxeChecks(page, scanId);
-
-            // Take full-page screenshot for evidence cropping
-            const fullScreenshot = await page.screenshot({ fullPage: true });
-
             // Track axe-flagged selectors for this page
             const flagged = new Set<string>();
             for (const cr of axeOutput.violations) {
@@ -770,209 +897,19 @@ export async function scan(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("axe", `Failed for ${snapshot.url}: ${msg}`);
-          } finally {
-            await page.close();
           }
         }
-
-        // Safety net: ensure pass coverage for criteria axe-core covers
-        // that may not always appear in passes[]/inapplicable[] arrays
-        {
-          const axeCoveredExtra: Array<[string, string]> = [
-            ["1.3.2", "Meaningful Sequence: reading order matches visual order"],
-            ["1.3.3", "Sensory Characteristics: instructions don't rely solely on sensory cues"],
-            ["1.3.4", "Orientation: content not restricted to single display orientation"],
-            ["1.3.6", "Identify Purpose: UI component purpose can be programmatically determined"],
-            ["1.4.5", "Images of Text: no images of text used"],
-            ["1.4.10", "Reflow: content reflows without horizontal scrolling at 320px"],
-            ["1.4.11", "Non-text Contrast: UI components meet 3:1 contrast ratio"],
-            ["1.4.12", "Text Spacing: content adapts to text spacing overrides"],
-            ["1.4.13", "Content on Hover or Focus: hover/focus content is dismissible and persistent"],
-            ["3.1.2", "Language of Parts: language changes are programmatically identified"],
-          ];
-          const covered = new Set(allCriterionResults.map(cr => cr.wcag_criterion));
-          const failed = new Set(allFindings.map(f => f.wcag_criterion));
-          for (const [criterion, summary] of axeCoveredExtra) {
-            if (!covered.has(criterion) && !failed.has(criterion)) {
-              const cr = makeCriterionResult(scanId, criterion, "passed", "axe_core", summary);
-              upsertCriterionResult(db, cr);
-              allCriterionResults.push(cr);
-            }
-          }
-        }
+        endAxeProcess();
 
         reporter.complete("axe", `Checked ${pageSnapshots.length} page(s), ${allFindings.length} finding(s)`);
       }
 
-      // --- Phase 4: Tier 2 — Behavioral checks --------------------------------
-      if (tiers.includes(2) && context) {
-        reporter.update("behavioral", "Running behavioral checks...");
-        let behavioralCount = 0;
-        let rawBehavioralCount = 0;
-
-        // Collect all behavioral results per page before deduplication
-        const behavioralPages: BehavioralPageEntry[] = [];
-
-        for (const snapshot of pageSnapshots) {
-          const page = await context.newPage();
-          try {
-            await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
-            const fullScreenshot = await page.screenshot({ fullPage: true });
-
-            const pageResults: CheckResult[] = [];
-
-            // 2a: Keyboard reachability + trap checks
-            try {
-              const { results: keyboardResults, tabSequence } = await runKeyboardChecks(page);
-              pageResults.push(...keyboardResults);
-
-              // 2b: Focus visible (needs tab sequence from keyboard check)
-              try {
-                const focusResults = await runFocusVisibleChecks(page, tabSequence);
-                pageResults.push(...focusResults);
-                if (focusResults.length === 0) {
-                  const passCr = makeCriterionResult(scanId, "2.4.7", "passed", "playwright",
-                    "All focused elements have visible focus indicators");
-                  upsertCriterionResult(db, passCr);
-                  allCriterionResults.push(passCr);
-                }
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                reporter.warn("behavioral", `Focus visible failed for ${snapshot.url}: ${msg}`);
-              }
-
-              // 2c: Focus order (needs tab sequence)
-              try {
-                const orderResults = runFocusOrderChecks(tabSequence);
-                pageResults.push(...orderResults);
-                if (orderResults.length === 0) {
-                  const passCr = makeCriterionResult(scanId, "2.4.3", "passed", "playwright",
-                    "Focus order follows visual layout sequence");
-                  upsertCriterionResult(db, passCr);
-                  allCriterionResults.push(passCr);
-                }
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                reporter.warn("behavioral", `Focus order failed for ${snapshot.url}: ${msg}`);
-              }
-
-              // Create passing criterion results for keyboard if no violations
-              if (keyboardResults.length === 0) {
-                const passCr = makeCriterionResult(scanId, "2.1.1", "passed", "playwright",
-                  `All ${tabSequence.focusStops.length} interactive elements reachable via keyboard`);
-                upsertCriterionResult(db, passCr);
-                allCriterionResults.push(passCr);
-              }
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("behavioral", `Keyboard checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 2d: Keyboard traps
-            try {
-              const trapResults = await runTrapChecks(page);
-              pageResults.push(...trapResults);
-              if (trapResults.length === 0) {
-                const passCr = makeCriterionResult(scanId, "2.1.2", "passed", "playwright",
-                  "No keyboard traps detected");
-                upsertCriterionResult(db, passCr);
-                allCriterionResults.push(passCr);
-              }
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("behavioral", `Trap checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 2e: Skip navigation
-            try {
-              const skipResults = await runSkipNavChecks(page);
-              pageResults.push(...skipResults);
-              if (skipResults.length === 0) {
-                const passCr = makeCriterionResult(scanId, "2.4.1", "passed", "playwright",
-                  "Working skip navigation link found");
-                upsertCriterionResult(db, passCr);
-                allCriterionResults.push(passCr);
-              }
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("behavioral", `Skip nav checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 2f: Modal focus management
-            try {
-              const { results: modalResults } = await runModalChecks(page);
-              pageResults.push(...modalResults);
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("behavioral", `Modal checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            rawBehavioralCount += pageResults.length;
-            reporter.update("behavioral", `${snapshot.url}: ${pageResults.length} issue(s) found`);
-
-            // Collect results for deduplication (don't process yet)
-            if (pageResults.length > 0) {
-              behavioralPages.push({
-                snapshotId: snapshot.id,
-                snapshotUrl: snapshot.url,
-                results: pageResults,
-                fullScreenshot: fullScreenshot,
-              });
-            }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            reporter.warn("behavioral", `Failed for ${snapshot.url}: ${msg}`);
-          } finally {
-            await page.close();
-          }
-        }
-
-        // Deduplicate shared elements across pages, then process findings
-        const dedupedPages = deduplicateBehavioralResults(behavioralPages);
-        const dedupedCount = dedupedPages.reduce((s, p) => s + p.results.length, 0);
-        if (rawBehavioralCount > dedupedCount) {
-          reporter.update("behavioral",
-            `Deduplicated: ${rawBehavioralCount} → ${dedupedCount} (${rawBehavioralCount - dedupedCount} shared-element duplicates removed)`);
-        }
-
-        for (const entry of dedupedPages) {
-          const findings = await processCheckResults(entry.results, {
-            scanId,
-            pageSnapshotId: entry.snapshotId,
-            platform: scanSession.platform,
-            failureType: "behavioral",
-            fullPageScreenshot: entry.fullScreenshot,
-            db,
-            fileStore,
-          });
-          allFindings.push(...findings);
-          behavioralCount += findings.length;
-        }
-
-        // Additional behavioral criteria: pass/not_applicable when no issues detected
-        {
-          const behavioralExtra: Array<[string, "passed" | "not_applicable", string]> = [
-            ["2.1.4", "not_applicable", "No custom character key shortcuts detected on page"],
-            ["2.5.1", "not_applicable", "No multipoint or path-based pointer gestures detected"],
-            ["2.5.2", "passed", "Standard HTML controls use click events with proper pointer cancellation"],
-            ["3.2.1", "passed", "No unexpected context changes triggered on element focus"],
-          ];
-          const covered = new Set(allCriterionResults.map(cr => cr.wcag_criterion));
-          const failed = new Set(allFindings.map(f => f.wcag_criterion));
-          for (const [criterion, status, summary] of behavioralExtra) {
-            if (!covered.has(criterion) && !failed.has(criterion)) {
-              const cr = makeCriterionResult(scanId, criterion, status, "playwright", summary);
-              upsertCriterionResult(db, cr);
-              allCriterionResults.push(cr);
-            }
-          }
-        }
-
-        reporter.complete("behavioral", `Behavioral checks complete: ${behavioralCount} finding(s)`);
-      }
-
-      // --- Phase 5: Tier 3 — Semantic checks -----------------------------------
-      if (tiers.includes(3)) {
+      // --- Tier 3 — Semantic checks (runs in the background) -------------------
+      // Needs only the captured DOM and the axe-flagged selectors, so it
+      // overlaps the browser-bound tiers below and is awaited after them.
+      const runSemanticTier = async (): Promise<void> => {
+        const endSemantic = startPhase("semantic");
+        try {
         reporter.update("semantic", "Running semantic checks...");
         let semanticCount = 0;
 
@@ -982,15 +919,10 @@ export async function scan(
         const semanticAttemptedCriteria = new Set<string>();
         const semanticViolationCriteria = new Set<string>();
 
-        // Create or use injected PromptRunner
-        const runner = options.promptRunner ?? (() => {
-          const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-          if (!apiKey) {
-            reporter.warn("semantic", "Skipping Tier 3: no ANTHROPIC_API_KEY available");
-            return null;
-          }
-          return createPromptRunner(apiKey, { concurrency: options.concurrency ?? 5 });
-        })();
+        const runner = getRunner();
+        if (!runner) {
+          reporter.warn("semantic", "Skipping Tier 3: no ANTHROPIC_API_KEY available");
+        }
 
         if (runner) {
           // Collect per-page semantic results before processing so we can
@@ -1002,90 +934,63 @@ export async function scan(
             results: CheckResult[];
           }> = [];
 
-          for (const snapshot of pageSnapshots) {
+          const imageFetcher = createImageFetcher();
+
+          // Every page and every check is started at once; the shared
+          // runner's semaphore bounds the number of API calls in flight.
+          const guarded = async (
+            label: string,
+            snapshot: PageSnapshot,
+            criterion: string,
+            run: () => Promise<CheckResult[]> | CheckResult[],
+          ): Promise<CheckResult[]> => {
+            try {
+              const results = await run();
+              if (results.length > 0) semanticViolationCriteria.add(criterion);
+              return results;
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("semantic", `${label} failed for ${snapshot.url}: ${msg}`);
+              return [];
+            }
+          };
+
+          semanticAttemptedCriteria.add("1.1.1");
+          semanticAttemptedCriteria.add("2.4.4");
+          semanticAttemptedCriteria.add("1.3.1");
+          semanticAttemptedCriteria.add("4.1.2");
+
+          let pagesDone = 0;
+          const perPage = await Promise.all(pageSnapshots.map(async (snapshot) => {
             const dom = snapshot.full_dom;
-            const pageResults: CheckResult[] = [];
+            const axeFlagged = axeFlaggedByPage.get(snapshot.id) ?? new Set<string>();
 
-            // 3a: Alt text quality
-            semanticAttemptedCriteria.add("1.1.1");
-            try {
-              const axeFlagged = axeFlaggedByPage.get(snapshot.id) ?? new Set();
-              const altResults = await runAltTextChecks(dom, runner, {
+            const groups = await Promise.all([
+              // 3a: Alt text quality (the image itself is sent when it can be fetched)
+              guarded("Alt text checks", snapshot, "1.1.1", () => runAltTextChecks(dom, runner, {
                 axeFlaggedSelectors: axeFlagged,
-              });
-              pageResults.push(...altResults);
-              if (altResults.length > 0) semanticViolationCriteria.add("1.1.1");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Alt text checks failed for ${snapshot.url}: ${msg}`);
-            }
+                imageProvider: (img) => imageFetcher(img.src, snapshot.url),
+              })),
+              // 3b: Link text quality
+              guarded("Link text checks", snapshot, "2.4.4", () => runLinkTextChecks(dom, runner)),
+              // 3c: Heading structure
+              guarded("Heading checks", snapshot, "1.3.1", () => runHeadingChecks(dom, snapshot.title, runner)),
+              // 3d: Landmark labels (structural, no Claude needed)
+              guarded("Landmark label checks", snapshot, "1.3.1", () => runLandmarkLabelChecks(dom)),
+              // 3e: Widget ARIA roles
+              guarded("Widget ARIA checks", snapshot, "4.1.2", () => runWidgetAriaChecks(dom, runner)),
+              // 3f: Table structure (structural, no Claude needed)
+              guarded("Table structure checks", snapshot, "1.3.1", () => runTableStructureChecks(dom)),
+              // 3g: Duplicate link text (structural, no Claude needed)
+              guarded("Duplicate link checks", snapshot, "2.4.4", () => runDuplicateLinkChecks(dom, snapshot.url)),
+            ]);
 
-            // 3b: Link text quality
-            semanticAttemptedCriteria.add("2.4.4");
-            try {
-              const linkResults = await runLinkTextChecks(dom, runner);
-              pageResults.push(...linkResults);
-              if (linkResults.length > 0) semanticViolationCriteria.add("2.4.4");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Link text checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 3c: Heading structure
-            semanticAttemptedCriteria.add("1.3.1");
-            try {
-              const headingResults = await runHeadingChecks(dom, snapshot.title, runner);
-              pageResults.push(...headingResults);
-              if (headingResults.length > 0) semanticViolationCriteria.add("1.3.1");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Heading checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 3d: Landmark labels (structural, no Claude needed)
-            try {
-              const landmarkResults = runLandmarkLabelChecks(dom);
-              pageResults.push(...landmarkResults);
-              if (landmarkResults.length > 0) semanticViolationCriteria.add("1.3.1");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Landmark label checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 3e: Widget ARIA roles
-            semanticAttemptedCriteria.add("4.1.2");
-            try {
-              const widgetResults = await runWidgetAriaChecks(dom, runner);
-              pageResults.push(...widgetResults);
-              if (widgetResults.length > 0) semanticViolationCriteria.add("4.1.2");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Widget ARIA checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 3f: Table structure (structural, no Claude needed)
-            try {
-              const tableResults = runTableStructureChecks(dom);
-              pageResults.push(...tableResults);
-              if (tableResults.length > 0) semanticViolationCriteria.add("1.3.1");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Table structure checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            // 3g: Duplicate link text (structural, no Claude needed)
-            try {
-              const dupLinkResults = runDuplicateLinkChecks(dom, snapshot.url);
-              pageResults.push(...dupLinkResults);
-              if (dupLinkResults.length > 0) semanticViolationCriteria.add("2.4.4");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reporter.warn("semantic", `Duplicate link checks failed for ${snapshot.url}: ${msg}`);
-            }
-
-            semanticPageEntries.push({ snapshotId: snapshot.id, snapshotUrl: snapshot.url, results: pageResults });
-            reporter.update("semantic", `${snapshot.url}: ${pageResults.length} issue(s) found`);
-          }
+            const pageResults = groups.flat();
+            pagesDone++;
+            reporter.update("semantic", `${pagesDone}/${pageSnapshots.length} pages evaluated (${snapshot.url}: ${pageResults.length} issue(s))`);
+            return { snapshotId: snapshot.id, snapshotUrl: snapshot.url, results: pageResults };
+          }));
+          semanticPageEntries.push(...perPage);
 
           // Cross-page dedup for semantic findings.
           // Same element in a shared template (footer, nav) produces one finding
@@ -1193,31 +1098,13 @@ export async function scan(
             }
           }
 
-          // Additional semantic criteria coverage
-          {
-            const semanticExtra: Array<[string, string]> = [
-              ["3.2.4", "Components with same functionality consistently identified across pages"],
-              ["3.3.2", "Form inputs have visible labels or instructions"],
-            ];
-            const covered = new Set(allCriterionResults.map(cr => cr.wcag_criterion));
-            const failed = new Set(allFindings.map(f => f.wcag_criterion));
-            for (const [criterion, summary] of semanticExtra) {
-              if (!covered.has(criterion) && !failed.has(criterion)) {
-                semanticAttemptedCriteria.add(criterion);
-                const cr = makeCriterionResult(scanId, criterion, "passed", "claude_api", summary);
-                upsertCriterionResult(db, cr);
-                allCriterionResults.push(cr);
-              }
-            }
-          }
-
           reporter.complete("semantic", `Semantic checks complete: ${semanticCount} finding(s)`);
         }
 
         // Mark all Tier 3 criteria that were NOT attempted as "not_tested".
         // This covers both the "no API key" case (runner is null → nothing
         // attempted) and partial failures where individual checks threw.
-        const TIER3_CRITERIA = ["1.1.1", "2.4.4", "1.3.1", "4.1.2", "3.2.3", "3.2.4", "3.3.2"];
+        const TIER3_CRITERIA = ["1.1.1", "2.4.4", "1.3.1", "4.1.2", "3.2.3"];
         for (const criterion of TIER3_CRITERIA) {
           if (!semanticAttemptedCriteria.has(criterion)) {
             const cr = makeCriterionResult(
@@ -1231,6 +1118,167 @@ export async function scan(
             allCriterionResults.push(cr);
           }
         }
+        } finally {
+          endSemantic();
+        }
+      };
+      let semanticError: unknown;
+      const semanticDone: Promise<void> = tiers.includes(3)
+        ? runSemanticTier().catch((err) => { semanticError = err; })
+        : Promise.resolve();
+
+      // --- Phase 4: Tier 2 — Behavioral checks --------------------------------
+      if (tiers.includes(2) && context) {
+        reporter.update("behavioral", "Running behavioral checks...");
+        let behavioralCount = 0;
+        let rawBehavioralCount = 0;
+
+        // Collect all behavioral results per page before deduplication.
+        // Indexed by page order so dedup keeps the first page's occurrence
+        // regardless of which page finishes first.
+        const behavioralByIndex: Array<BehavioralPageEntry | undefined> = [];
+        const endBehavioral = startPhase("behavioral");
+        const behavioralContext = context;
+
+        await runPool(pageSnapshots, pageConcurrency, async (snapshot, index) => {
+          const page = await behavioralContext.newPage();
+          try {
+            await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
+            const fullScreenshot = await page.screenshot({ fullPage: true });
+
+            const pageResults: CheckResult[] = [];
+
+            // 2a: Keyboard reachability + trap checks
+            try {
+              const { results: keyboardResults, tabSequence } = await runKeyboardChecks(page);
+              pageResults.push(...keyboardResults);
+
+              // 2b: Focus visible (needs tab sequence from keyboard check)
+              try {
+                const focusResults = await runFocusVisibleChecks(page, tabSequence);
+                pageResults.push(...focusResults);
+                if (focusResults.length === 0) {
+                  const passCr = makeCriterionResult(scanId, "2.4.7", "passed", "playwright",
+                    "All focused elements have visible focus indicators");
+                  upsertCriterionResult(db, passCr);
+                  allCriterionResults.push(passCr);
+                }
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                reporter.warn("behavioral", `Focus visible failed for ${snapshot.url}: ${msg}`);
+              }
+
+              // 2c: Focus order (needs tab sequence)
+              try {
+                const orderResults = runFocusOrderChecks(tabSequence);
+                pageResults.push(...orderResults);
+                if (orderResults.length === 0) {
+                  const passCr = makeCriterionResult(scanId, "2.4.3", "passed", "playwright",
+                    "Focus order follows visual layout sequence");
+                  upsertCriterionResult(db, passCr);
+                  allCriterionResults.push(passCr);
+                }
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                reporter.warn("behavioral", `Focus order failed for ${snapshot.url}: ${msg}`);
+              }
+
+              // Create passing criterion results for keyboard if no violations
+              if (keyboardResults.length === 0) {
+                const passCr = makeCriterionResult(scanId, "2.1.1", "passed", "playwright",
+                  `All ${tabSequence.focusStops.length} interactive elements reachable via keyboard`);
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Keyboard checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 2d: Keyboard traps
+            try {
+              const trapResults = await runTrapChecks(page);
+              pageResults.push(...trapResults);
+              if (trapResults.length === 0) {
+                const passCr = makeCriterionResult(scanId, "2.1.2", "passed", "playwright",
+                  "No keyboard traps detected");
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Trap checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 2e: Skip navigation
+            try {
+              const skipResults = await runSkipNavChecks(page);
+              pageResults.push(...skipResults);
+              if (skipResults.length === 0) {
+                const passCr = makeCriterionResult(scanId, "2.4.1", "passed", "playwright",
+                  "Working skip navigation link found");
+                upsertCriterionResult(db, passCr);
+                allCriterionResults.push(passCr);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Skip nav checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            // 2f: Modal focus management
+            try {
+              const { results: modalResults } = await runModalChecks(page);
+              pageResults.push(...modalResults);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              reporter.warn("behavioral", `Modal checks failed for ${snapshot.url}: ${msg}`);
+            }
+
+            rawBehavioralCount += pageResults.length;
+            reporter.update("behavioral", `${snapshot.url}: ${pageResults.length} issue(s) found`);
+
+            // Collect results for deduplication (don't process yet)
+            if (pageResults.length > 0) {
+              behavioralByIndex[index] = {
+                snapshotId: snapshot.id,
+                snapshotUrl: snapshot.url,
+                results: pageResults,
+                fullScreenshot: fullScreenshot,
+              };
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reporter.warn("behavioral", `Failed for ${snapshot.url}: ${msg}`);
+          } finally {
+            await page.close().catch(() => {});
+          }
+        });
+        const behavioralPages = behavioralByIndex.filter((e): e is BehavioralPageEntry => e !== undefined);
+
+        // Deduplicate shared elements across pages, then process findings
+        const dedupedPages = deduplicateBehavioralResults(behavioralPages);
+        const dedupedCount = dedupedPages.reduce((s, p) => s + p.results.length, 0);
+        if (rawBehavioralCount > dedupedCount) {
+          reporter.update("behavioral",
+            `Deduplicated: ${rawBehavioralCount} → ${dedupedCount} (${rawBehavioralCount - dedupedCount} shared-element duplicates removed)`);
+        }
+
+        for (const entry of dedupedPages) {
+          const findings = await processCheckResults(entry.results, {
+            scanId,
+            pageSnapshotId: entry.snapshotId,
+            platform: scanSession.platform,
+            failureType: "behavioral",
+            fullPageScreenshot: entry.fullScreenshot,
+            db,
+            fileStore,
+          });
+          allFindings.push(...findings);
+          behavioralCount += findings.length;
+        }
+
+        endBehavioral();
+        reporter.complete("behavioral", `Behavioral checks complete: ${behavioralCount} finding(s)`);
       }
 
       // --- Phase 6: Tier 4 — Form checks ----------------------------------------
@@ -1239,14 +1287,11 @@ export async function scan(
         let formCount = 0;
 
         // Tier 4 needs a PromptRunner for error evaluation + input purpose
-        const formRunner = options.promptRunner ?? (() => {
-          const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-          if (!apiKey) {
-            reporter.warn("forms", "Skipping Tier 4 LLM checks: no ANTHROPIC_API_KEY available");
-            return null;
-          }
-          return createPromptRunner(apiKey, { concurrency: options.concurrency ?? 5 });
-        })();
+        const formRunner = getRunner();
+        if (!formRunner) {
+          reporter.warn("forms", "Skipping Tier 4 LLM checks: no ANTHROPIC_API_KEY available");
+        }
+        const endForms = startPhase("forms");
 
         // Collect all submission states for Tier 5 error quality indicators
         const allSubmissionStates: SubmissionState[] = [];
@@ -1521,12 +1566,14 @@ export async function scan(
           }
         }
 
+        endForms();
         reporter.complete("forms", `Form checks complete: ${formCount} finding(s)`);
       }
 
       // --- Phase 7: Tier 5 — Indicator checks -----------------------------------
       if (tiers.includes(5)) {
         reporter.update("indicators", "Running indicator checks...");
+        const endIndicators = startPhase("indicators");
         let indicatorCount = 0;
         const indicatorViolationCriteria = new Set<string>();
 
@@ -1609,19 +1656,15 @@ export async function scan(
           }
         }
 
-        // 2.2.1 Timing Adjustable: not_applicable when no time limits detected
-        {
-          const covered = allCriterionResults.some(cr => cr.wcag_criterion === "2.2.1");
-          const failed = allFindings.some(f => f.wcag_criterion === "2.2.1");
-          if (!covered && !failed) {
-            const cr = makeCriterionResult(scanId, "2.2.1", "not_applicable", "playwright",
-              "No time limits or auto-updating content detected on scanned pages");
-            upsertCriterionResult(db, cr);
-            allCriterionResults.push(cr);
-          }
-        }
-
+        endIndicators();
         reporter.complete("indicators", `Indicator checks complete: ${indicatorCount} finding(s)`);
+      }
+
+      // Tier 3 has been running alongside the browser-bound tiers.
+      await semanticDone;
+      if (semanticError) {
+        const msg = semanticError instanceof Error ? semanticError.message : String(semanticError);
+        reporter.warn("semantic", `Semantic tier failed: ${msg}`);
       }
     } finally {
       if (context) await context.close();
@@ -1653,6 +1696,22 @@ export async function scan(
       }
     }
 
+    // --- Phase 7.6: Criteria no check exercises --------------------------------
+    {
+      const covered = new Set(allCriterionResults.map((cr) => cr.wcag_criterion));
+      const failed = new Set(allFindings.map((f) => f.wcag_criterion));
+      for (const group of UNTESTED_BY_TIER) {
+        if (!tiers.includes(group.tier)) continue;
+        for (const [criterion, name] of group.criteria) {
+          if (covered.has(criterion) || failed.has(criterion)) continue;
+          const cr = makeCriterionResult(scanId, criterion, "not_tested", group.testedBy,
+            `${name}: not covered by the automated checks that ran; needs a manual check`);
+          upsertCriterionResult(db, cr);
+          allCriterionResults.push(cr);
+        }
+      }
+    }
+
     // --- Phase 8: Reconcile CriterionResults ------------------------------------
     // Ensure no criterion is both "passed" and has findings.
     // Later tiers may add violations for criteria that earlier tiers marked passed.
@@ -1676,6 +1735,40 @@ export async function scan(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       reporter.warn("dump", `Findings dump failed: ${msg}`);
+    }
+
+    // --- Phase 11: Timings ----------------------------------------------------
+    try {
+      const totalMs = Date.now() - scanStart;
+      const prompts = sharedRunner?.getStats?.() ?? {};
+      const scanDir = join(options.dataDir, scanId);
+      mkdirSync(scanDir, { recursive: true });
+      writeFileSync(join(scanDir, "timings.json"), JSON.stringify({
+        scan_id: scanId,
+        total_ms: totalMs,
+        pages: pageSnapshots.length,
+        page_concurrency: pageConcurrency,
+        llm_concurrency: llmConcurrency,
+        // Overlapping phases each record their own elapsed time; axe_in_crawl
+        // is summed across parallel pages and is contained in crawl.
+        phases_ms: phaseMs,
+        prompts,
+      }, null, 2), "utf8");
+
+      const phaseSummary = Object.entries(phaseMs)
+        .map(([name, ms]) => `${name} ${formatDuration(ms)}`)
+        .join(", ");
+      reporter.complete("timing", `Total ${formatDuration(totalMs)} (${phaseSummary})`);
+      const promptEntries = Object.entries(prompts);
+      if (promptEntries.length > 0) {
+        const calls = promptEntries.reduce((n, [, p]) => n + p.calls, 0);
+        const hits = promptEntries.reduce((n, [, p]) => n + p.cacheHits, 0);
+        const failures = promptEntries.reduce((n, [, p]) => n + p.failures, 0);
+        reporter.complete("timing", `LLM: ${calls} API call(s), ${hits} served from cache, ${failures} failed attempt(s)`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reporter.warn("timing", `Could not write timings: ${msg}`);
     }
 
     reporter.complete("scan", `Complete: ${allFindings.length} finding(s)`);

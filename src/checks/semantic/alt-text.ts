@@ -198,12 +198,15 @@ export async function runAltTextChecks(
     axeFlaggedSelectors?: Set<string>;
     deduplicateCms?: boolean;
     screenshotProvider?: (selector: string) => Promise<string | undefined>;
+    /** Supplies the image itself (base64 PNG) for the vision prompt */
+    imageProvider?: (img: ImageContext) => Promise<string | undefined>;
   } = {},
 ): Promise<CheckResult[]> {
   const {
     axeFlaggedSelectors = new Set(),
     deduplicateCms = true,
     screenshotProvider,
+    imageProvider,
   } = options;
 
   // 1. Collect all images
@@ -243,10 +246,16 @@ export async function runAltTextChecks(
   }
 
   // 6. Get screenshots if provider available
-  if (screenshotProvider) {
-    for (const img of images) {
-      img.screenshotBase64 = await screenshotProvider(img.selector);
-    }
+  if (screenshotProvider || imageProvider) {
+    await Promise.all(images.map(async (img) => {
+      try {
+        img.screenshotBase64 = imageProvider
+          ? await imageProvider(img)
+          : await screenshotProvider!(img.selector);
+      } catch {
+        // Evaluate from HTML and context alone
+      }
+    }));
   }
 
   // 7. Send each image to Claude API for evaluation
@@ -257,6 +266,7 @@ export async function runAltTextChecks(
       elementHtml: img.html,
       altText: img.alt ?? "(no alt attribute)",
       surroundingContext: img.surroundingContext,
+      imageAttached: Boolean(img.screenshotBase64),
     }),
     imageBase64: img.screenshotBase64,
     imageMediaType: "image/png" as const,

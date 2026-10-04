@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import Anthropic from "@anthropic-ai/sdk";
 import {
   buildMessages,
   parseEvaluation,
@@ -348,5 +349,86 @@ describe("PromptRunner retry behavior", () => {
     expect(logs.length).toBeGreaterThanOrEqual(1);
     expect(logs[0].promptName).toBe("test_prompt");
     expect(logs[0].success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PromptRunner — identical-input cache and stats
+// ---------------------------------------------------------------------------
+
+describe("PromptRunner cache", () => {
+  const template: PromptTemplate = {
+    name: "cache_test",
+    family: "element_evaluation",
+    model: "sonnet",
+    vision: false,
+    systemPrompt: "sys",
+    outputSchema: {},
+  };
+
+  function stubClient(runner: PromptRunner, create: ReturnType<typeof vi.fn>): void {
+    (runner as unknown as { client: unknown }).client = { messages: { create } };
+  }
+
+  const okResponse = {
+    content: [{ type: "text", text: '{"verdict":"pass"}' }],
+    usage: { input_tokens: 10, output_tokens: 5 },
+  };
+
+  it("calls the API once for identical inputs and counts cache hits", async () => {
+    const runner = new PromptRunner("test-key");
+    const create = vi.fn().mockResolvedValue(okResponse);
+    stubClient(runner, create);
+
+    const results = await runner.runPrompts([
+      { template, userMessage: "same" },
+      { template, userMessage: "same" },
+      { template, userMessage: "different" },
+    ]);
+    await runner.runPrompt({ template, userMessage: "same" });
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(results.every((r) => r.success)).toBe(true);
+    const stats = runner.getStats()["cache_test"];
+    expect(stats.calls).toBe(2);
+    expect(stats.cacheHits).toBe(2);
+    expect(stats.tokensUsed).toBe(30);
+  });
+
+  it("does not cache failed results", async () => {
+    const runner = new PromptRunner("test-key", { max_retries: 0 });
+    const create = vi.fn()
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "not json" }], usage: { input_tokens: 1, output_tokens: 1 } })
+      .mockResolvedValueOnce(okResponse);
+    stubClient(runner, create);
+
+    const first = await runner.runPrompt({ template, userMessage: "x" });
+    const second = await runner.runPrompt({ template, userMessage: "x" });
+
+    expect(first.success).toBe(false);
+    expect(second.success).toBe(true);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry client errors such as 400", async () => {
+    const runner = new PromptRunner("test-key", { max_retries: 2 });
+    const create = vi.fn().mockRejectedValue(
+      new Anthropic.BadRequestError(400, { type: "error" }, "invalid request", new Headers()),
+    );
+    stubClient(runner, create);
+
+    const result = await runner.runPrompt({ template, userMessage: "bad" });
+
+    expect(result.success).toBe(false);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves model overrides from the environment", () => {
+    process.env.WCAG_MODEL_SONNET = "custom-model";
+    try {
+      expect(resolveModelId("sonnet")).toBe("custom-model");
+    } finally {
+      delete process.env.WCAG_MODEL_SONNET;
+    }
   });
 });

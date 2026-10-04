@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type { PromptRunnerConfig, PromptMode } from "../types.js";
 
@@ -87,8 +88,47 @@ const MODEL_IDS: Record<ModelRoute, string> = {
   opus: "claude-opus-4-6",
 };
 
+const MODEL_ENV_OVERRIDES: Record<ModelRoute, string> = {
+  sonnet: "WCAG_MODEL_SONNET",
+  opus: "WCAG_MODEL_OPUS",
+};
+
+/**
+ * Resolve a model route to a model ID. `WCAG_MODEL_SONNET` / `WCAG_MODEL_OPUS`
+ * override the defaults so models can be compared without a code change.
+ * Requests send `temperature: 0`; a model that rejects sampling parameters
+ * will fail every call.
+ */
 export function resolveModelId(route: ModelRoute): string {
-  return MODEL_IDS[route];
+  return process.env[MODEL_ENV_OVERRIDES[route]] || MODEL_IDS[route];
+}
+
+/** Aggregate call statistics for one prompt name. */
+export interface PromptStats {
+  /** API requests made, including retries */
+  calls: number;
+  /** runPrompt invocations answered from the in-scan cache */
+  cacheHits: number;
+  failures: number;
+  retries: number;
+  tokensUsed: number;
+  totalLatencyMs: number;
+}
+
+function cacheKey(input: PromptInput): string {
+  const hash = createHash("sha1");
+  hash.update(input.template.name);
+  hash.update("\0");
+  hash.update(input.userMessage);
+  hash.update("\0");
+  if (input.template.vision && input.imageBase64) hash.update(input.imageBase64);
+  return hash.digest("hex");
+}
+
+function isRetryableApiError(err: unknown): boolean {
+  if (err instanceof Anthropic.RateLimitError) return true;
+  if (err instanceof Anthropic.APIConnectionError) return true;
+  return err instanceof Anthropic.APIError && typeof err.status === "number" && err.status >= 500;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +242,9 @@ export class PromptRunner {
   private readonly semaphore: Semaphore;
   private readonly logger: PromptLogger | null;
   private readonly batchQueue: BatchEntry[] = [];
+  /** In-flight and completed results keyed by prompt + input, per runner */
+  private readonly cache = new Map<string, Promise<PromptResult>>();
+  private readonly stats = new Map<string, PromptStats>();
 
   constructor(
     apiKey: string,
@@ -235,7 +278,48 @@ export class PromptRunner {
     if (this.config.mode === "batch") {
       return this.queueForBatch<T>(input);
     }
-    return this.executeWithRetry<T>(input);
+
+    // Identical inputs (the same footer link or logo on every page) are
+    // evaluated once per runner; later callers share the first result.
+    const key = cacheKey(input);
+    const cached = this.cache.get(key);
+    if (cached) {
+      this.statsFor(input.template.name).cacheHits++;
+      return cached as Promise<PromptResult<T>>;
+    }
+    const pending = this.executeWithRetry<T>(input);
+    this.cache.set(key, pending as Promise<PromptResult>);
+    // Don't pin a failure: a later identical input gets a fresh attempt.
+    void pending.then((result) => {
+      if (!result.success) this.cache.delete(key);
+    });
+    return pending;
+  }
+
+  /** Per-prompt call statistics accumulated since the runner was created. */
+  getStats(): Record<string, PromptStats> {
+    return Object.fromEntries(this.stats);
+  }
+
+  private statsFor(promptName: string): PromptStats {
+    let entry = this.stats.get(promptName);
+    if (!entry) {
+      entry = { calls: 0, cacheHits: 0, failures: 0, retries: 0, tokensUsed: 0, totalLatencyMs: 0 };
+      this.stats.set(promptName, entry);
+    }
+    return entry;
+  }
+
+  private record(entry: PromptLogEntry): void {
+    const stats = this.statsFor(entry.promptName);
+    stats.calls++;
+    stats.tokensUsed += entry.tokensUsed;
+    stats.totalLatencyMs += entry.latencyMs;
+    if (!entry.success) {
+      stats.failures++;
+      stats.retries++;
+    }
+    this.logger?.log(entry);
   }
 
   /**
@@ -295,7 +379,13 @@ export class PromptRunner {
     let lastError: Error | undefined;
     let retries = 0;
 
+    let backoffMs = 0;
+
     for (let attempt = 0; attempt <= this.config.max_retries; attempt++) {
+      if (backoffMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        backoffMs = 0;
+      }
       await this.semaphore.acquire();
       const start = Date.now();
 
@@ -322,7 +412,7 @@ export class PromptRunner {
             success: true,
             retries,
           };
-          this.logger?.log(logEntry);
+          this.record(logEntry);
 
           return {
             success: true,
@@ -347,7 +437,7 @@ export class PromptRunner {
             retries,
             error: lastError.message,
           };
-          this.logger?.log(logEntry);
+          this.record(logEntry);
 
           continue; // retry
         }
@@ -365,11 +455,28 @@ export class PromptRunner {
           retries,
           error: lastError.message,
         };
-        this.logger?.log(logEntry);
+        this.record(logEntry);
 
-        // Don't retry on auth errors
-        if (lastError.message.includes("401") || lastError.message.includes("authentication")) {
+        // Don't retry on auth errors or other client errors (400, 403, 404,
+        // ...): the same request will be rejected the same way.
+        const isClientError =
+          apiError instanceof Anthropic.APIError &&
+          typeof apiError.status === "number" &&
+          apiError.status >= 400 && apiError.status < 500 &&
+          apiError.status !== 408 && apiError.status !== 409 && apiError.status !== 429;
+        if (
+          isClientError ||
+          apiError instanceof Anthropic.AuthenticationError ||
+          lastError.message.includes("401") ||
+          lastError.message.includes("authentication")
+        ) {
           break;
+        }
+
+        // Rate limits and server errors: wait before the next attempt (the
+        // SDK has already done its own short retries by this point).
+        if (isRetryableApiError(apiError)) {
+          backoffMs = 2_000 * 2 ** attempt;
         }
 
         continue; // retry

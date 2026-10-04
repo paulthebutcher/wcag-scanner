@@ -132,7 +132,7 @@ You are evaluating alt text quality for images. WCAG 1.1.1 requires:
 
 Common failure types: ${ALT_TEXT_FAILURE_MODES.join(", ")}
 
-You will receive: the <img> element HTML, its alt attribute value, surrounding context, and a screenshot of the image.`,
+You will receive: the <img> element HTML, its alt attribute value, surrounding context, and (when it could be retrieved) the image itself.`,
   outputSchema: ELEMENT_EVAL_OUTPUT_SCHEMA,
 };
 
@@ -301,7 +301,14 @@ export function buildAltTextUserPrompt(params: {
   elementHtml: string;
   altText: string;
   surroundingContext: string;
+  /** Whether the image itself accompanies the prompt */
+  imageAttached?: boolean;
 }): string {
+  const imageNote = params.imageAttached === undefined
+    ? ""
+    : params.imageAttached
+      ? "\n\nThe image is attached. Compare the alt text with what the image shows."
+      : "\n\nNo image is attached. Judge from the HTML and context only; if the verdict depends on what the image shows, return needs_review instead of fail.";
   return `Evaluate this image's alt text for WCAG 1.1.1 compliance.
 
 Element HTML:
@@ -310,7 +317,7 @@ ${params.elementHtml}
 Alt text: "${params.altText}"
 
 Surrounding context:
-${params.surroundingContext}`;
+${params.surroundingContext}${imageNote}`;
 }
 
 export function buildLinkTextUserPrompt(params: {

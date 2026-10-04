@@ -55,6 +55,7 @@ export function createScanCommand(): Command {
     .option("--tiers <list>", "Comma-separated check tiers to run", "1,2,3,4,5")
     .option("--cms-samples <n>", "CMS collection pages to sample per collection", "5")
     .option("--data-dir <path>", "Data directory for results", "./wcag-data")
+    .option("--page-concurrency <n>", "Pages loaded and tested in parallel", "4")
     .option(
       "--include-noindex",
       "Also scan pages marked noindex (meta robots / X-Robots-Tag). Default: exclude them from the scan.",
@@ -70,6 +71,12 @@ export function createScanCommand(): Command {
 
       if (isNaN(maxPages) || maxPages <= 0) {
         console.error("Error: --max-pages must be a positive integer");
+        process.exitCode = 1;
+        return;
+      }
+      const pageConcurrency = parseInt(opts["pageConcurrency"], 10);
+      if (isNaN(pageConcurrency) || pageConcurrency <= 0) {
+        console.error("Error: --page-concurrency must be a positive integer");
         process.exitCode = 1;
         return;
       }
@@ -94,6 +101,7 @@ export function createScanCommand(): Command {
           dataDir,
           maxPages,
           cmsSamples,
+          pageConcurrency,
           tiers,
           reporter,
           includeNoindex: "includeNoindex" in opts,

@@ -1,4 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// Keep the developer's local .env out of these tests.
+vi.mock("dotenv", () => ({ config: () => ({}) }));
+
 import { loadConfig } from "../../src/config.js";
 
 /**

@@ -21,6 +21,7 @@ import {
   getCollectionPrefix,
   detectCMSCollections,
   sampleCollectionUrls,
+  templateSignature,
   crawl,
 } from "../../src/core/crawler.js";
 import { LocalFileStore } from "../../src/store/files.js";
@@ -1199,4 +1200,104 @@ describe("crawl (noindex filter)", () => {
     expect(urls).toContain("/private-header");
     expect(excludedByNoindex).toHaveLength(0);
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Template-based CMS detection
+// ---------------------------------------------------------------------------
+
+describe("templateSignature", () => {
+  it("uses data-wf-page when present", () => {
+    const a = templateSignature('<html data-wf-page="abc123" lang="en"><body></body></html>', "x");
+    const b = templateSignature('<html data-wf-page="abc123"><body></body></html>', "y");
+    const c = templateSignature('<html data-wf-page="zzz999"><body></body></html>', "x");
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("falls back to the structural skeleton", () => {
+    const html = "<html><body></body></html>";
+    expect(templateSignature(html, "1:main.|2:h1.")).toBe(templateSignature(html, "1:main.|2:h1."));
+    expect(templateSignature(html, "1:main.|2:h1.")).not.toBe(templateSignature(html, "1:main.|2:table."));
+  });
+});
+
+describe("crawl (static sections are not sampled)", () => {
+  let server: Server;
+  let port: number;
+  let tmpDir: string;
+  let browser: Browser;
+
+  beforeAll(async () => {
+    const pages: Record<string, string> = {};
+    // /platform/* pages each have their own layout; /blog/* share a template.
+    const platformBodies = [
+      "<main><h1>A</h1><table><tr><td>x</td></tr></table></main>",
+      "<section class='hero'><h1>B</h1></section><ul><li>x</li></ul>",
+      "<article><h1>C</h1><form><input name='q'></form></article>",
+      "<div class='grid'><h1>D</h1><img src='x.png' alt='x'></div>",
+      "<header><h1>E</h1></header><aside><p>x</p></aside>",
+      "<main class='wide'><h2>F</h2><blockquote>x</blockquote></main>",
+    ];
+    const platformLinks = platformBodies.map((_, i) => `<a href="/platform/p${i + 1}">P${i + 1}</a>`).join("");
+    const blogLinks = Array.from({ length: 8 }, (_, i) => `<a href="/blog/post-${i + 1}">Post ${i + 1}</a>`).join("");
+    pages["/"] = `<!DOCTYPE html><html><head><title>Root</title></head><body>${platformLinks}${blogLinks}${platformLinks}</body></html>`;
+    platformBodies.forEach((body, i) => {
+      pages[`/platform/p${i + 1}`] = `<!DOCTYPE html><html><head><title>P${i + 1}</title></head><body>${body}</body></html>`;
+    });
+    for (let i = 1; i <= 8; i++) {
+      pages[`/blog/post-${i}`] = `<!DOCTYPE html><html><head><title>Post ${i}</title></head><body><article class="post"><h1>Post ${i}</h1><p>Body</p></article></body></html>`;
+    }
+
+    server = createServer((req, res) => {
+      const url = req.url ?? "/";
+      if (pages[url]) {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(pages[url]);
+      } else {
+        res.writeHead(404);
+        res.end("Not Found");
+      }
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const addr = server.address();
+    port = typeof addr === "object" && addr ? addr.port : 0;
+    tmpDir = mkdtempSync(join(tmpdir(), "wcag-static-test-"));
+    browser = await chromium.launch({ headless: true });
+  }, 30_000);
+
+  afterAll(async () => {
+    await browser?.close();
+    server?.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 15_000);
+
+  it("crawls every page of a static section but samples a shared-template collection", async () => {
+    const hookUrls: string[] = [];
+    const { snapshots } = await crawl(
+      `http://127.0.0.1:${port}/`,
+      {
+        scanSessionId: "test-static",
+        fileStore: new LocalFileStore(tmpDir),
+        maxPages: 100,
+        timeoutMs: 10_000,
+        cmsSamples: 3,
+        onPage: async (_page, snapshot) => {
+          hookUrls.push(snapshot.url);
+        },
+      },
+      browser,
+    );
+
+    const paths = snapshots.map((s) => new URL(s.url).pathname);
+    expect(paths.filter((p) => p.startsWith("/platform/")).sort()).toEqual(
+      ["/platform/p1", "/platform/p2", "/platform/p3", "/platform/p4", "/platform/p5", "/platform/p6"],
+    );
+    expect(paths.filter((p) => p.startsWith("/blog/")).length).toBe(3);
+    // No URL is captured twice, and the hook sees every captured page
+    expect(new Set(paths).size).toBe(paths.length);
+    expect(hookUrls.sort()).toEqual(snapshots.map((s) => s.url).sort());
+  }, 60_000);
 });
