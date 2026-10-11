@@ -39,6 +39,21 @@ function makePage(
 // ---------------------------------------------------------------------------
 
 describe("deduplicateBehavioralResults", () => {
+  it("persists the URLs of every page a deduplicated result was folded from", () => {
+    const pages = [
+      makePage("snap-1", "https://example.com/", [makeResult()]),
+      makePage("snap-2", "https://example.com/about", [makeResult()]),
+      makePage("snap-3", "https://example.com/contact", [makeResult()]),
+    ];
+
+    const result = deduplicateBehavioralResults(pages);
+
+    expect(result).toHaveLength(1);
+    const mv = result[0].results[0].measured_values!;
+    expect(mv.also_found_on_pages).toBe(2);
+    expect(mv.also_found_on_urls).toEqual(["https://example.com/about", "https://example.com/contact"]);
+  });
+
   it("returns pages unchanged when there are no duplicates", () => {
     const pages = [
       makePage("snap-1", "https://example.com/", [

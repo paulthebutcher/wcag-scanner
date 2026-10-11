@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import type Database from "better-sqlite3";
 import type { ProgressReporter } from "../core/progress.js";
 import { renderHtmlReport, type RenderOptions } from "./templates/html-template.js";
+import { loadCoverage } from "../core/coverage.js";
 import {
   queryFindings,
   groupFindingsByHash,
@@ -190,6 +191,7 @@ export async function generatePdfReport(
     impactDescriptions: options.impactDescriptions,
     executiveSummaryHtml: options.executiveSummaryHtml,
     dataDir: options.dataDir,
+    coverage: options.dataDir ? loadCoverage(options.dataDir, scanId) : undefined,
   };
   const html = renderHtmlReport(data, renderOpts);
 

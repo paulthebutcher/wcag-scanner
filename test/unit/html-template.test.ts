@@ -765,3 +765,36 @@ describe("renderHtmlReport group remediation", () => {
     expect(html).toContain("document.documentElement.lang");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Deduplicated findings: unique elements and page occurrences
+// ---------------------------------------------------------------------------
+
+describe("deduplicated finding counts", () => {
+  it("shows unique elements and page occurrences, and lists folded pages", () => {
+    const footer = makeFinding({
+      wcag_criterion: "2.4.7",
+      evidence: makeEvidence({
+        detected_by: "playwright",
+        measured_values: {
+          failure_type: "no_visible_focus_indicator",
+          also_found_on_pages: 2,
+          also_found_on_urls: ["https://example.com/about", "https://example.com/contact"],
+        },
+      }),
+    });
+    const group = makeGroup({ criterion: "2.4.7", failureType: "no_visible_focus_indicator", instanceCount: 2, findings: [footer, makeFinding({ wcag_criterion: "2.4.7" })] });
+    const html = renderHtmlReport(makeReportData({ groups: [group] }), {
+      pageUrlMap: new Map([["snap-1", "https://example.com/"]]),
+    });
+    expect(html).toContain("2 unique elements &middot; 4 page occurrences across 3 pages");
+    expect(html).toContain("<code>/about</code>");
+    expect(html).toContain("<code>/contact</code>");
+  });
+
+  it("renders the Coverage section when coverage is passed", () => {
+    const html = renderHtmlReport(makeReportData(), { coverage: null });
+    expect(html).toContain('id="coverage"');
+    expect(renderHtmlReport(makeReportData())).not.toContain('id="coverage"');
+  });
+});

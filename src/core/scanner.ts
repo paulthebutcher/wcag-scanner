@@ -30,6 +30,7 @@ import {
 import { LocalFileStore } from "../store/files.js";
 import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
+import { CoverageRecorder, writeCoverage, type ScanCoverage } from "./coverage.js";
 import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
@@ -104,6 +105,8 @@ export interface ScanResult {
   pageSnapshots: PageSnapshot[];
   /** Pages skipped because they're hidden from SERPs (meta robots / X-Robots-Tag). */
   excludedByNoindex: Array<{ url: string; source: string }>;
+  /** Per-check, per-page outcome (also written to <dataDir>/<scanId>/coverage.json) */
+  coverage: ScanCoverage;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +214,12 @@ export interface DedupedPageEntry {
   fullScreenshot: Buffer;
 }
 
+/** Tier 2 check ids, as recorded in coverage. */
+export const BEHAVIORAL_CHECKS = ["keyboard", "focus-visible", "focus-order", "keyboard-trap", "skip-nav", "modal"] as const;
+
+/** Tier 4 per-page check ids (form discovery is recorded separately). */
+export const FORM_PAGE_CHECKS = ["high-risk-forms", "form-submission", "error-messages", "input-purpose", "on-input"] as const;
+
 /** Criteria eligible for cross-page deduplication. */
 export const DEDUP_CRITERIA = new Set(["2.4.7", "2.4.3", "2.1.1", "2.4.1"]);
 
@@ -280,6 +289,7 @@ export function deduplicateBehavioralResults(
           measured_values: {
             ...(result.measured_values ?? {}),
             also_found_on_pages: entry.otherUrls.length,
+            also_found_on_urls: [...entry.otherUrls],
             dedup_note: `Also found on ${entry.otherUrls.length} other page${entry.otherUrls.length !== 1 ? "s" : ""}`,
           },
         };
@@ -743,6 +753,8 @@ export async function scan(
   const allFindings: Finding[] = [];
   const allCriterionResults: CriterionResult[] = [];
   let pageSnapshots: PageSnapshot[] = [];
+  // Per-check, per-page outcomes: ran | failed (error) | skipped (reason)
+  const coverage = new CoverageRecorder();
   let excludedByNoindex: Array<{ url: string; source: string }> = [];
 
   try {
@@ -772,9 +784,11 @@ export async function scan(
             try {
               const output = await runAxeChecks(page, scanId);
               axeByPage.set(snapshot.id, { output, screenshot });
+              coverage.ran("axe-core", 1, snapshot.url);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("axe", `Failed for ${snapshot.url}: ${msg}`);
+              coverage.failed("axe-core", 1, snapshot.url, err);
             } finally {
               endAxe();
             }
@@ -787,6 +801,7 @@ export async function scan(
     endCrawl();
     pageSnapshots = crawlResult.snapshots;
     excludedByNoindex = crawlResult.excludedByNoindex;
+    for (const f of crawlResult.failedPages) coverage.crawlFailure(f.url, f.error);
 
     // Persist excluded-page list on the scan session so the report can
     // surface it after the scan completes.
@@ -897,6 +912,7 @@ export async function scan(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("axe", `Failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("axe-core", 1, snapshot.url, err);
           }
         }
         endAxeProcess();
@@ -922,6 +938,10 @@ export async function scan(
         const runner = getRunner();
         if (!runner) {
           reporter.warn("semantic", "Skipping Tier 3: no ANTHROPIC_API_KEY available");
+          const allUrls = pageSnapshots.map((p) => p.url);
+          for (const check of TIER3_SEMANTIC_CHECKS) {
+            coverage.recordAll(check, 3, allUrls, "skipped", "no ANTHROPIC_API_KEY");
+          }
         }
 
         if (runner) {
@@ -940,6 +960,7 @@ export async function scan(
           // runner's semaphore bounds the number of API calls in flight.
           const guarded = async (
             label: string,
+            check: string,
             snapshot: PageSnapshot,
             criterion: string,
             run: () => Promise<CheckResult[]> | CheckResult[],
@@ -947,10 +968,12 @@ export async function scan(
             try {
               const results = await run();
               if (results.length > 0) semanticViolationCriteria.add(criterion);
+              coverage.ran(check, 3, snapshot.url);
               return results;
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("semantic", `${label} failed for ${snapshot.url}: ${msg}`);
+              coverage.failed(check, 3, snapshot.url, err);
               return [];
             }
           };
@@ -967,22 +990,22 @@ export async function scan(
 
             const groups = await Promise.all([
               // 3a: Alt text quality (the image itself is sent when it can be fetched)
-              guarded("Alt text checks", snapshot, "1.1.1", () => runAltTextChecks(dom, runner, {
+              guarded("Alt text checks", "alt-text", snapshot, "1.1.1", () => runAltTextChecks(dom, runner, {
                 axeFlaggedSelectors: axeFlagged,
                 imageProvider: (img) => imageFetcher(img.src, snapshot.url),
               })),
               // 3b: Link text quality
-              guarded("Link text checks", snapshot, "2.4.4", () => runLinkTextChecks(dom, runner)),
+              guarded("Link text checks", "link-text", snapshot, "2.4.4", () => runLinkTextChecks(dom, runner)),
               // 3c: Heading structure
-              guarded("Heading checks", snapshot, "1.3.1", () => runHeadingChecks(dom, snapshot.title, runner)),
+              guarded("Heading checks", "headings", snapshot, "1.3.1", () => runHeadingChecks(dom, snapshot.title, runner)),
               // 3d: Landmark labels (structural, no Claude needed)
-              guarded("Landmark label checks", snapshot, "1.3.1", () => runLandmarkLabelChecks(dom)),
+              guarded("Landmark label checks", "landmark-labels", snapshot, "1.3.1", () => runLandmarkLabelChecks(dom)),
               // 3e: Widget ARIA roles
-              guarded("Widget ARIA checks", snapshot, "4.1.2", () => runWidgetAriaChecks(dom, runner)),
+              guarded("Widget ARIA checks", "widget-aria", snapshot, "4.1.2", () => runWidgetAriaChecks(dom, runner)),
               // 3f: Table structure (structural, no Claude needed)
-              guarded("Table structure checks", snapshot, "1.3.1", () => runTableStructureChecks(dom)),
+              guarded("Table structure checks", "table-structure", snapshot, "1.3.1", () => runTableStructureChecks(dom)),
               // 3g: Duplicate link text (structural, no Claude needed)
-              guarded("Duplicate link checks", snapshot, "2.4.4", () => runDuplicateLinkChecks(dom, snapshot.url)),
+              guarded("Duplicate link checks", "duplicate-links", snapshot, "2.4.4", () => runDuplicateLinkChecks(dom, snapshot.url)),
             ]);
 
             const pageResults = groups.flat();
@@ -1029,6 +1052,7 @@ export async function scan(
                 result.measured_values = {
                   ...result.measured_values,
                   also_found_on_pages: info.otherUrls.length,
+                  also_found_on_urls: [...info.otherUrls],
                   dedup_note: `Also found on ${info.otherUrls.length} other page${info.otherUrls.length !== 1 ? "s" : ""}`,
                 };
               }
@@ -1073,9 +1097,14 @@ export async function scan(
 
           // 3d: Consistent navigation (cross-page comparison)
           semanticAttemptedCriteria.add("3.2.3");
+          const navUrls = pageSnapshots.map((p) => p.url);
+          if (pageSnapshots.length <= 1) {
+            coverage.recordAll("consistent-nav", 3, navUrls, "skipped", "needs 2 or more pages to compare");
+          }
           if (pageSnapshots.length > 1) {
             try {
               const navResults = await runConsistentNavChecks(pageSnapshots, runner);
+              coverage.recordAll("consistent-nav", 3, navUrls, "ran");
               if (navResults.length > 0) {
                 const findings = await processCheckResults(navResults, {
                   scanId,
@@ -1097,6 +1126,7 @@ export async function scan(
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("semantic", `Consistent nav checks failed: ${msg}`);
+              coverage.recordAll("consistent-nav", 3, navUrls, "failed", msg);
             }
           }
 
@@ -1154,11 +1184,13 @@ export async function scan(
             try {
               const { results: keyboardResults, tabSequence } = await runKeyboardChecks(page);
               pageResults.push(...keyboardResults);
+              coverage.ran("keyboard", 2, snapshot.url);
 
               // 2b: Focus visible (needs tab sequence from keyboard check)
               try {
                 const focusResults = await runFocusVisibleChecks(page, tabSequence);
                 pageResults.push(...focusResults);
+                coverage.ran("focus-visible", 2, snapshot.url);
                 if (focusResults.length === 0) {
                   const passCr = makeCriterionResult(scanId, "2.4.7", "passed", "playwright",
                     "All focused elements have visible focus indicators");
@@ -1168,12 +1200,14 @@ export async function scan(
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 reporter.warn("behavioral", `Focus visible failed for ${snapshot.url}: ${msg}`);
+                coverage.failed("focus-visible", 2, snapshot.url, err);
               }
 
               // 2c: Focus order (needs tab sequence)
               try {
                 const orderResults = runFocusOrderChecks(tabSequence);
                 pageResults.push(...orderResults);
+                coverage.ran("focus-order", 2, snapshot.url);
                 if (orderResults.length === 0) {
                   const passCr = makeCriterionResult(scanId, "2.4.3", "passed", "playwright",
                     "Focus order follows visual layout sequence");
@@ -1183,6 +1217,7 @@ export async function scan(
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 reporter.warn("behavioral", `Focus order failed for ${snapshot.url}: ${msg}`);
+                coverage.failed("focus-order", 2, snapshot.url, err);
               }
 
               // Create passing criterion results for keyboard if no violations
@@ -1195,12 +1230,17 @@ export async function scan(
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("behavioral", `Keyboard checks failed for ${snapshot.url}: ${msg}`);
+              coverage.failed("keyboard", 2, snapshot.url, err);
+              // Focus visibility and order are measured on the tab sequence
+              coverage.skipped("focus-visible", 2, snapshot.url, "keyboard check failed (no tab sequence)");
+              coverage.skipped("focus-order", 2, snapshot.url, "keyboard check failed (no tab sequence)");
             }
 
             // 2d: Keyboard traps
             try {
               const trapResults = await runTrapChecks(page);
               pageResults.push(...trapResults);
+              coverage.ran("keyboard-trap", 2, snapshot.url);
               if (trapResults.length === 0) {
                 const passCr = makeCriterionResult(scanId, "2.1.2", "passed", "playwright",
                   "No keyboard traps detected");
@@ -1210,12 +1250,14 @@ export async function scan(
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("behavioral", `Trap checks failed for ${snapshot.url}: ${msg}`);
+              coverage.failed("keyboard-trap", 2, snapshot.url, err);
             }
 
             // 2e: Skip navigation
             try {
               const skipResults = await runSkipNavChecks(page);
               pageResults.push(...skipResults);
+              coverage.ran("skip-nav", 2, snapshot.url);
               if (skipResults.length === 0) {
                 const passCr = makeCriterionResult(scanId, "2.4.1", "passed", "playwright",
                   "Working skip navigation link found");
@@ -1225,15 +1267,18 @@ export async function scan(
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("behavioral", `Skip nav checks failed for ${snapshot.url}: ${msg}`);
+              coverage.failed("skip-nav", 2, snapshot.url, err);
             }
 
             // 2f: Modal focus management
             try {
               const { results: modalResults } = await runModalChecks(page);
               pageResults.push(...modalResults);
+              coverage.ran("modal", 2, snapshot.url);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               reporter.warn("behavioral", `Modal checks failed for ${snapshot.url}: ${msg}`);
+              coverage.failed("modal", 2, snapshot.url, err);
             }
 
             rawBehavioralCount += pageResults.length;
@@ -1251,6 +1296,10 @@ export async function scan(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("behavioral", `Failed for ${snapshot.url}: ${msg}`);
+            // The page itself failed (load or screenshot): no behavioral check ran
+            for (const check of BEHAVIORAL_CHECKS) {
+              coverage.failed(check, 2, snapshot.url, `page load failed: ${msg}`);
+            }
           } finally {
             await page.close().catch(() => {});
           }
@@ -1314,6 +1363,7 @@ export async function scan(
           try {
             const forms = discoverForms(snapshot);
             formsByPage.set(snapshot.id, forms);
+            coverage.ran("form-discovery", 4, snapshot.url);
             totalFormsFound += forms.length;
             for (const form of forms) {
               const fp = formFingerprint(form);
@@ -1326,6 +1376,7 @@ export async function scan(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("forms", `Form discovery failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("form-discovery", 4, snapshot.url, err);
           }
         }
         if (totalFormsFound > 0) {
@@ -1340,6 +1391,7 @@ export async function scan(
             measured_values: {
               ...(r.measured_values ?? {}),
               also_found_on_pages: otherUrls.length,
+              also_found_on_urls: [...otherUrls],
               dedup_note: `Same form also found on ${otherUrls.length} other page${otherUrls.length !== 1 ? "s" : ""}`,
             },
           }));
@@ -1356,16 +1408,31 @@ export async function scan(
               return true;
             });
 
-            if (forms.length === 0) continue;
+            if (forms.length === 0) {
+              const pageForms = formsByPage.get(snapshot.id);
+              const reason = pageForms === undefined
+                ? "form discovery failed"
+                : pageForms.length === 0
+                  ? "no forms on page"
+                  : "same form already tested on another page";
+              for (const check of FORM_PAGE_CHECKS) coverage.skipped(check, 4, snapshot.url, reason);
+              continue;
+            }
             reporter.update("forms", `${snapshot.url}: testing ${forms.length} form(s)`);
 
             // 4b: High-risk form evaluation (LLM)
+            if (!formRunner) {
+              for (const check of ["high-risk-forms", "error-messages", "input-purpose"]) {
+                coverage.skipped(check, 4, snapshot.url, "no ANTHROPIC_API_KEY");
+              }
+            }
             if (formRunner) {
               try {
                 const highRiskResults = (await evaluateHighRiskForms(forms, formRunner)).flatMap((r) => {
                   const form = forms.find((f) => f.selector === r.element_selector);
                   return form ? annotateShared([r], form) : [r];
                 });
+                coverage.ran("high-risk-forms", 4, snapshot.url);
                 if (highRiskResults.length > 0) {
                   formViolationCriteria.add("3.3.4");
                   const findings = await processCheckResults(highRiskResults, {
@@ -1383,6 +1450,7 @@ export async function scan(
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 reporter.warn("forms", `High-risk evaluation failed for ${snapshot.url}: ${msg}`);
+                coverage.failed("high-risk-forms", 4, snapshot.url, err);
               }
             }
 
@@ -1405,6 +1473,9 @@ export async function scan(
                     formsExercised++;
                   } else {
                     reporter.warn("forms", `${snapshot.url}: ${form.selector} has no visible fields at page load — submission and on-input tests skipped`);
+                    for (const check of ["form-submission", "on-input", "error-messages"]) {
+                      coverage.skipped(check, 4, snapshot.url, "no visible fields at page load");
+                    }
                   }
 
                   // Test form submission
@@ -1413,6 +1484,10 @@ export async function scan(
                     : { states: [], results: [] };
                   const submissionResults = annotateShared(rawSubmissionResults, form);
                   allSubmissionStates.push(...states);
+                  if (interactive) coverage.ran("form-submission", 4, snapshot.url);
+                  if (interactive && formRunner && states.length === 0) {
+                    coverage.skipped("error-messages", 4, snapshot.url, "submission produced no error states");
+                  }
 
                   if (submissionResults.length > 0) {
                     for (const sr of submissionResults) formViolationCriteria.add(sr.wcag_criterion);
@@ -1433,6 +1508,7 @@ export async function scan(
                   if (formRunner && states.length > 0) {
                     try {
                       const errorResults = annotateShared(await evaluateErrorMessages(states, formRunner), form);
+                      coverage.ran("error-messages", 4, snapshot.url);
                       if (errorResults.length > 0) {
                         for (const er of errorResults) formViolationCriteria.add(er.wcag_criterion);
                         const findings = await processCheckResults(errorResults, {
@@ -1450,6 +1526,7 @@ export async function scan(
                     } catch (err) {
                       const msg = err instanceof Error ? err.message : String(err);
                       reporter.warn("forms", `Error evaluation failed for ${snapshot.url}: ${msg}`);
+                      coverage.failed("error-messages", 4, snapshot.url, err);
                     }
                   }
 
@@ -1457,6 +1534,7 @@ export async function scan(
                   if (formRunner) {
                     try {
                       const purposeResults = annotateShared(await evaluateInputPurpose(form, formRunner), form);
+                      coverage.ran("input-purpose", 4, snapshot.url);
                       if (purposeResults.length > 0) {
                         formViolationCriteria.add("1.3.5");
                         const findings = await processCheckResults(purposeResults, {
@@ -1474,12 +1552,14 @@ export async function scan(
                     } catch (err) {
                       const msg = err instanceof Error ? err.message : String(err);
                       reporter.warn("forms", `Input purpose check failed for ${snapshot.url}: ${msg}`);
+                      coverage.failed("input-purpose", 4, snapshot.url, err);
                     }
                   }
 
                   // On-input state changes (3.2.2)
                   if (interactive) try {
                     const onInputResults = annotateShared((await checkOnInput(page, form)).results, form);
+                    coverage.ran("on-input", 4, snapshot.url);
                     if (onInputResults.length > 0) {
                       formViolationCriteria.add("3.2.2");
                       const findings = await processCheckResults(onInputResults, {
@@ -1497,10 +1577,12 @@ export async function scan(
                   } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     reporter.warn("forms", `On-input check failed for ${snapshot.url}: ${msg}`);
+                    coverage.failed("on-input", 4, snapshot.url, err);
                   }
                 } catch (err) {
                   const msg = err instanceof Error ? err.message : String(err);
                   reporter.warn("forms", `Form submission failed for ${snapshot.url}: ${msg}`);
+                  coverage.failed("form-submission", 4, snapshot.url, err);
                 } finally {
                   await page.close();
                 }
@@ -1511,13 +1593,19 @@ export async function scan(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("forms", `Form discovery failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("form-submission", 4, snapshot.url, err);
           }
         }
 
         // Error quality indicators from submission states (Tier 5 cross-reference)
+        const allPageUrls = pageSnapshots.map((p) => p.url);
+        if (allSubmissionStates.length === 0) {
+          coverage.recordAll("error-quality", 4, allPageUrls, "skipped", "no form submission states on any page");
+        }
         if (allSubmissionStates.length > 0) {
           try {
             const qualityResults = surfaceErrorQualityFindings(allSubmissionStates);
+            coverage.recordAll("error-quality", 4, allPageUrls, "ran");
             if (qualityResults.length > 0) {
               const findings = await processCheckResults(qualityResults, {
                 scanId,
@@ -1534,6 +1622,7 @@ export async function scan(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("forms", `Error quality check failed: ${msg}`);
+            coverage.recordAll("error-quality", 4, allPageUrls, "failed", msg);
           }
         }
 
@@ -1585,41 +1674,49 @@ export async function scan(
           // 5a: Pause, stop, hide (2.2.2)
           try {
             const pshResults = checkPauseStopHide(snapshot);
+            coverage.ran("pause-stop-hide", 5, snapshot.url);
             pageResults.push(...pshResults);
             if (pshResults.length > 0) indicatorViolationCriteria.add("2.2.2");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Pause/stop/hide failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("pause-stop-hide", 5, snapshot.url, err);
           }
 
           // 5b: Three flashes (2.3.1)
           try {
             const flashResults = checkThreeFlashes(snapshot);
+            coverage.ran("three-flashes", 5, snapshot.url);
             pageResults.push(...flashResults);
             if (flashResults.length > 0) indicatorViolationCriteria.add("2.3.1");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Three flashes check failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("three-flashes", 5, snapshot.url, err);
           }
 
           // 5c: Multiple ways (2.4.5)
           try {
             const mwResults = checkMultipleWays(snapshot);
+            coverage.ran("multiple-ways", 5, snapshot.url);
             pageResults.push(...mwResults);
             if (mwResults.length > 0) indicatorViolationCriteria.add("2.4.5");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Multiple ways check failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("multiple-ways", 5, snapshot.url, err);
           }
 
           // 5d: Motion actuation (2.5.4)
           try {
             const motionResults = checkMotionActuation(snapshot);
+            coverage.ran("motion-actuation", 5, snapshot.url);
             pageResults.push(...motionResults);
             if (motionResults.length > 0) indicatorViolationCriteria.add("2.5.4");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             reporter.warn("indicators", `Motion actuation check failed for ${snapshot.url}: ${msg}`);
+            coverage.failed("motion-actuation", 5, snapshot.url, err);
           }
 
           // Process indicator results
@@ -1727,6 +1824,15 @@ export async function scan(
     scanSession.completed_at = new Date().toISOString();
     updateScanSession(db, scanId, { completed_at: scanSession.completed_at });
 
+    // --- Phase 10b: Coverage ----------------------------------------------------
+    const coverageData = coverage.toJSON(scanId, pageSnapshots.map((p) => p.url));
+    try {
+      writeCoverage(options.dataDir, coverageData);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reporter.warn("coverage", `Could not write coverage: ${msg}`);
+    }
+
     // --- Phase 10: Verbose findings dump --------------------------------------
     // Always-on working file: per-finding markdown + aggregate + JSONL.
     // This includes ALL findings (no filtering) so the user can audit what
@@ -1782,6 +1888,7 @@ export async function scan(
       criterionResults: reconciledResults,
       pageSnapshots,
       excludedByNoindex,
+      coverage: coverageData,
     };
   } catch (err) {
     // Save partial results on non-fatal errors
@@ -1792,6 +1899,7 @@ export async function scan(
         const summary = computeSummary(scanId, allFindings, allCriterionResults);
         upsertScanSummary(db, summary);
       }
+      writeCoverage(options.dataDir, coverage.toJSON(scanId, pageSnapshots.map((p) => p.url)));
     } catch {
       // If even partial save fails, just continue to rethrow
     }

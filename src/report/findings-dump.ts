@@ -3,6 +3,9 @@ import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { Finding, ConfidenceTier, FalsePositiveRisk, Severity, DetectedBy } from "../types.js";
 import { listFindingsByScan, getScanSession, getPageSnapshot } from "../store/db.js";
+import { loadCoverage, type ScanCoverage } from "../core/coverage.js";
+import { renderCoverageMarkdown } from "./coverage-report.js";
+import { isDeduplicated, pageOccurrences, findingPageUrls } from "./occurrences.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -243,6 +246,8 @@ function renderFindingJsonl(tf: TriagedFinding): string {
     element_selector: finding.evidence.element_selector,
     element_html: finding.evidence.element_html,
     failure_type: finding.evidence.measured_values?.failure_type ?? null,
+    page_occurrences: pageOccurrences(finding),
+    also_found_on_urls: findingPageUrls(finding, pageUrl).urls.filter((u) => u !== pageUrl),
     reasoning: finding.analysis.reasoning,
     impact: finding.analysis.impact_description,
     llm_input: finding.analysis.llm_input,
@@ -256,10 +261,45 @@ function renderFindingJsonl(tf: TriagedFinding): string {
 // Aggregate markdown
 // ---------------------------------------------------------------------------
 
+/**
+ * Deduplicated findings (one stored element standing for several pages):
+ * unique elements alongside page occurrences, per criterion and failure
+ * type, so they can be compared with axe counts (one per page).
+ */
+function renderOccurrenceTable(triaged: TriagedFinding[]): string[] {
+  const rows = new Map<string, { unique: number; occurrences: number }>();
+  const deduped = new Set<string>();
+  for (const tf of triaged) {
+    const ft = (tf.finding.evidence.measured_values?.failure_type as string) ?? "(none)";
+    const key = `${tf.finding.wcag_criterion} / ${ft}`;
+    const row = rows.get(key) ?? { unique: 0, occurrences: 0 };
+    row.unique += 1;
+    row.occurrences += pageOccurrences(tf.finding);
+    rows.set(key, row);
+    if (isDeduplicated(tf.finding)) deduped.add(key);
+  }
+  if (deduped.size === 0) return [];
+  const lines = [
+    "## Deduplicated findings",
+    "",
+    "Shared elements (navigation, footer, template components) are stored once with the pages they also appear on. Page occurrences count every page, the way axe findings are counted.",
+    "",
+    "| Criterion / failure type | Unique elements | Page occurrences |",
+    "|---|---|---|",
+  ];
+  for (const key of Array.from(deduped).sort()) {
+    const r = rows.get(key)!;
+    lines.push(`| ${key} | ${r.unique} | ${r.occurrences} |`);
+  }
+  lines.push("");
+  return lines;
+}
+
 function renderAggregateMarkdown(
   scanId: string,
   scanUrl: string,
   triaged: TriagedFinding[],
+  coverage: ScanCoverage | null = null,
 ): string {
   const buckets = new Map<TriageBucket, TriagedFinding[]>();
   for (const tf of triaged) {
@@ -279,6 +319,8 @@ function renderAggregateMarkdown(
     lines.push(`| ${BUCKET_LABELS[bucket]} | ${buckets.get(bucket)?.length ?? 0} |`);
   }
   lines.push("");
+  lines.push(renderCoverageMarkdown(coverage));
+  lines.push(...renderOccurrenceTable(triaged));
 
   for (const bucket of ["fix_now", "verify_manually", "possibly_noisy", "advisory"] as TriageBucket[]) {
     const items = buckets.get(bucket) ?? [];
@@ -290,6 +332,9 @@ function renderAggregateMarkdown(
       const ft = (m.failure_type as string) ?? "(none)";
       lines.push(`### ${tf.finding.id} — WCAG ${tf.finding.wcag_criterion} / ${ft}`);
       lines.push(`- page: ${tf.pageUrl}`);
+      if (isDeduplicated(tf.finding)) {
+        lines.push(`- page occurrences: ${pageOccurrences(tf.finding)} (stored once; same element on other pages)`);
+      }
       lines.push(`- severity: ${tf.finding.severity}`);
       lines.push(`- detected_by: ${tf.finding.evidence.detected_by}, tier: ${tf.finding.confidence.tier}, fp: ${tf.finding.confidence.false_positive_risk}`);
       lines.push(`- selector: \`${tf.finding.evidence.element_selector}\``);
@@ -359,7 +404,7 @@ export function dumpFindings(
 
   // Aggregate markdown
   const aggregatePath = join(scanDir, "findings.md");
-  writeFileSync(aggregatePath, renderAggregateMarkdown(scanId, session.url, triaged), "utf8");
+  writeFileSync(aggregatePath, renderAggregateMarkdown(scanId, session.url, triaged, loadCoverage(dataDir, scanId)), "utf8");
 
   // JSONL
   const jsonlPath = join(scanDir, "findings.jsonl");

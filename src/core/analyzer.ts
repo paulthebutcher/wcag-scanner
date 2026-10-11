@@ -215,12 +215,12 @@ function generateRuleBasedReasoning(checkResult: CheckResult): string {
 
       default:
         return `Playwright behavioral test detected: ${type ?? "unknown issue"}. ` +
-          `Measured values: ${JSON.stringify(measured)}.`;
+          `Measured values: ${JSON.stringify(withoutPageLists(measured))}.`;
     }
   }
 
   // Generic fallback
-  return `Detected by ${checkResult.detected_by}. ${JSON.stringify(measured)}`;
+  return `Detected by ${checkResult.detected_by}. ${JSON.stringify(withoutPageLists(measured))}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,4 +350,10 @@ export function analyzeBatch(checkResults: CheckResult[]): Analysis[] {
       };
     }
   });
+}
+
+/** Measured values without the per-page URL lists kept for deduplicated findings. */
+function withoutPageLists(measured: Record<string, unknown>): Record<string, unknown> {
+  const { also_found_on_urls: _urls, ...rest } = measured;
+  return rest;
 }

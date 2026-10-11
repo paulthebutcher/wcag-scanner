@@ -56,6 +56,8 @@ export interface ExcludedPage {
 export interface CrawlResult {
   snapshots: PageSnapshot[];
   excludedByNoindex: ExcludedPage[];
+  /** URLs that could not be loaded (timeouts, network errors) */
+  failedPages: Array<{ url: string; error: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +579,7 @@ export async function crawl(
 
   const snapshots: PageSnapshot[] = [];
   const excludedByNoindex: ExcludedPage[] = [];
+  const failedPages: Array<{ url: string; error: string }> = [];
   const includeNoindex = options.includeNoindex ?? false;
 
   const ownBrowser = !browser;
@@ -747,6 +750,7 @@ export async function crawl(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       options.reporter?.warn("crawl", `Skipping ${url}: ${msg}`);
+      failedPages.push({ url, error: msg });
     } finally {
       recordSignature(url, signature);
       await page.close().catch(() => {});
@@ -788,5 +792,5 @@ export async function crawl(
     );
   }
 
-  return { snapshots, excludedByNoindex };
+  return { snapshots, excludedByNoindex, failedPages };
 }

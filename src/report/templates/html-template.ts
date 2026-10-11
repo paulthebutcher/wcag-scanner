@@ -8,6 +8,9 @@ import type {
 } from "../../types.js";
 import type { ReportData, FindingGroup, ScanDiff } from "../generator.js";
 import { getEffortHours } from "../generator.js";
+import type { ScanCoverage } from "../../core/coverage.js";
+import { renderCoverageHtml, COVERAGE_CSS } from "../coverage-report.js";
+import { findingPageUrls, isDeduplicated, occurrenceTotals } from "../occurrences.js";
 
 // ---------------------------------------------------------------------------
 // WCAG criterion names
@@ -235,6 +238,19 @@ function plainDescription(group: FindingGroup): string {
 /** Count distinct pages a finding group spans */
 function distinctPageCount(group: FindingGroup): number {
   return new Set(group.findings.map(f => f.page_snapshot_id)).size;
+}
+
+/**
+ * Pages a group occurs on, including pages folded into deduplicated
+ * findings (shared nav/footer elements stored once). Keyed by URL.
+ */
+function groupPageUrls(group: FindingGroup, pageUrlMap: Map<string, string>): string[] {
+  const urls = new Set<string>();
+  for (const f of group.findings) {
+    const primary = pageUrlMap.get(f.page_snapshot_id) ?? f.page_snapshot_id;
+    for (const u of findingPageUrls(f, primary).urls) urls.add(u);
+  }
+  return Array.from(urls);
 }
 
 // Effort hours are computed via getEffortHours() from generator.ts
@@ -667,7 +683,12 @@ function renderFindingTypeCard(
   displayNames?: Map<string, string>,
 ): string {
   const criterionName = displayNames?.get(group.hash) ?? CRITERION_NAMES[group.criterion] ?? group.criterion;
-  const pages = distinctPageCount(group);
+  const pageUrls = groupPageUrls(group, pageUrlMap);
+  const pages = Math.max(distinctPageCount(group), pageUrls.length);
+  // Deduplicated findings (shared elements stored once) count each element
+  // once; page occurrences make them comparable with per-page axe counts.
+  const deduplicated = group.findings.some(isDeduplicated);
+  const totals = occurrenceTotals(group.findings);
   const isSitewide = pages >= SITEWIDE_THRESHOLD;
   const uniqueFixes = countUniqueFixes(group);
   const cat = categoryLabel(group.failureType);
@@ -691,15 +712,13 @@ function renderFindingTypeCard(
   // Affected page paths list
   let affectedPagesHtml = "";
   if (pages > 1) {
-    const uniquePages = new Map<string, string>();
-    for (const f of group.findings) {
-      if (uniquePages.has(f.page_snapshot_id)) continue;
-      const url = pageUrlMap.get(f.page_snapshot_id) ?? "";
+    const uniquePages = new Set<string>();
+    for (const url of pageUrls) {
       let pathname = "";
       try { pathname = url ? new URL(url).pathname : ""; } catch { pathname = url; }
-      if (pathname) uniquePages.set(f.page_snapshot_id, pathname);
+      if (pathname) uniquePages.add(pathname);
     }
-    const allPaths = Array.from(uniquePages.values()).sort();
+    const allPaths = Array.from(uniquePages).sort();
     const VISIBLE_LIMIT = 8;
     const visiblePaths = allPaths.slice(0, VISIBLE_LIMIT);
     const hiddenCount = allPaths.length - visiblePaths.length;
@@ -808,7 +827,9 @@ function renderFindingTypeCard(
           ${esc(group.criterion)} &mdash; ${esc(criterionName)}
         </h3>
         <p class="card-meta">
-          ${group.instanceCount} instance${group.instanceCount !== 1 ? "s" : ""} across ${pages} page${pages !== 1 ? "s" : ""}
+          ${deduplicated
+            ? `${totals.uniqueElements} unique element${totals.uniqueElements !== 1 ? "s" : ""} &middot; ${totals.pageOccurrences} page occurrence${totals.pageOccurrences !== 1 ? "s" : ""} across ${pages} page${pages !== 1 ? "s" : ""}`
+            : `${group.instanceCount} instance${group.instanceCount !== 1 ? "s" : ""} across ${pages} page${pages !== 1 ? "s" : ""}`}
           ${uniqueFixes < group.instanceCount ? ` &mdash; ${uniqueFixes} unique fix${uniqueFixes !== 1 ? "es" : ""}` : ""}
           &bull; ${esc(cat)}
         </p>
@@ -1430,6 +1451,8 @@ export interface RenderOptions {
   executiveSummaryHtml?: string;
   /** Data directory path for resolving screenshot files to base64 data URIs */
   dataDir?: string;
+  /** Per-check coverage (coverage.json); null for scans that predate it */
+  coverage?: ScanCoverage | null;
 }
 
 /**
@@ -1445,7 +1468,7 @@ export interface RenderOptions {
  * 7. Scan Scope + Methodology + Effort Estimate
  */
 export function renderHtmlReport(data: ReportData, options: RenderOptions = {}): string {
-  const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml, dataDir } = options;
+  const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml, dataDir, coverage } = options;
 
   const sections = [
     renderCover(data, executiveSummaryHtml),
@@ -1453,6 +1476,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
     renderExecutiveSummary(data, executiveSummaryHtml),
     data.diff ? renderDiffSummary(data.diff) : "",
     renderComplianceScorecard(data.criterionResults),
+    coverage !== undefined ? renderCoverageHtml(coverage) : "",
     renderFindingsByType(data, pageUrlMap, impactDescriptions, dataDir),
     renderAppendixByPage(data, pageUrlMap),
     renderScanScope(data, pageUrlMap),
@@ -1468,7 +1492,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WCAG 2.1 AA Assessment — ${esc(data.scanSession.url)}</title>
-  <style>${REPORT_CSS}</style>
+  <style>${REPORT_CSS}${COVERAGE_CSS}</style>
 </head>
 <body>
   ${sections.join("\n")}
