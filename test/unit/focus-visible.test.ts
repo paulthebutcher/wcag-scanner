@@ -488,6 +488,128 @@ describe("checkFocusVisibility", () => {
     }
   });
 
+  it("moves focus with the Tab key so :focus-visible styles apply after a mouse click", async () => {
+    // After a mouse interaction, Chromium does not apply :focus-visible to
+    // element.focus(); a real Tab press always does.
+    const page = await context.newPage();
+    try {
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>Focus visible only</title>
+        <style>
+          a { display: inline-block; margin: 20px; padding: 8px; color: #000; outline: none; }
+          a:focus-visible { outline: 3px solid #000; outline-offset: 2px; }
+        </style></head>
+        <body><a href="/a">First</a><a href="/b">Second</a><a href="/c">Third</a></body></html>
+      `);
+      const tabSeq = await recordTabSequence(page, { maxTabs: 10 });
+      await page.mouse.click(5, 300);
+
+      const results = await checkFocusVisibility(page, tabSeq);
+
+      expect(results).toHaveLength(3);
+      expect(results.every((r) => r.focusMethod === "keyboard")).toBe(true);
+      expect(results.filter((r) => !r.meetsMinimum)).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("waits for scroll-triggered fade-in animations before comparing", async () => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1000, height: 600 });
+    try {
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>Fade in</title>
+        <style>
+          body { margin: 0; background: #fff; }
+          .card { opacity: 0; transition: opacity 600ms ease; padding: 20px; }
+          .card.in { opacity: 1; }
+          .btn { display: inline-block; padding: 10px 20px; border: 1px solid #333; color: #000; outline: none; }
+          .btn:focus-visible { outline: 3px solid #000; outline-offset: 3px; }
+        </style></head>
+        <body>
+          <div style="height:1500px"></div>
+          <div class="card"><a class="btn" href="/x">Take a look</a></div>
+          <div style="height:800px"></div>
+          <script>
+            new IntersectionObserver((entries) => entries.forEach((e) => {
+              if (e.isIntersecting) e.target.classList.add("in"); else e.target.classList.remove("in");
+            })).observe(document.querySelector(".card"));
+          </script>
+        </body></html>
+      `);
+      const tabSeq = await recordTabSequence(page, { maxTabs: 10 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(700);
+
+      const results = await runFocusVisibleChecks(page, tabSeq);
+
+      expect(results).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("reports focus landing inside a collapsed container as focus_on_hidden_element", async () => {
+    const page = await context.newPage();
+    try {
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>FAQ</title>
+        <style>
+          a { outline: none; } a:focus-visible { outline: 3px solid #000; }
+          .faq-answer-wrapper { height: 0; overflow: hidden; }
+        </style></head>
+        <body>
+          <a href="/top">Top</a>
+          <div class="faq-single">
+            <div class="faq-question">How does it work?</div>
+            <div class="faq-answer-wrapper"><p>See <a href="/docs">the docs</a>.</p></div>
+          </div>
+        </body></html>
+      `);
+      const tabSeq = await recordTabSequence(page, { maxTabs: 10 });
+      const results = await runFocusVisibleChecks(page, tabSeq);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].element_html).toContain("/docs");
+      expect(results[0].measured_values?.hidden_reason).toContain("faq-answer-wrapper");
+      expect((results[0].raw_result as { type: string }).type).toBe("focus_on_hidden_element");
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("flags a transparent native control whose styled replacement shows no focus", async () => {
+    const page = await context.newPage();
+    try {
+      await page.setContent(`
+        <!DOCTYPE html>
+        <html lang="en"><head><title>Custom select</title>
+        <style>
+          .wrap { position: relative; display: inline-block; padding: 8px 24px; border-bottom: 1px solid #000; margin: 20px; }
+          .wrap select { position: absolute; inset: 0; opacity: 0; width: 100%; }
+          .wrap.good:focus-within { outline: 3px solid #000; outline-offset: 2px; }
+        </style></head>
+        <body>
+          <span class="wrap bad">every adventure ⌄<select id="bad" aria-label="Bad"><option>A</option></select></span>
+          <span class="wrap good">every trail ⌄<select id="good" aria-label="Good"><option>A</option></select></span>
+        </body></html>
+      `);
+      const tabSeq = await recordTabSequence(page, { maxTabs: 10 });
+      const results = await runFocusVisibleChecks(page, tabSeq);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].element_selector).toContain("bad");
+      expect((results[0].raw_result as { type: string }).type).toBe("no_visible_focus_indicator");
+      expect(results[0].measured_values?.transparent_control).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
   it("DOES flag elements with outline:none (regression guard)", async () => {
     const page = await context.newPage();
     try {

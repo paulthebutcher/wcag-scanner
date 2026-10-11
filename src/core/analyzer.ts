@@ -179,6 +179,23 @@ function generateRuleBasedReasoning(checkResult: CheckResult): string {
         return `Keyboard focus is trapped within this element (${(raw.trapContext as string) ?? "unknown"} context). ` +
           `${measured.elements_in_cycle ?? "?"} elements form a focus cycle detected after ${measured.tabs_before_detected ?? "?"} tab presses.`;
 
+      case "no_visible_focus_indicator":
+        return "Nothing visibly changed when this element received keyboard focus (focus moved with the " +
+          `${measured.focus_method === "script" ? "element.focus() fallback" : "Tab key"}), so keyboard users cannot see where they are.` +
+          (measured.transparent_control
+            ? " The focusable element is transparent (opacity 0) under a custom-styled control; add the focus style to the visible control, for example with :focus-within on its wrapper."
+            : "");
+
+      case "focus_indicator_low_contrast":
+        return "The focus indicator is visible but too faint: its edge contrast is " +
+          `${typeof measured.perimeter_contrast === "number" ? measured.perimeter_contrast.toFixed(2) + ":1" : "unknown"}, ` +
+          `below the ${measured.minimum_contrast_required ?? 3}:1 minimum.`;
+
+      case "focus_on_hidden_element":
+        return "Keyboard focus lands on this element while it cannot be seen " +
+          `(${measured.hidden_reason ?? "hidden"}). Keyboard users tab onto invisible content and lose track of where they are. ` +
+          "Hide collapsed content from the tab order, for example with display: none or the inert attribute.";
+
       case "focus_not_visible":
         return `Element lacks a visible focus indicator. ` +
           `Focus indicator contrast: ${measured.focus_contrast ?? "not measurable"}, ` +

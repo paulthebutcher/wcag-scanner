@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import type { Page } from "playwright";
+import type { ElementHandle, Page } from "playwright";
 import type { CheckResult } from "../../types.js";
 import type { FocusStop, TabSequenceResult } from "./keyboard.js";
 
@@ -25,6 +25,19 @@ export interface FocusVisibilityResult {
   pixelDiffPercent: number;
   /** Outer HTML */
   outerHtml: string;
+  /** How focus reached the element: a real Tab press, or element.focus() as a fallback */
+  focusMethod: "keyboard" | "script";
+  /**
+   * Set when the element takes keyboard focus but cannot be seen (inside a
+   * collapsed container, clipped away, zero size, visibility: hidden).
+   */
+  hiddenReason: string | null;
+  /**
+   * The element itself is transparent (opacity 0), typically a native
+   * control under a custom-styled replacement. Any focus indicator has to
+   * appear on the replacement.
+   */
+  transparent: boolean;
   /** Composite focus metrics from the new algorithm */
   focusMetrics: {
     /** Highest contrast found at changed/unchanged pixel boundary (the "ring edge") */
@@ -277,6 +290,115 @@ async function compareScreenshots(
 // Focus visibility checking
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Focus helpers
+// ---------------------------------------------------------------------------
+
+/** Element state relevant to whether a focus indicator could be seen. */
+interface RenderState {
+  box: { x: number; y: number; width: number; height: number };
+  /** Product of the element's and its ancestors' opacity */
+  opacity: number;
+  /** Why the element can't be seen, or null */
+  hiddenReason: string | null;
+  /** Fully transparent after entrance animations had time to finish */
+  transparent: boolean;
+}
+
+async function readRenderState(handle: ElementHandle): Promise<RenderState | null> {
+  return handle.evaluate((target) => {
+    const el = target as Element;
+    const r = el.getBoundingClientRect();
+    let opacity = 1;
+    let hiddenReason: string | null = null;
+    let node: Element | null = el;
+    while (node && node !== document.documentElement) {
+      const style = getComputedStyle(node);
+      opacity *= Number(style.opacity);
+      if (style.visibility === "hidden" || style.visibility === "collapse") {
+        hiddenReason ??= "visibility: hidden";
+      }
+      if (node !== el && style.overflow !== "visible") {
+        const nr = node.getBoundingClientRect();
+        const clippedAway =
+          nr.width < 1 || nr.height < 1 ||
+          r.bottom <= nr.top || r.top >= nr.bottom || r.right <= nr.left || r.left >= nr.right;
+        if (clippedAway) {
+          const cls = typeof node.className === "string" && node.className ? `.${node.className.trim().split(/\s+/)[0]}` : "";
+          hiddenReason ??= `inside a collapsed or clipped container (${node.tagName.toLowerCase()}${cls}, ${Math.round(nr.height)}px tall, overflow: ${style.overflow})`;
+        }
+      }
+      node = node.parentElement;
+    }
+    if (r.width < 1 || r.height < 1) hiddenReason ??= "zero size";
+    return { box: { x: r.x, y: r.y, width: r.width, height: r.height }, opacity, hiddenReason, transparent: false };
+  }).catch(() => null);
+}
+
+/**
+ * Wait for the element to finish rendering in place: scroll-triggered
+ * entrance animations (opacity 0 → 1, slide-ins) and layout shifts. Returns
+ * the settled state; if the element is still transparent after the cap it
+ * is marked transparent.
+ */
+async function waitForRenderedState(page: Page, handle: ElementHandle, capMs = 2000): Promise<RenderState | null> {
+  const deadline = Date.now() + capMs;
+  let previous = await readRenderState(handle);
+  while (previous && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    const current = await readRenderState(handle);
+    if (!current) return previous;
+    const stable =
+      Math.abs(current.box.x - previous.box.x) < 0.5 &&
+      Math.abs(current.box.y - previous.box.y) < 0.5 &&
+      Math.abs(current.opacity - previous.opacity) < 0.01;
+    previous = current;
+    if (stable && (current.opacity >= 0.99 || current.hiddenReason)) break;
+  }
+  if (previous && previous.opacity < 0.05) {
+    previous.transparent = true;
+  }
+  return previous;
+}
+
+/** Wait for CSS transitions/animations on the element itself (e.g. a focus ring fading in). */
+async function waitForOwnAnimations(handle: ElementHandle, capMs = 1000): Promise<void> {
+  await handle.evaluate((el, cap) => Promise.race([
+    Promise.all((el as Element).getAnimations().map((a: Animation) => a.finished.catch(() => undefined))),
+    new Promise((resolve) => setTimeout(resolve, cap)),
+  ]).then(() => undefined), capMs).catch(() => {});
+}
+
+async function isFocused(handle: ElementHandle): Promise<boolean> {
+  return handle.evaluate((el) => document.activeElement === el).catch(() => false);
+}
+
+/**
+ * Move focus to the element with a real Tab key press, the way a keyboard
+ * user reaches it, so :focus-visible styles apply exactly as they would for
+ * that user. Tabs forward from the previous stop when it is known, otherwise
+ * Shift+Tab then Tab from the element itself. Falls back to element.focus()
+ * only when neither lands on the element.
+ */
+async function focusWithKeyboard(
+  page: Page,
+  handle: ElementHandle,
+  previous: ElementHandle | null,
+): Promise<"keyboard" | "script"> {
+  if (previous) {
+    await previous.evaluate((el) => (el as HTMLElement).focus({ preventScroll: true })).catch(() => {});
+    await page.keyboard.press("Tab");
+    if (await isFocused(handle)) return "keyboard";
+  }
+  await handle.evaluate((el) => (el as HTMLElement).focus({ preventScroll: true })).catch(() => {});
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  if (await isFocused(handle)) return "keyboard";
+
+  await handle.focus().catch(() => {});
+  return "script";
+}
+
 /**
  * Test focus visibility for each tab stop by comparing focused/unfocused screenshots.
  *
@@ -306,37 +428,60 @@ export async function checkFocusVisibility(
   const minContrast = options?.minContrast ?? 3.0;
   const results: FocusVisibilityResult[] = [];
 
-  for (const stop of tabSequence.focusStops) {
+  const stops = tabSequence.focusStops;
+  for (let i = 0; i < stops.length; i++) {
+    const stop = stops[i];
     if (!stop.boundingBox) continue;
 
     const handle = await page.$(stop.selector);
     if (!handle) continue;
 
+    // Focus inside a cross-origin iframe (video players, social embeds) is
+    // drawn by third-party content the site cannot style; the report scope
+    // excludes third-party embedded content.
+    const thirdPartyFrame = await handle.evaluate((el) => {
+      if (el.tagName !== "IFRAME") return false;
+      try {
+        return new URL((el as HTMLIFrameElement).src, location.href).origin !== location.origin;
+      } catch {
+        return false;
+      }
+    }).catch(() => false);
+    if (thirdPartyFrame) {
+      await handle.dispose();
+      continue;
+    }
+
+    const previous = i > 0 ? await page.$(stops[i - 1].selector) : null;
+
     try {
-      // The box recorded during the tab sweep is relative to the viewport
-      // at that moment; the page has scrolled since. Scroll the element to
-      // the middle of the viewport (clear of fixed headers and bottom
-      // banners) and measure it now, so both screenshots show the element
-      // and focusing it below doesn't scroll the page between them.
+      // Reach the element with the keyboard first, then bring it to the
+      // middle of the viewport (clear of fixed headers and bottom banners)
+      // and let entrance animations finish. Scrolling does not move focus.
+      const focusMethod = await focusWithKeyboard(page, handle, previous);
       await handle.evaluate((el) => el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" })).catch(() => {});
-      const box = (await handle.boundingBox()) ?? stop.boundingBox;
+      const state = await waitForRenderedState(page, handle);
+      await waitForOwnAnimations(handle);
+
+      const box = state?.box ?? stop.boundingBox;
       const padding = 8;
       const clip = {
         x: Math.max(0, box.x - padding),
         y: Math.max(0, box.y - padding),
-        width: box.width + padding * 2,
-        height: box.height + padding * 2,
+        width: Math.max(1, box.width + padding * 2),
+        height: Math.max(1, box.height + padding * 2),
       };
 
+      // Focused first, then blur and capture the same area unfocused.
+      // Blurring does not scroll, so both images cover the same pixels.
+      const focusedScreenshot = await page.screenshot({ clip, type: "png" });
       await page.evaluate(() => {
         (document.activeElement as HTMLElement)?.blur?.();
       });
-      await page.waitForTimeout(50);
+      await waitForOwnAnimations(handle);
       const unfocusedScreenshot = await page.screenshot({ clip, type: "png" });
 
-      await handle.focus();
-      await page.waitForTimeout(50);
-      const focusedScreenshot = await page.screenshot({ clip, type: "png" });
+      const hiddenReason = state?.hiddenReason ?? null;
 
       const {
         diffPercent,
@@ -365,6 +510,8 @@ export async function checkFocusVisibility(
       // An element passes when there is a visible change AND at least one of:
       //   1. The ring edge has sufficient contrast (handles rings, borders).
       //   2. The element interior changed colour (handles fill/inversion states).
+      // This holds for transparent elements too: a native control under a
+      // styled replacement passes if the replacement visibly shows focus.
       const meetsMinimum =
         hasVisualChange &&
         (perimeterContrast >= minContrast || hasFillChange);
@@ -378,6 +525,9 @@ export async function checkFocusVisibility(
         focusedScreenshot,
         pixelDiffPercent: diffPercent,
         outerHtml: stop.outerHtml,
+        focusMethod,
+        hiddenReason,
+        transparent: state?.transparent ?? false,
         focusMetrics: {
           perimeterContrast,
           p90PerimeterContrast,
@@ -387,6 +537,7 @@ export async function checkFocusVisibility(
       });
     } finally {
       await handle.dispose();
+      await previous?.dispose();
     }
   }
 
@@ -419,9 +570,12 @@ export async function runFocusVisibleChecks(
   for (const result of visibilityResults) {
     if (result.meetsMinimum) continue;
 
-    const failureType = !result.hasVisualChange
-      ? "no_visible_focus_indicator"
-      : "focus_indicator_low_contrast";
+    // Hidden and nothing visible changed: focus is on invisible content.
+    const failureType = result.hiddenReason && !result.hasVisualChange
+      ? "focus_on_hidden_element"
+      : !result.hasVisualChange
+        ? "no_visible_focus_indicator"
+        : "focus_indicator_low_contrast";
 
     checkResults.push({
       element_selector: result.selector,
@@ -438,6 +592,9 @@ export async function runFocusVisibleChecks(
         p90PerimeterContrast: result.focusMetrics.p90PerimeterContrast,
         estimatedThicknessPx: result.focusMetrics.estimatedThicknessPx,
         hasFillChange: result.focusMetrics.hasFillChange,
+        focusMethod: result.focusMethod,
+        hiddenReason: result.hiddenReason,
+        transparent: result.transparent,
       },
       screenshot: result.focusedScreenshot,
       context_screenshot: result.unfocusedScreenshot,
@@ -450,6 +607,9 @@ export async function runFocusVisibleChecks(
         p90_perimeter_contrast: result.focusMetrics.p90PerimeterContrast,
         estimated_thickness_px: result.focusMetrics.estimatedThicknessPx,
         has_fill_change: result.focusMetrics.hasFillChange,
+        focus_method: result.focusMethod,
+        ...(result.hiddenReason ? { hidden_reason: result.hiddenReason } : {}),
+        ...(result.transparent ? { transparent_control: true } : {}),
       },
     });
   }

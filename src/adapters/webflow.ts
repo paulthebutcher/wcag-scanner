@@ -481,6 +481,19 @@ const REMEDIATION_TEMPLATES = new Map<string, RemediationTemplate>([
     estimated_effort: "minor" as Effort,
     platform_docs_url: null,
   }],
+  ["2.4.7:focus_on_hidden_element", {
+    generic_fix: "Take collapsed or hidden content out of the keyboard tab order until it is shown.",
+    steps: [
+      "Find the component that hides this element (often an FAQ answer, dropdown or tab pane collapsed with height 0 and overflow hidden).",
+      "In the interaction that collapses it, also set Display to None when closed and back to Block/Flex when opened (Interactions panel → Hide/Show action).",
+      "If the animation needs the element to stay displayed, add the inert attribute while collapsed with a small custom script, and remove it when expanded.",
+      "Re-test with the Tab key: focus should skip the content while it is collapsed.",
+    ],
+    designer_path: "Select collapsing element → Interactions panel (H) → add Hide/Show (Display: None) to the close animation",
+    code_fix: null,
+    estimated_effort: "minor" as Effort,
+    platform_docs_url: null,
+  }],
   ["2.4.4:link-name", {
     generic_fix: "Add descriptive text or aria-label to links so that screen reader users understand each link's purpose.",
     steps: [

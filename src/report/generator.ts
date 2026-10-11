@@ -192,6 +192,7 @@ const EFFORT_BY_FAILURE_TYPE: Record<string, number> = {
   // Trivial (0.5h) — single attribute or quick CSS tweak
   "focus_indicator_low_contrast": 0.5,
   "no_visible_focus_indicator": 0.5,
+  "focus_on_hidden_element": 1,
   "missing_alt": 0.5,
   "decorative_with_alt": 0.5,
   "empty_alt_on_informative": 0.5,

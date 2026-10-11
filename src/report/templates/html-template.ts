@@ -170,6 +170,8 @@ const PLAIN_DESCRIPTIONS: Record<string, (count: number, pages: number) => strin
     `${n} interactive element${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} lack${n === 1 ? "s" : ""} visible focus indicators, making keyboard navigation difficult for users who don't use a mouse.`,
   "2.4.7:no_visible_focus_indicator": (n, p) =>
     `${n} interactive element${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} ha${n === 1 ? "s" : "ve"} no visible focus indicator, preventing keyboard users from seeing which element is selected.`,
+  "2.4.7:focus_on_hidden_element": (n, p) =>
+    `${n} element${n !== 1 ? "s" : ""} across ${p} page${p !== 1 ? "s" : ""} can receive keyboard focus while hidden (for example inside collapsed FAQ answers), so keyboard users tab onto content they cannot see.`,
   "2.4.4:link-name": (n, p) =>
     `${n} links across ${p} pages have no accessible name, so screen reader users cannot tell where these links go.`,
   "2.4.4:image_link_no_alt": (n, p) =>
@@ -255,6 +257,7 @@ const FAILURE_TYPE_CATEGORIES: Record<string, string> = {
   "color_alone": "Color Contrast",
   "focus_indicator_low_contrast": "Focus Visibility",
   "no_visible_focus_indicator": "Focus Visibility",
+  "focus_on_hidden_element": "Focus Visibility",
   "no_focus_indicator": "Focus Visibility",
   "unreachable_interactive_element": "Keyboard Access",
   "not_keyboard_accessible": "Keyboard Access",
