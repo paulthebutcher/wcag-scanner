@@ -6,6 +6,8 @@ import { listFindingsByScan, getScanSession, getPageSnapshot } from "../store/db
 import { loadCoverage, type ScanCoverage } from "../core/coverage.js";
 import { renderCoverageMarkdown } from "./coverage-report.js";
 import { isDeduplicated, pageOccurrences, findingPageUrls } from "./occurrences.js";
+import { clusterFindings, partitionExclusions, type ExcludedFinding } from "./clustering.js";
+import { renderTopFixesMarkdown, renderExcludedMarkdown } from "./top-fixes-report.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -228,7 +230,7 @@ export function renderFindingMarkdown(tf: TriagedFinding): string {
 // JSONL line
 // ---------------------------------------------------------------------------
 
-function renderFindingJsonl(tf: TriagedFinding): string {
+function renderFindingJsonl(tf: TriagedFinding, exclusion: ExcludedFinding | undefined): string {
   const { finding, bucket, pageUrl } = tf;
   return JSON.stringify({
     id: finding.id,
@@ -247,6 +249,7 @@ function renderFindingJsonl(tf: TriagedFinding): string {
     element_html: finding.evidence.element_html,
     failure_type: finding.evidence.measured_values?.failure_type ?? null,
     page_occurrences: pageOccurrences(finding),
+    excluded: exclusion ? { reason: exclusion.reason, detail: exclusion.detail } : null,
     also_found_on_urls: findingPageUrls(finding, pageUrl).urls.filter((u) => u !== pageUrl),
     reasoning: finding.analysis.reasoning,
     impact: finding.analysis.impact_description,
@@ -298,9 +301,17 @@ function renderOccurrenceTable(triaged: TriagedFinding[]): string[] {
 function renderAggregateMarkdown(
   scanId: string,
   scanUrl: string,
-  triaged: TriagedFinding[],
+  allTriaged: TriagedFinding[],
   coverage: ScanCoverage | null = null,
+  platform = "webflow",
 ): string {
+  // Needs-manual-check and third-party findings are listed in their own
+  // sections and left out of the buckets, totals and Top fixes.
+  const { kept, excluded } = partitionExclusions(allTriaged.map((tf) => ({ finding: tf.finding, pageUrl: tf.pageUrl })));
+  const keptIds = new Set(kept.map((k) => k.finding.id));
+  const triaged = allTriaged.filter((tf) => keptIds.has(tf.finding.id));
+  const clusters = clusterFindings(kept, { platform });
+
   const buckets = new Map<TriageBucket, TriagedFinding[]>();
   for (const tf of triaged) {
     if (!buckets.has(tf.bucket)) buckets.set(tf.bucket, []);
@@ -312,6 +323,9 @@ function renderAggregateMarkdown(
   lines.push("");
   lines.push(`Scan ID: \`${scanId}\``);
   lines.push(`Total findings: ${triaged.length}`);
+  if (excluded.length > 0) {
+    lines.push(`Excluded from counts: ${excluded.length} (see Needs manual check and Third-party below)`);
+  }
   lines.push("");
   lines.push("| Bucket | Count |");
   lines.push("|---|---|");
@@ -319,6 +333,7 @@ function renderAggregateMarkdown(
     lines.push(`| ${BUCKET_LABELS[bucket]} | ${buckets.get(bucket)?.length ?? 0} |`);
   }
   lines.push("");
+  lines.push(renderTopFixesMarkdown(clusters));
   lines.push(renderCoverageMarkdown(coverage));
   lines.push(...renderOccurrenceTable(triaged));
 
@@ -343,6 +358,8 @@ function renderAggregateMarkdown(
       lines.push("");
     }
   }
+
+  lines.push(renderExcludedMarkdown(excluded));
 
   return lines.join("\n");
 }
@@ -404,11 +421,14 @@ export function dumpFindings(
 
   // Aggregate markdown
   const aggregatePath = join(scanDir, "findings.md");
-  writeFileSync(aggregatePath, renderAggregateMarkdown(scanId, session.url, triaged, loadCoverage(dataDir, scanId)), "utf8");
+  writeFileSync(aggregatePath, renderAggregateMarkdown(scanId, session.url, triaged, loadCoverage(dataDir, scanId), session.platform), "utf8");
 
-  // JSONL
+  // JSONL (every finding; excluded ones are marked)
+  const exclusions = new Map(
+    partitionExclusions(triaged.map((tf) => ({ finding: tf.finding, pageUrl: tf.pageUrl }))).excluded.map((ex) => [ex.finding.id, ex]),
+  );
   const jsonlPath = join(scanDir, "findings.jsonl");
-  writeFileSync(jsonlPath, triaged.map(renderFindingJsonl).join("\n") + "\n", "utf8");
+  writeFileSync(jsonlPath, triaged.map((tf) => renderFindingJsonl(tf, exclusions.get(tf.finding.id))).join("\n") + "\n", "utf8");
 
   return { dir: scanDir, count: triaged.length };
 }

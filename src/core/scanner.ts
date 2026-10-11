@@ -35,7 +35,7 @@ import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
 import { scoreConfidence } from "./confidence.js";
-import { WebflowAdapter, getRemediationTemplate } from "../adapters/webflow.js";
+import { WebflowAdapter, getRemediationTemplate, buildSpecificRemediation } from "../adapters/webflow.js";
 import type { ProgressReporter } from "./progress.js";
 import { ScanProgressReporter } from "./progress.js";
 // Behavioral checks (Tier 2)
@@ -378,10 +378,11 @@ async function processCheckResults(
         if (processedHashes.has(finding.finding_type_hash)) {
           // Reuse cached remediation from adapter
           const cached = adapter.getRemediationSteps(finding);
+          const specificFix = buildSpecificRemediation(finding);
           finding.remediation = {
-            generic_fix: finding.remediation.generic_fix || cached.steps[0] || "",
+            generic_fix: specificFix?.generic_fix ?? (finding.remediation.generic_fix || cached.steps[0] || ""),
             platform_fix: cached,
-            code_fix: finding.remediation.code_fix,
+            code_fix: specificFix?.code_fix ?? finding.remediation.code_fix,
             estimated_effort: finding.remediation.estimated_effort,
             fix_verified: false,
           };
@@ -390,13 +391,15 @@ async function processCheckResults(
         }
         try {
           const platformFix = adapter.getRemediationSteps(finding);
-          // Look up template for generic_fix and code_fix
+          // Look up template for generic_fix and code_fix; finding-specific
+          // remediation (colours, classes) takes precedence where it exists.
           const templateKey = `${finding.wcag_criterion}:${(finding.evidence.measured_values?.failure_type as string) ?? ""}`;
           const template = getRemediationTemplate(templateKey);
+          const specific = buildSpecificRemediation(finding);
           finding.remediation = {
-            generic_fix: template?.generic_fix ?? platformFix.steps[0] ?? "",
+            generic_fix: specific?.generic_fix ?? template?.generic_fix ?? platformFix.steps[0] ?? "",
             platform_fix: platformFix,
-            code_fix: template?.code_fix ?? null,
+            code_fix: specific?.code_fix ?? template?.code_fix ?? null,
             estimated_effort: template?.estimated_effort ?? finding.remediation.estimated_effort,
             fix_verified: false,
           };

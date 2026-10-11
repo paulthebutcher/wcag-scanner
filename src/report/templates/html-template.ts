@@ -11,6 +11,8 @@ import { getEffortHours } from "../generator.js";
 import type { ScanCoverage } from "../../core/coverage.js";
 import { renderCoverageHtml, COVERAGE_CSS } from "../coverage-report.js";
 import { findingPageUrls, isDeduplicated, occurrenceTotals } from "../occurrences.js";
+import { clusterFindings } from "../clustering.js";
+import { renderTopFixesHtml, renderExcludedHtml, TOP_FIXES_CSS } from "../top-fixes-report.js";
 
 // ---------------------------------------------------------------------------
 // WCAG criterion names
@@ -1470,14 +1472,23 @@ export interface RenderOptions {
 export function renderHtmlReport(data: ReportData, options: RenderOptions = {}): string {
   const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml, dataDir, coverage } = options;
 
+  // Component clusters for "Top fixes" (excluded findings are already out
+  // of data.groups and are listed in their own sections)
+  const clusters = clusterFindings(
+    data.groups.flatMap((g) => g.findings).map((f) => ({ finding: f, pageUrl: pageUrlMap.get(f.page_snapshot_id) ?? "" })),
+    { platform: data.scanSession.platform },
+  );
+
   const sections = [
     renderCover(data, executiveSummaryHtml),
+    renderTopFixesHtml(clusters),
     renderDisclaimer(),
     renderExecutiveSummary(data, executiveSummaryHtml),
     data.diff ? renderDiffSummary(data.diff) : "",
     renderComplianceScorecard(data.criterionResults),
     coverage !== undefined ? renderCoverageHtml(coverage) : "",
     renderFindingsByType(data, pageUrlMap, impactDescriptions, dataDir),
+    renderExcludedHtml(data.excluded ?? []),
     renderAppendixByPage(data, pageUrlMap),
     renderScanScope(data, pageUrlMap),
     renderMethodology(),
@@ -1492,7 +1503,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WCAG 2.1 AA Assessment — ${esc(data.scanSession.url)}</title>
-  <style>${REPORT_CSS}${COVERAGE_CSS}</style>
+  <style>${REPORT_CSS}${COVERAGE_CSS}${TOP_FIXES_CSS}</style>
 </head>
 <body>
   ${sections.join("\n")}

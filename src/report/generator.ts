@@ -12,8 +12,10 @@ import {
   getScanSummary,
   listCriterionResults,
   listFindingsByScan,
+  listPageSnapshots,
 } from "../store/db.js";
-import { WebflowAdapter, getRemediationTemplate, clearRemediationCache } from "../adapters/webflow.js";
+import { partitionExclusions, exclusionFor, type ExcludedFinding } from "./clustering.js";
+import { WebflowAdapter, getRemediationTemplate, clearRemediationCache, buildSpecificRemediation } from "../adapters/webflow.js";
 import { computeSummary, reconcileInMemory } from "../core/scanner.js";
 import { shouldFilterFromClientReport } from "./findings-dump.js";
 
@@ -49,6 +51,11 @@ export interface ReportData {
   summary: ScanSummary | null;
   /** Diff against comparison scan (if comparison_scan_id present) */
   diff: ScanDiff | null;
+  /**
+   * Findings left out of the groups and failure counts: contrast axe could
+   * not measure (needs manual check) and third-party embed elements.
+   */
+  excluded?: ExcludedFinding[];
 }
 
 /** Diff between two scans */
@@ -301,6 +308,21 @@ function backfillWebflowRemediation(findings: Finding[]): void {
       const templateKey = `${finding.wcag_criterion}:${failureType}`;
       const template = getRemediationTemplate(templateKey);
 
+      // Finding-specific remediation (measured colours, the element's own
+      // classes) for the types that have it, so older scans get it too.
+      const specific = buildSpecificRemediation(finding);
+      if (specific) {
+        const steps = adapter.getRemediationSteps(finding);
+        finding.remediation = {
+          generic_fix: specific.generic_fix,
+          platform_fix: steps,
+          code_fix: specific.code_fix,
+          estimated_effort: template?.estimated_effort ?? finding.remediation.estimated_effort,
+          fix_verified: false,
+        };
+        continue;
+      }
+
       if (template) {
         // Direct template match — use it
         finding.remediation = {
@@ -419,9 +441,22 @@ export function queryFindings(
 
   // Filter low-confidence / noisy findings from the client report. This is
   // THE hook point — everything downstream recomputes from the filtered set.
-  const findings = filterNoisy
+  const clientFindings = filterNoisy
     ? rawFindings.filter((f) => !shouldFilterFromClientReport(f))
     : rawFindings;
+
+  // Leave findings that need a manual check or belong to a third-party
+  // embed out of the groups and counts; they are reported in their own
+  // sections. Criterion status is reconciled before this, so an exclusion
+  // never turns a failed criterion into a pass.
+  let findings = clientFindings;
+  let excluded: ExcludedFinding[] = [];
+  if (filterNoisy) {
+    const pageUrls = new Map(listPageSnapshots(db, scanId).map((p) => [p.id, p.url]));
+    const parts = partitionExclusions(clientFindings.map((f) => ({ finding: f, pageUrl: pageUrls.get(f.page_snapshot_id) ?? "" })));
+    findings = parts.kept.map((p) => p.finding);
+    excluded = parts.excluded;
+  }
 
   // Group by finding_type_hash
   const groups = groupFindingsByHash(findings);
@@ -433,7 +468,7 @@ export function queryFindings(
   // Re-reconcile criterion results against the filtered finding set. Criteria
   // whose only findings were filtered out flip from "failed" to "passed".
   const criterionResults = filterNoisy
-    ? reconcileInMemory(scanId, findings, storedCriterionResults)
+    ? reconcileInMemory(scanId, clientFindings, storedCriterionResults)
     : storedCriterionResults;
 
   // Recompute summary from the filtered findings + reconciled results ONLY
@@ -458,7 +493,9 @@ export function queryFindings(
   if (scanSession.comparison_scan_id) {
     const rawComparison = listFindingsByScan(db, scanSession.comparison_scan_id);
     const comparisonFindings = filterNoisy
-      ? rawComparison.filter((f) => !shouldFilterFromClientReport(f))
+      ? rawComparison
+          .filter((f) => !shouldFilterFromClientReport(f))
+          .filter((f) => exclusionFor(f) === null)
       : rawComparison;
     const comparisonGroups = groupFindingsByHash(comparisonFindings);
     diff = computeDiff(groups, comparisonGroups);
@@ -470,5 +507,6 @@ export function queryFindings(
     criterionResults,
     summary,
     diff,
+    excluded,
   };
 }

@@ -6,6 +6,7 @@ import type {
   Effort,
 } from "../types.js";
 import type { PromptRunner } from "../core/prompt-runner.js";
+import { parseContrastMeasurement, passingReplacement, parseHex, contrastRatio, luminance } from "../core/contrast.js";
 import {
   remediationGeneration,
   remediationVerification,
@@ -799,6 +800,207 @@ export function getTemplateKey(finding: Finding): string | null {
   return `${criterion}:${failureType}`;
 }
 
+
+// ---------------------------------------------------------------------------
+// Finding-specific remediation for the most common types
+//
+// These replace the generic template text with instructions built from the
+// finding itself: measured colours and a passing replacement for contrast,
+// the element's own classes and attributes for the ARIA and focus types.
+// ---------------------------------------------------------------------------
+
+export interface SpecificRemediation {
+  generic_fix: string;
+  steps: string[];
+  designer_path: string;
+  code_fix: string | null;
+}
+
+/** Failure types that get finding-specific remediation. */
+export const SPECIFIC_REMEDIATION_TYPES = new Set([
+  "color-contrast",
+  "custom_interactive_no_role",
+  "no_visible_focus_indicator",
+  "aria-prohibited-attr",
+]);
+
+function failureTypeOf(finding: Finding): string | undefined {
+  return finding.evidence.measured_values?.failure_type as string | undefined;
+}
+
+/** Root tag name and class list of an element's outer HTML. */
+function rootTagInfo(html: string): { tag: string; classes: string[] } {
+  const m = html.match(/^\s*<([a-zA-Z0-9-]+)([^>]*)>/);
+  if (!m) return { tag: "element", classes: [] };
+  const cls = m[2].match(/\bclass\s*=\s*"([^"]*)"/);
+  return { tag: m[1].toLowerCase(), classes: cls ? cls[1].split(/\s+/).filter(Boolean) : [] };
+}
+
+/** Plain name for an element type in remediation text. */
+function elementNoun(tag: string): string {
+  const nouns: Record<string, string> = { a: "link", button: "button", input: "field", select: "dropdown", textarea: "text area", img: "image", iframe: "embedded frame" };
+  return nouns[tag] ?? "element";
+}
+
+/** Webflow combo class as shown in the Designer, e.g. "btn modal full" → ".btn.modal.full". */
+function classLabel(classes: string[]): string {
+  const own = classes.filter((c) => !/^w-/.test(c) && c !== "w--current");
+  return own.length > 0 ? `.${own.join(".")}` : "";
+}
+
+function contrastRemediation(findings: Finding[]): SpecificRemediation | null {
+  const measurements = findings
+    .map((f) => parseContrastMeasurement(f.analysis.reasoning))
+    .filter((m): m is NonNullable<typeof m> => m !== null);
+  if (measurements.length === 0) return null;
+
+  // The most common foreground is the colour to change; check it against
+  // every background it was measured on.
+  const fgCounts = new Map<string, number>();
+  for (const m of measurements) fgCounts.set(m.foreground, (fgCounts.get(m.foreground) ?? 0) + 1);
+  const foreground = Array.from(fgCounts.entries()).sort((a, b) => b[1] - a[1])[0][0];
+  const same = measurements.filter((m) => m.foreground === foreground);
+  const backgrounds = Array.from(new Set(same.map((m) => m.background))).sort();
+  const target = Math.max(...same.map((m) => m.expected));
+  const measured = same.map((m) => m.ratio).filter((r): r is number => r !== null);
+  const worst = measured.length > 0 ? Math.min(...measured) : null;
+
+  const replacement = passingReplacement(foreground, backgrounds, target);
+  const fgRgb = parseHex(foreground);
+  const repRgb = replacement ? parseHex(replacement) : null;
+  const achieved = repRgb
+    ? Math.min(...backgrounds.map((b) => contrastRatio(repRgb, parseHex(b)!)))
+    : null;
+  const direction = fgRgb && repRgb ? (luminance(repRgb) > luminance(fgRgb) ? "lighter" : "darker") : "";
+  const textKind = target <= 3 ? "large text" : "normal text";
+
+  const measuredText = `Text colour ${foreground} on ${backgrounds.join(" and ")} measures ${worst !== null ? `${worst}:1` : "below the minimum"}; ${textKind} needs ${target}:1.`;
+  const fixText = replacement && achieved !== null
+    ? ` Change the text colour to ${replacement} (same hue, ${direction}), which measures ${achieved.toFixed(2)}:1${backgrounds.length > 1 ? " on every background above" : ""}.`
+    : " No lighter or darker shade of the same hue reaches the target; change the hue or the background instead.";
+
+  const { classes } = rootTagInfo(findings[0].evidence.element_html);
+  const cls = classLabel(classes);
+  return {
+    generic_fix: measuredText + fixText,
+    steps: [
+      `Find where ${foreground} is set. If it is a Swatch or Variable (Style panel (S) → Typography → Color shows a named colour), edit that colour once and every element using it updates.`,
+      cls
+        ? `Otherwise select an element with the ${cls} class and set Typography → Color on the class.`
+        : "Otherwise select the text element and set Typography → Color on its class (not on the element only), so every instance updates.",
+      replacement ? `Set the colour to ${replacement}.` : "Pick a colour that reaches the target ratio against the background.",
+      "Check the Hover, Focused and Pressed states of the same class use a passing colour too.",
+      "Publish, then re-run the scan or `wcag verify` to confirm.",
+    ],
+    designer_path: "Style panel (S) → Typography → Color (or the Swatch/Variable it uses)",
+    code_fix: null,
+  };
+}
+
+function interactiveNoRoleRemediation(finding: Finding): SpecificRemediation {
+  const { tag, classes } = rootTagInfo(finding.evidence.element_html);
+  const cls = classLabel(classes);
+  const target = cls ? `the ${elementNoun(tag)} with class ${cls}` : `this ${elementNoun(tag)}`;
+  return {
+    generic_fix: `${target[0].toUpperCase()}${target.slice(1)} is clickable but is not announced or operable as a button. Add role="button" and tabindex="0", or rebuild it as a Webflow Button or Link Block.`,
+    steps: [
+      `Select ${target} in the Designer.`,
+      "Open Element Settings (D) → Custom attributes and add: Name role, Value button.",
+      "Add a second attribute: Name tabindex, Value 0, so it can be reached with the Tab key.",
+      "Enter and Space do not activate a div with role=\"button\" on their own. Add the keyboard snippet below once in Project Settings → Custom Code → Footer Code, or rebuild the element as a Button or Link Block, which handle keys natively.",
+      "Make sure it has an accessible name: visible text inside it, or an aria-label custom attribute describing the action.",
+    ],
+    designer_path: "Element Settings (D) → Custom attributes → role = button, tabindex = 0",
+    code_fix: `<script>
+document.addEventListener("keydown", (e) => {
+  const el = e.target;
+  if ((e.key === "Enter" || e.key === " ") && el instanceof HTMLElement &&
+      el.getAttribute("role") === "button" && el.tagName !== "BUTTON") {
+    e.preventDefault();
+    el.click();
+  }
+});
+</script>`,
+  };
+}
+
+function focusIndicatorRemediation(finding: Finding): SpecificRemediation {
+  const { tag, classes } = rootTagInfo(finding.evidence.element_html);
+  const cls = classLabel(classes);
+  const transparent = finding.evidence.measured_values?.transparent_control === true;
+  const selector = cls || tag;
+  if (transparent) {
+    return {
+      generic_fix: `This ${elementNoun(tag)} is transparent (opacity 0) on top of a custom-styled control, so nothing visible changes when it receives keyboard focus. Put the focus style on the visible control instead.`,
+      steps: [
+        "Select the visible wrapper the user sees (the element that contains this control).",
+        "Add a focus style that appears when anything inside it has keyboard focus: in custom code, use :focus-within on the wrapper's class.",
+        "Use an outline at least 2px thick with 3:1 contrast against the background around it.",
+      ],
+      designer_path: "Project Settings → Custom Code → Head Code (a :focus-within rule for the wrapper class)",
+      code_fix: `<style>\n.WRAPPER-CLASS:focus-within {\n  outline: 3px solid #ffffff;\n  outline-offset: 2px;\n}\n</style>`,
+    };
+  }
+  return {
+    generic_fix: `Nothing visibly changes when ${cls ? `the ${selector} ${elementNoun(tag)}` : `this ${elementNoun(tag)}`} receives keyboard focus. Add a focus style for keyboard users.`,
+    steps: [
+      cls ? `Select an element with the ${cls} class in the Designer.` : `Select the ${elementNoun(tag)} in the Designer.`,
+      "In the Style panel (S), open the States menu and choose Focused (Keyboard), which is :focus-visible and only appears for keyboard users.",
+      "Under Effects, add an Outline (2–3px, solid) in a colour with at least 3:1 contrast against the background around the element; add an outline offset of 2px so it does not touch the text.",
+      "Check the class does not set Outline to none in its Focused state, and that no site-wide custom code removes outlines.",
+    ],
+    designer_path: "Style panel (S) → States → Focused (Keyboard) → Effects → Outline",
+    code_fix: `<style>\n${selector}:focus-visible {\n  outline: 3px solid #ffffff;\n  outline-offset: 2px;\n}\n</style>`,
+  };
+}
+
+function prohibitedAttrRemediation(finding: Finding): SpecificRemediation {
+  const { tag, classes } = rootTagInfo(finding.evidence.element_html);
+  const cls = classLabel(classes);
+  const attrs = Array.from(new Set(finding.analysis.reasoning.match(/aria-[a-z]+/g) ?? ["aria-label"]));
+  const attrList = attrs.join(", ");
+  // Prev/next arrows and similar act as buttons: the attribute becomes valid with role="button".
+  const looksInteractive = /button|btn|prev|next|close|toggle|arrow/i.test(classes.join(" ")) ||
+    /aria-label="(previous|next|close|open|menu)/i.test(finding.evidence.element_html);
+  const target = cls ? `the ${elementNoun(tag)} with class ${cls}` : `this ${elementNoun(tag)}`;
+  return {
+    generic_fix: `${attrList} is not allowed on a ${tag} that has no role, so screen readers ignore it. ${looksInteractive
+      ? `This element acts as a control: give it role="button" (and tabindex="0") so ${attrList} is announced.`
+      : `Either give the element a role that allows ${attrList}, or remove the attribute and put the text where it is visible.`}`,
+    steps: looksInteractive
+      ? [
+          `Select ${target} in the Designer.`,
+          "Element Settings (D) → Custom attributes: add role = button and tabindex = 0. Keep the existing " + attrList + ".",
+          "Enter and Space need a keyboard handler on a div button (see the snippet for custom_interactive_no_role), or rebuild it as a Button element.",
+        ]
+      : [
+          `Select ${target} in the Designer.`,
+          `If it is a meaningful container, add a role that allows ${attrList} in Element Settings (D) → Custom attributes, for example role = group or role = region.`,
+          `If the label is not needed, delete the ${attrList} custom attribute.`,
+          "If the element is inside a third-party embed (for example a video player), the fix belongs to that provider; note it rather than editing the embed.",
+        ],
+    designer_path: "Element Settings (D) → Custom attributes",
+    code_fix: null,
+  };
+}
+
+/**
+ * Remediation built from the finding (or a cluster of findings of the same
+ * type) for the types in SPECIFIC_REMEDIATION_TYPES. Returns null for other
+ * types and for contrast results without measured colours.
+ */
+export function buildSpecificRemediation(findings: Finding | Finding[]): SpecificRemediation | null {
+  const list = Array.isArray(findings) ? findings : [findings];
+  if (list.length === 0) return null;
+  switch (failureTypeOf(list[0])) {
+    case "color-contrast": return contrastRemediation(list);
+    case "custom_interactive_no_role": return interactiveNoRoleRemediation(list[0]);
+    case "no_visible_focus_indicator": return focusIndicatorRemediation(list[0]);
+    case "aria-prohibited-attr": return prohibitedAttrRemediation(list[0]);
+    default: return null;
+  }
+}
+
 export function getTemplateCount(): number {
   return REMEDIATION_TEMPLATES.size;
 }
@@ -982,6 +1184,21 @@ export class WebflowAdapter implements PlatformAdapter {
 
   getRemediationSteps(finding: Finding): PlatformFix {
     const hash = finding.finding_type_hash;
+
+    // Finding-specific steps (measured colours, the element's own classes)
+    // vary within a finding_type_hash, so they bypass the cache.
+    const specific = buildSpecificRemediation(finding);
+    if (specific) {
+      return {
+        platform: "webflow",
+        platform_version: WEBFLOW_PLATFORM_VERSION,
+        steps: specific.steps,
+        designer_path: specific.designer_path,
+        screenshots: [],
+        generated_by: "template",
+        platform_docs_url: null,
+      };
+    }
 
     // Check cache first
     const cached = getCachedRemediation(hash);

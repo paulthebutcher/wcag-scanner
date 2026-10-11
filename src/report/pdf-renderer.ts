@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { ProgressReporter } from "../core/progress.js";
 import { renderHtmlReport, type RenderOptions } from "./templates/html-template.js";
 import { loadCoverage } from "../core/coverage.js";
+import { exclusionFor } from "./clustering.js";
 import {
   queryFindings,
   groupFindingsByHash,
@@ -79,7 +80,7 @@ export function buildReportDataWithComparison(
 
     const rawComparisonFindings = listFindingsByScan(db, comparisonScanId);
     const comparisonFindings = rawComparisonFindings.filter(
-      (f) => !shouldFilterFromClientReport(f),
+      (f) => !shouldFilterFromClientReport(f) && exclusionFor(f) === null,
     );
     const comparisonGroups = groupFindingsByHash(comparisonFindings);
 
