@@ -65,7 +65,8 @@ import { evaluateHighRiskForms } from "../checks/forms/high-risk.js";
 import { checkPauseStopHide, checkThreeFlashes } from "../checks/indicators/pause-stop-hide.js";
 import { checkMultipleWays, checkMotionActuation } from "../checks/indicators/multiple-ways.js";
 import { checkOnInput, surfaceErrorQualityFindings } from "../checks/indicators/on-input.js";
-import { dumpFindings } from "../report/findings-dump.js";
+import { dumpFindings, shouldFilterFromClientReport } from "../report/findings-dump.js";
+import { estimateRemediation, formatEstimate, type PageUrlOf } from "../report/effort.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,6 +152,7 @@ export function computeSummary(
   scanSessionId: string,
   findings: Finding[],
   criterionResults: CriterionResult[],
+  pageUrlOf?: PageUrlOf,
 ): ScanSummary {
   const bySeverity: SeverityCounts = { critical: 0, major: 0, minor: 0, advisory: 0 };
   const byConfidence: ConfidenceCounts = { definitive: 0, high: 0, moderate: 0, needs_review: 0 };
@@ -181,27 +183,13 @@ export function computeSummary(
     by_confidence: byConfidence,
     by_category: byCategory,
     human_reviewed_pct: 0,
-    estimated_total_effort: estimateEffort(findings),
+    // Fix units in the client view (see report/effort.ts), not per instance
+    estimated_total_effort: formatEstimate(
+      estimateRemediation(findings.filter((f) => !shouldFilterFromClientReport(f)), pageUrlOf),
+    ),
     wcag_criteria_failed: criteriaFailed,
     wcag_criteria_passed: criteriaPassedUnique,
   };
-}
-
-function estimateEffort(findings: Finding[]): string {
-  const total = findings.reduce((sum, f) => {
-    switch (f.remediation.estimated_effort) {
-      case "trivial": return sum + 0.25;
-      case "minor": return sum + 0.5;
-      case "moderate": return sum + 2;
-      case "significant": return sum + 4;
-      default: return sum + 1;
-    }
-  }, 0);
-
-  if (total <= 2) return "< 2 hours";
-  if (total <= 8) return `~${Math.round(total)} hours`;
-  if (total <= 40) return `~${Math.round(total)} hours (~${Math.round(total / 8)} days)`;
-  return `~${Math.round(total)} hours (~${Math.round(total / 8)} days)`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1837,7 +1825,8 @@ export async function scan(
     const reconciledResults = reconcileCriterionResults(scanId, allFindings, allCriterionResults, db);
 
     // --- Phase 9: Compute summary ---------------------------------------------
-    const summary = computeSummary(scanId, allFindings, reconciledResults);
+    const pageUrlById = new Map(pageSnapshots.map((p) => [p.id, p.url]));
+    const summary = computeSummary(scanId, allFindings, reconciledResults, (id) => pageUrlById.get(id) ?? id);
     upsertScanSummary(db, summary);
 
     // --- Finalize scan session -------------------------------------------------

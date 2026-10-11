@@ -79,11 +79,41 @@ Reference scan `e779c8b0`: coverage was not recorded (the scan predates Phase 1)
 | axe-core rules | 1 | 50/50 | 0 | 0 | 0 |
 | Widget ARIA (4.1.2) | 3 | 50/50 | 0 | 0 | 0 |
 
+### Effort estimate from fix units (2026-10-11)
+
+The old estimates were wrong in opposite directions. The scan summary and CLI table added 0.25–4 h per finding instance (the reference scan stored ~2,949 h). The report counted one fix per failure type (~37 h), whatever the number of components.
+
+Now `src/report/effort.ts` groups findings into fix units, one change each in Webflow, and costs those:
+
+| Kind | One unit is | Hours per unit |
+|---|---|---|
+| site | one site-wide addition (skip link; Enter/Space snippet for div buttons, added once) | 0.5–1 (snippet 1) |
+| class-style | one class's style, or one text colour | 0.15–0.3 |
+| component | one component's settings (tag + Designer classes) | 0.25–0.5 |
+| content | one unique piece of copy or alt text | 0.05–0.1 |
+| page | one page (focus order) | 0.1–0.2 |
+| structural | one component reworked (a form's error handling, captions, animation controls) | 0.5–1 (captions 0.5–2) |
+
+Line items: fixes; QA and re-test (20% + 1 h for a verify run); manual review (3–6 min per component with unmeasurable contrast, 5–15 min per advisory item, capped at 5 h); client coordination (10% + 3 min per copy change, capped at 4 h). Advisory fixes are an add-on outside the headline. Third-party findings cost nothing.
+
+The 40–60 h engagements this is calibrated against also include non-accessibility work, so the accessibility part should usually land below that. Results:
+
+| Scan | Estimate | Fixes | QA | Review | Coordination | Advisory add-on |
+|---|---|---|---|---|---|---|
+| `e779c8b0` (reference) | ~27–47 h | 102 changes, 15–31 h | 4–7.2 h | 4.5–5 h | 3.6–4 h | 9–18.5 h |
+| `7033a623` (old code) | ~28–50 h | 89 changes, 16.3–33.5 h | 4.3–7.7 h | 5 h | 2.4–4 h | 9.9–20.2 h |
+| `ba241ce6` (new code, before the keyboard fix) | ~42–88 h | 135 changes | | | | |
+
+`ba241ce6` is inflated by 146 false "unreachable" keyboard findings (29 phantom component units), fixed in `06cf882`.
+
+Also: axe results inside embedded frames (the `iframe` selector with the frame's own markup: YouTube, Instagram) are now excluded as third-party. This was on the out-of-scope list; it matters here because those findings were adding component units the site cannot fix. On the reference scan it moves the third-party count to 171.
+
+Retuning: all hours are in `EFFORT_MODEL`. findings.md lists every unit with its hours under "Effort estimate", so the list can be compared with a timesheet.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
 - Recognising GrowSurf by `data-grsf-*` attributes or `growsurf-prod` image URLs, which would move the three GrowSurf images (Top fixes 5 to 7) to Third-party.
 - The report's "Findings by Type" cards merge different axe rules that share a `finding_type_hash` (for example `aria-prohibited-attr` inside the "aria allowed attr" card), and a card shows one remediation for the whole group. Top fixes keeps them apart. Fixing the card grouping changes report structure beyond these phases.
-- Treating axe results inside cross-origin iframes (YouTube, Instagram embeds; `element_selector` is the `iframe` while `element_html` is the embed's own markup) as Third-party. They change between loads and showed up as 8 of the 12 "newly broken" items in the live verify.
 - Leaving hedged Claude verdicts (`needs_review` with no failure type, shown as `semantic`) out of "newly broken", and making Claude's failure-type names stable across runs. Both change signatures between scans without the site changing.
 - Enabling `typescript-eslint` recommended rules. They would flag existing code across the repo (unused vars, `any`), and fixing that is a refactor outside these phases.

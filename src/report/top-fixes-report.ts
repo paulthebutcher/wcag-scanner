@@ -66,19 +66,25 @@ export function groupExcluded(excluded: ExcludedFinding[]): Array<{
 // Markdown
 // ---------------------------------------------------------------------------
 
-export function renderTopFixesMarkdown(clusters: Cluster[], limit = TOP_FIXES_LIMIT): string {
+/** Estimated hours for a cluster's fix (its fix unit), e.g. "0.15–0.3 h". */
+export type HoursFor = (cluster: Cluster) => string;
+
+export function renderTopFixesMarkdown(clusters: Cluster[], limit = TOP_FIXES_LIMIT, hoursFor?: HoursFor): string {
   const top = clusters.slice(0, limit);
   const lines = [
     "## Top fixes",
     "",
     "Each row is one fix. Occurrences counts every page the problem appears on, so the list is ordered by how much each single change clears.",
     "",
-    "| # | Fix | WCAG | Severity | Occurrences | Pages | Example element | Cluster |",
-    "|---|---|---|---|---|---|---|---|",
+    `| # | Fix | WCAG | Severity | Occurrences | Pages |${hoursFor ? " Est. hours |" : ""} Example element | Cluster |`,
+    `|---|---|---|---|---|---|${hoursFor ? "---|" : ""}---|---|`,
   ];
   top.forEach((c, i) => {
-    lines.push(`| ${i + 1} | ${mdCell(clusterLabel(c))} | ${c.wcag_criterion} | ${c.severity} | ${c.occurrence_count} | ${pagesText(c)} | \`${mdCell(c.representative.selector)}\` | \`${c.cluster_id}\` |`);
+    lines.push(`| ${i + 1} | ${mdCell(clusterLabel(c))} | ${c.wcag_criterion} | ${c.severity} | ${c.occurrence_count} | ${pagesText(c)} |${hoursFor ? ` ${hoursFor(c)} |` : ""} \`${mdCell(c.representative.selector)}\` | \`${c.cluster_id}\` |`);
   });
+  if (hoursFor) {
+    lines.push("", "Est. hours is the change that clears the row; rows that share one change (for example one class's focus state) share its hours.");
+  }
   if (top.some((c) => !c.pages_complete)) {
     lines.push("", "\\* Page count includes pages known only by count (scan recorded before page lists were kept).");
   }
@@ -118,7 +124,7 @@ export function renderExcludedMarkdown(excluded: ExcludedFinding[]): string {
 // HTML
 // ---------------------------------------------------------------------------
 
-export function renderTopFixesHtml(clusters: Cluster[], limit = TOP_FIXES_LIMIT): string {
+export function renderTopFixesHtml(clusters: Cluster[], limit = TOP_FIXES_LIMIT, hoursFor?: HoursFor): string {
   if (clusters.length === 0) return "";
   const top = clusters.slice(0, limit);
   const rows = top.map((c, i) => `
@@ -129,6 +135,7 @@ export function renderTopFixesHtml(clusters: Cluster[], limit = TOP_FIXES_LIMIT)
         <td>${htmlEsc(c.severity)}</td>
         <td>${c.occurrence_count}</td>
         <td>${pagesText(c)}</td>
+        ${hoursFor ? `<td>${htmlEsc(hoursFor(c))}</td>` : ""}
       </tr>`).join("");
   const details = top.map((c, i) => `
       <details class="topfix-detail">
@@ -144,7 +151,7 @@ export function renderTopFixesHtml(clusters: Cluster[], limit = TOP_FIXES_LIMIT)
       <h2>Top Fixes</h2>
       <p class="section-intro">The ${top.length} changes that clear the most problems. Each row is one fix; occurrences counts every page the problem appears on.</p>
       <table class="topfix-table">
-        <thead><tr><th>#</th><th>Fix</th><th>WCAG</th><th>Severity</th><th>Occurrences</th><th>Pages</th></tr></thead>
+        <thead><tr><th>#</th><th>Fix</th><th>WCAG</th><th>Severity</th><th>Occurrences</th><th>Pages</th>${hoursFor ? "<th>Est. hours</th>" : ""}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
       ${top.some((c) => !c.pages_complete) ? `<p class="topfix-note">* Includes pages known only by count (scan recorded before page lists were kept).</p>` : ""}

@@ -15,6 +15,7 @@ import {
   listPageSnapshots,
 } from "../store/db.js";
 import { partitionExclusions, exclusionFor, type ExcludedFinding } from "./clustering.js";
+import { estimateRemediation, formatEstimate, type RemediationEstimate } from "./effort.js";
 import { WebflowAdapter, getRemediationTemplate, clearRemediationCache, buildSpecificRemediation } from "../adapters/webflow.js";
 import { computeSummary, reconcileInMemory } from "../core/scanner.js";
 import { shouldFilterFromClientReport } from "./findings-dump.js";
@@ -56,6 +57,8 @@ export interface ReportData {
    * not measure (needs manual check) and third-party embed elements.
    */
   excluded?: ExcludedFinding[];
+  /** Remediation estimate from fix units (report/effort.ts) */
+  estimate?: RemediationEstimate;
 }
 
 /** Diff between two scans */
@@ -185,101 +188,6 @@ function highestSeverity(findings: Finding[]): Severity {
     }
   }
   return highest;
-}
-
-// ---------------------------------------------------------------------------
-// Per-type effort estimation
-// ---------------------------------------------------------------------------
-
-/**
- * Hours keyed by failure_type (or criterion:failure_type).
- * More specific keys take priority over generic failure_type keys.
- */
-const EFFORT_BY_FAILURE_TYPE: Record<string, number> = {
-  // Trivial (0.5h) — single attribute or quick CSS tweak
-  "focus_indicator_low_contrast": 0.5,
-  "no_visible_focus_indicator": 0.5,
-  "focus_on_hidden_element": 1,
-  "missing_alt": 0.5,
-  "decorative_with_alt": 0.5,
-  "empty_alt_on_informative": 0.5,
-  "missing_lang": 0.5,
-  "missing_title": 0.5,
-  "missing_autocomplete": 0.5,
-  "input_purpose": 0.5,
-  "missing_required_indication": 0.5,
-  "duplicate_nav_landmark": 0.5,
-  "unlabeled_nav_landmark": 0.5,
-  "table_no_caption": 0.5,
-  "table_header_no_scope": 0.5,
-  // Low (1h) — template attribute fix or content edit
-  "link-name": 1,
-  "image_link_no_alt": 1,
-  "semantic": 1,
-  "empty_link": 1,
-  "non_descriptive_link": 1,
-  "skipped_level": 1,
-  "missing_heading": 1,
-  "duplicate_link_text": 1,
-  "color-contrast": 1,
-  "insufficient_contrast": 1,
-  "color_alone": 1,
-  "missing_skip_navigation": 1,
-  "missing_skip_link": 1,
-  "table_missing_headers": 1,
-  "layout_table": 0.5,
-  // Moderate (2h) — custom embed, JS snippet, or structural change
-  "focus_order_mismatch": 2,
-  "insufficient_navigation_methods": 1.5,
-  "error_not_announced": 2,
-  "unreachable_interactive_element": 2,
-  "not_keyboard_accessible": 2,
-  "custom_interactive_no_role": 2,
-  "missing_aria_expanded": 2,
-  "missing_tab_role": 2,
-  "tabs_keyboard": 2,
-  "dropdown_keyboard": 2,
-  "high_risk_form": 3,
-  "modal_focus_trap": 3,
-};
-
-/** Fallback effort hours based on the stored Effort enum */
-const EFFORT_ENUM_HOURS: Record<Effort, number> = {
-  trivial: 0.25,
-  minor: 0.5,
-  moderate: 2,
-  significant: 4,
-};
-
-/** Get the effort hours for a finding group, using the failure-type-specific lookup. */
-export function getEffortHours(group: FindingGroup): number {
-  const ft = group.failureType;
-  // Try criterion:failure_type first (most specific)
-  const specific = EFFORT_BY_FAILURE_TYPE[`${group.criterion}:${ft}`];
-  if (specific !== undefined) return specific;
-  // Try failure_type alone
-  const byType = EFFORT_BY_FAILURE_TYPE[ft];
-  if (byType !== undefined) return byType;
-  // Fall back to stored effort enum
-  const effort = group.findings[0]?.remediation.estimated_effort ?? "moderate";
-  return EFFORT_ENUM_HOURS[effort as Effort] ?? 2;
-}
-
-/**
- * Estimate total remediation effort at the **finding-type** level.
- *
- * A finding type that appears on 15 pages is still one fix — the effort
- * is counted once per unique group, not once per instance.
- */
-export function estimateEffortByType(groups: FindingGroup[]): string {
-  let total = 0;
-  for (const group of groups) {
-    total += getEffortHours(group);
-  }
-
-  if (total <= 2) return "< 2 hours";
-  if (total <= 8) return `~${Math.round(total)} hours`;
-  return `~${Math.round(total)} hours (~${Math.round(total / 8)} days)`;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,8 +359,9 @@ export function queryFindings(
   // never turns a failed criterion into a pass.
   let findings = clientFindings;
   let excluded: ExcludedFinding[] = [];
+  const pageUrls = new Map(listPageSnapshots(db, scanId).map((p) => [p.id, p.url]));
+  const pageUrlOf = (id: string) => pageUrls.get(id) ?? id;
   if (filterNoisy) {
-    const pageUrls = new Map(listPageSnapshots(db, scanId).map((p) => [p.id, p.url]));
     const parts = partitionExclusions(clientFindings.map((f) => ({ finding: f, pageUrl: pageUrls.get(f.page_snapshot_id) ?? "" })));
     findings = parts.kept.map((p) => p.finding);
     excluded = parts.excluded;
@@ -474,17 +383,22 @@ export function queryFindings(
   // Recompute summary from the filtered findings + reconciled results ONLY
   // when the filter actually changed the finding set. Otherwise the stored
   // summary is accurate (or null), and we keep null-ness consistent with the
-  // no-filter path. Effort is always recalculated per-type.
+  // no-filter path. Effort is always recalculated from fix units.
   const filterRemovedSome = filterNoisy && rawFindings.length !== findings.length;
   let summary: ScanSummary | null;
   if (filterRemovedSome) {
-    const recomputed = computeSummary(scanId, findings, criterionResults);
-    summary = { ...recomputed, estimated_total_effort: estimateEffortByType(groups) };
+    summary = computeSummary(scanId, findings, criterionResults, pageUrlOf);
   } else {
     summary = storedSummary
-      ? { ...storedSummary, estimated_total_effort: estimateEffortByType(groups) }
+      ? { ...storedSummary }
       : null;
   }
+
+  // Remediation estimate from fix units over the client view, including
+  // excluded findings (manual contrast checks add review time). Older scans
+  // stored a per-instance figure; this replaces it.
+  const estimate = estimateRemediation(clientFindings, pageUrlOf);
+  if (summary) summary.estimated_total_effort = formatEstimate(estimate);
 
   // Compute diff if comparison scan exists. Apply the SAME filter to the
   // comparison side — otherwise findings filtered out of the current scan
@@ -508,5 +422,6 @@ export function queryFindings(
     summary,
     diff,
     excluded,
+    estimate,
   };
 }

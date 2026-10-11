@@ -168,6 +168,13 @@ export function exclusionFor(finding: Finding): { reason: ExclusionReason; detai
   for (const embed of THIRD_PARTY_EMBEDS) {
     if (tokens.some((t) => t.startsWith(embed.prefix))) return { reason: "third_party", detail: embed.name };
   }
+  // axe reports results inside an embedded frame against the iframe's
+  // selector, with the frame's own markup as the element: content from
+  // YouTube, Instagram and similar embeds the site cannot edit.
+  if (finding.evidence.detected_by === "axe_core" && /^iframe\b/i.test(finding.evidence.element_selector ?? "")) {
+    const tag = (finding.evidence.element_html ?? "").match(/^\s*<([a-zA-Z][a-zA-Z0-9-]*)/)?.[1]?.toLowerCase();
+    if (tag && tag !== "iframe") return { reason: "third_party", detail: "Embedded frame content (video players, social embeds)" };
+  }
   if (finding.evidence.detected_by === "axe_core" && failureTypeOf(finding) === "color-contrast") {
     const m = finding.analysis.reasoning.match(/background color could not be determined\s+(?:because|due to)\s+([^.\n]+)/i);
     if (m) return { reason: "needs_manual_check", detail: `background colour could not be determined: ${m[1].trim()}` };

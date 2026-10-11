@@ -7,13 +7,13 @@ import type {
   Severity,
 } from "../../types.js";
 import type { ReportData, FindingGroup, ScanDiff } from "../generator.js";
-import { getEffortHours } from "../generator.js";
 import type { ScanCoverage } from "../../core/coverage.js";
 import { renderCoverageHtml, COVERAGE_CSS } from "../coverage-report.js";
 import { findingPageUrls, isDeduplicated, occurrenceTotals } from "../occurrences.js";
 import { clusterFindings } from "../clustering.js";
 import { renderTopFixesHtml, renderExcludedHtml, TOP_FIXES_CSS } from "../top-fixes-report.js";
 import { renderVerifyHtml } from "../verify-report.js";
+import { estimateRemediation, fixUnits, formatHours, unitHoursFor, type RemediationEstimate, type FixKind } from "../effort.js";
 import type { VerifyResult } from "../../core/verify.js";
 
 // ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ function groupPageUrls(group: FindingGroup, pageUrlMap: Map<string, string>): st
   return Array.from(urls);
 }
 
-// Effort hours are computed via getEffortHours() from generator.ts
+// Effort hours come from fix units in report/effort.ts
 
 // ---------------------------------------------------------------------------
 // Failure type → human-readable category label (Fix 1)
@@ -324,40 +324,12 @@ function categoryLabel(failureType: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Failure types whose remediation is a single global fix (e.g., one CSS rule
- * or one JS snippet) regardless of how many elements are affected.
- */
-const GLOBAL_FIX_TYPES = new Set([
-  "focus_indicator_low_contrast",
-  "no_visible_focus_indicator",
-  "no_focus_indicator",
-  "missing_skip_navigation",
-  "missing_skip_link",
-  "insufficient_navigation_methods",
-]);
-
-/**
- * Count unique fixes needed within a finding group by deduplicating
- * on element_html. The same nav link appearing on 15 pages = 1 fix.
- *
- * Special case: failure types that resolve with a single global fix
- * (e.g., a CSS :focus-visible rule) always count as 1 fix.
+ * Changes needed for a finding group: its fix units (report/effort.ts). The
+ * same nav link on 15 pages is one change; every link in one colour is one
+ * colour change; one class's focus state is one style edit.
  */
 function countUniqueFixes(group: FindingGroup): number {
-  // Global fixes: one CSS rule or one embed resolves all instances
-  if (GLOBAL_FIX_TYPES.has(group.failureType)) return 1;
-
-  // Also detect global fixes from the remediation content: if the fix
-  // is a <style> block or site-wide JS snippet, it's 1 fix.
-  const codeFix = group.findings[0]?.remediation.code_fix ?? "";
-  if (codeFix.includes("<style>") || codeFix.includes("document.querySelector")) return 1;
-
-  const seen = new Set<string>();
-  for (const f of group.findings) {
-    const key = f.evidence.element_html.trim();
-    if (key) seen.add(key);
-  }
-  return Math.max(seen.size, 1);
+  return Math.max(fixUnits(group.findings).length, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1110,40 +1082,54 @@ function renderMethodology(): string {
     </section>`;
 }
 
-function renderEffortEstimate(data: ReportData): string {
+const FIX_KIND_LABELS: Record<FixKind, string> = {
+  "site": "Site-wide additions",
+  "class-style": "Class style edits (colours, focus states)",
+  "component": "Component settings (attributes, roles)",
+  "content": "Copy and alt-text edits",
+  "page": "Per-page fixes",
+  "structural": "Component rework (forms, media, animation)",
+};
+
+function renderEffortEstimate(data: ReportData, estimate: RemediationEstimate): string {
   const summary = data.summary;
   if (!summary) return "";
 
-  // Build per-type effort table with subtype labels, categories, and unique fix counts
-  const displayNames = buildGroupDisplayNames(data.groups);
-  const typeRows = data.groups
-    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
-    .map(g => {
-      const name = displayNames.get(g.hash) ?? CRITERION_NAMES[g.criterion] ?? g.criterion;
-      const hours = getEffortHours(g);
-      const pages = distinctPageCount(g);
-      const fixes = countUniqueFixes(g);
-      const cat = categoryLabel(g.failureType);
-      return `<tr>
-        <td>${severityBadge(g.severity)}</td>
-        <td>${esc(g.criterion)} ${esc(name)}</td>
-        <td>${esc(cat)}</td>
-        <td>${fixes}</td>
-        <td>${hours}h</td>
-        <td>${g.instanceCount} (${pages} pg${pages !== 1 ? "s" : ""})</td>
-      </tr>`;
-    }).join("");
+  const lineItems = [estimate.fixes, estimate.qa, estimate.review, estimate.coordination]
+    .map((li) => `<tr><td>${esc(li.label)}</td><td>${formatHours(li.low, li.high)}</td></tr>`).join("");
+
+  const kinds = new Map<string, { count: number; low: number; high: number; examples: string[] }>();
+  for (const u of estimate.units) {
+    if (u.advisory) continue;
+    const k = kinds.get(u.kind) ?? { count: 0, low: 0, high: 0, examples: [] };
+    k.count += 1; k.low += u.low; k.high += u.high;
+    if (k.examples.length < 3) k.examples.push(u.label);
+    kinds.set(u.kind, k);
+  }
+  const kindRows = Array.from(kinds.entries())
+    .sort((a, b) => b[1].high - a[1].high)
+    .map(([kind, k]) => `<tr>
+        <td>${esc(FIX_KIND_LABELS[kind as FixKind] ?? kind)}</td>
+        <td>${k.count}</td>
+        <td>${formatHours(k.low, k.high)}</td>
+        <td>${esc(k.examples.join("; "))}${k.count > k.examples.length ? "; &hellip;" : ""}</td>
+      </tr>`).join("");
 
   return `
     <section class="effort-estimate" id="effort-estimate">
       <h2>Estimated Remediation Effort</h2>
       <p><strong>Total estimated effort:</strong> ${esc(summary.estimated_total_effort)}</p>
-      <p class="effort-note">Effort is estimated per unique fix, not per instance. On template-based platforms like ${esc(formatPlatform(data.scanSession.platform))}, fixing a shared component (e.g., a navigation link) propagates the fix to all pages using that template. Instance counts show recurrence across pages; unique fixes show the actual work required.</p>
+      <p class="effort-note">Estimated per change, not per instance. On ${esc(formatPlatform(data.scanSession.platform))}, one class style, one component's settings or one site-wide addition fixes every page that uses it, so a footer problem on 50 pages is one change. Ranges reflect how much the same change can vary between sites.</p>
       <table class="effort-table">
-        <thead>
-          <tr><th>Sev.</th><th>Issue Type</th><th>Category</th><th>Unique Fixes</th><th>Hours</th><th>Instances (Pages)</th></tr>
-        </thead>
-        <tbody>${typeRows}</tbody>
+        <thead><tr><th>Line item</th><th>Hours</th></tr></thead>
+        <tbody>${lineItems}
+          <tr><td><strong>Total</strong></td><td><strong>${formatHours(estimate.low, estimate.high)}</strong></td></tr>
+        </tbody>
+      </table>
+      ${estimate.advisoryAddOn.high > 0 ? `<p class="effort-note"><strong>Not included:</strong> ${esc(estimate.advisoryAddOn.label)}: ${formatHours(estimate.advisoryAddOn.low, estimate.advisoryAddOn.high)}.${estimate.thirdParty > 0 ? ` Third-party embed issues (${estimate.thirdParty}) are left to the vendor.` : ""}</p>` : ""}
+      <table class="effort-table">
+        <thead><tr><th>Kind of change</th><th>Changes</th><th>Hours</th><th>Examples</th></tr></thead>
+        <tbody>${kindRows}</tbody>
       </table>
     </section>`;
 }
@@ -1482,11 +1468,21 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
     data.groups.flatMap((g) => g.findings).map((f) => ({ finding: f, pageUrl: pageUrlMap.get(f.page_snapshot_id) ?? "" })),
     { platform: data.scanSession.platform },
   );
+  // Remediation estimate (fix units). queryFindings provides it; otherwise
+  // compute it from the groups plus excluded findings.
+  const pageUrlOf = (id: string) => pageUrlMap.get(id) ?? id;
+  const estimate = data.estimate ?? estimateRemediation(
+    [...data.groups.flatMap((g) => g.findings), ...(data.excluded ?? []).map((e) => e.finding)],
+    pageUrlOf,
+  );
 
   const sections = [
     renderCover(data, executiveSummaryHtml),
     verification ? renderVerifyHtml(verification) : "",
-    renderTopFixesHtml(clusters),
+    renderTopFixesHtml(clusters, undefined, (c) => {
+      const unit = unitHoursFor(estimate, c.findings[0], pageUrlOf);
+      return unit ? formatHours(unit.low, unit.high) : "";
+    }),
     renderDisclaimer(),
     renderExecutiveSummary(data, executiveSummaryHtml),
     data.diff ? renderDiffSummary(data.diff) : "",
@@ -1497,7 +1493,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
     renderAppendixByPage(data, pageUrlMap),
     renderScanScope(data, pageUrlMap),
     renderMethodology(),
-    renderEffortEstimate(data),
+    renderEffortEstimate(data, estimate),
   ].filter(Boolean);
 
   const generatedAt = new Date().toISOString();

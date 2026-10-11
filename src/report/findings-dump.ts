@@ -8,6 +8,7 @@ import { renderCoverageMarkdown } from "./coverage-report.js";
 import { isDeduplicated, pageOccurrences, findingPageUrls } from "./occurrences.js";
 import { clusterFindings, partitionExclusions, type ExcludedFinding } from "./clustering.js";
 import { renderTopFixesMarkdown, renderExcludedMarkdown } from "./top-fixes-report.js";
+import { estimateRemediation, formatEstimate, formatHours, unitHoursFor, type RemediationEstimate } from "./effort.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -265,6 +266,31 @@ function renderFindingJsonl(tf: TriagedFinding, exclusion: ExcludedFinding | und
 // ---------------------------------------------------------------------------
 
 /**
+ * Effort estimate with every fix unit, so it can be compared line by line
+ * with a timesheet and the hours in report/effort.ts retuned.
+ */
+function renderEffortMarkdown(estimate: RemediationEstimate): string {
+  const lines = [
+    "## Effort estimate",
+    "",
+    `Total: ${formatEstimate(estimate)} (fixes, QA, manual review, client coordination). Counted per change, not per instance.`,
+    "",
+    "| Line item | Hours |",
+    "|---|---|",
+  ];
+  for (const li of [estimate.fixes, estimate.qa, estimate.review, estimate.coordination]) {
+    lines.push(`| ${li.label} | ${formatHours(li.low, li.high)} |`);
+  }
+  lines.push(`| Not included: ${estimate.advisoryAddOn.label} | ${formatHours(estimate.advisoryAddOn.low, estimate.advisoryAddOn.high)} |`);
+  lines.push("", "<details><summary>Every change</summary>", "", "| Kind | Change | WCAG | Findings | Hours |", "|---|---|---|---|---|");
+  for (const u of estimate.units) {
+    lines.push(`| ${u.advisory ? `${u.kind} (advisory)` : u.kind} | ${u.label.replace(/\|/g, "\\|")} | ${u.wcag_criterion} | ${u.findings} | ${formatHours(u.low, u.high)} |`);
+  }
+  lines.push("", "</details>", "");
+  return lines.join("\n");
+}
+
+/**
  * Deduplicated findings (one stored element standing for several pages):
  * unique elements alongside page occurrences, per criterion and failure
  * type, so they can be compared with axe counts (one per page).
@@ -311,6 +337,13 @@ function renderAggregateMarkdown(
   const keptIds = new Set(kept.map((k) => k.finding.id));
   const triaged = allTriaged.filter((tf) => keptIds.has(tf.finding.id));
   const clusters = clusterFindings(kept, { platform });
+  // Estimate over the client view (noisy findings filtered), excluded ones included
+  const pageUrlById = new Map(allTriaged.map((tf) => [tf.finding.page_snapshot_id, tf.pageUrl]));
+  const pageUrlOf = (id: string) => pageUrlById.get(id) ?? id;
+  const estimate = estimateRemediation(
+    allTriaged.filter((tf) => !shouldFilterFromClientReport(tf.finding)).map((tf) => tf.finding),
+    pageUrlOf,
+  );
 
   const buckets = new Map<TriageBucket, TriagedFinding[]>();
   for (const tf of triaged) {
@@ -333,7 +366,11 @@ function renderAggregateMarkdown(
     lines.push(`| ${BUCKET_LABELS[bucket]} | ${buckets.get(bucket)?.length ?? 0} |`);
   }
   lines.push("");
-  lines.push(renderTopFixesMarkdown(clusters));
+  lines.push(renderTopFixesMarkdown(clusters, undefined, (c) => {
+    const unit = unitHoursFor(estimate, c.findings[0], pageUrlOf);
+    return unit ? formatHours(unit.low, unit.high) : "";
+  }));
+  lines.push(renderEffortMarkdown(estimate));
   lines.push(renderCoverageMarkdown(coverage));
   lines.push(...renderOccurrenceTable(triaged));
 

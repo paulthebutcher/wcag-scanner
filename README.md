@@ -185,7 +185,8 @@ Each issue is reported as fixed, still broken (occurrences before → after), or
 
 - **Top fixes:** findings grouped by component and failure type, ranked by how many page occurrences one fix clears.
 - **Coverage:** for every check, how many crawled pages it ran on, failed on or skipped (`coverage.json` in the scan folder). Checks that failed on any page are flagged.
-- **Needs manual check / Third-party:** axe contrast results where the background could not be measured, and elements of known third-party embeds (GrowSurf), listed separately and left out of failure counts.
+- **Estimated remediation effort:** a range built from changes, not instances: one class style, one component's settings, one piece of copy or one site-wide addition each count once, however many pages they appear on. Line items cover fixes, QA, manual review and client coordination; advisory items are shown as an add-on. Hours per kind of change live in `src/report/effort.ts`.
+- **Needs manual check / Third-party:** axe contrast results where the background could not be measured, and elements of known third-party embeds (GrowSurf, content inside embedded video and social frames), listed separately and left out of failure counts.
 
 ## Development
 
