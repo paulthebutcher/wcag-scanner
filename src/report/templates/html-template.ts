@@ -13,6 +13,8 @@ import { renderCoverageHtml, COVERAGE_CSS } from "../coverage-report.js";
 import { findingPageUrls, isDeduplicated, occurrenceTotals } from "../occurrences.js";
 import { clusterFindings } from "../clustering.js";
 import { renderTopFixesHtml, renderExcludedHtml, TOP_FIXES_CSS } from "../top-fixes-report.js";
+import { renderVerifyHtml } from "../verify-report.js";
+import type { VerifyResult } from "../../core/verify.js";
 
 // ---------------------------------------------------------------------------
 // WCAG criterion names
@@ -1455,6 +1457,8 @@ export interface RenderOptions {
   dataDir?: string;
   /** Per-check coverage (coverage.json); null for scans that predate it */
   coverage?: ScanCoverage | null;
+  /** Fix verification result when this scan is a `wcag verify` rescan */
+  verification?: VerifyResult | null;
 }
 
 /**
@@ -1470,7 +1474,7 @@ export interface RenderOptions {
  * 7. Scan Scope + Methodology + Effort Estimate
  */
 export function renderHtmlReport(data: ReportData, options: RenderOptions = {}): string {
-  const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml, dataDir, coverage } = options;
+  const { pageUrlMap = new Map(), impactDescriptions, executiveSummaryHtml, dataDir, coverage, verification } = options;
 
   // Component clusters for "Top fixes" (excluded findings are already out
   // of data.groups and are listed in their own sections)
@@ -1481,6 +1485,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
 
   const sections = [
     renderCover(data, executiveSummaryHtml),
+    verification ? renderVerifyHtml(verification) : "",
     renderTopFixesHtml(clusters),
     renderDisclaimer(),
     renderExecutiveSummary(data, executiveSummaryHtml),

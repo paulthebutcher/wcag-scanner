@@ -47,9 +47,43 @@ Working notes for the three-phase change (per-check coverage, component-grouped 
 
 Cluster 1 remediation: "Text colour #286140 on #17191e and #1e252b measures 2.12:1; normal text needs 4.5:1. Change the text colour to #409b66 (same hue, lighter), which measures 4.50:1 on every background above."
 
+### Phase 3: fix verification
+
+- `wcag verify` selects clusters by `--cluster` (full id or a unique prefix, repeatable or comma-separated), `--all`, or by default the baseline's Top fixes (top 10), using the same client view as the report (noisy findings filtered, exclusions removed).
+- Checks per cluster come from `src/core/check-registry.ts` (axe findings → `axe-core`; others by failure type, then by criterion for Claude API findings), plus prerequisites: focus visible and focus order need `keyboard`; form checks need `form-discovery`.
+- Smallest scanner change: `ScanOptions.urls` (the crawler gets `urlList`: those URLs only, with no robots.txt/sitemap, link following or CMS sampling), `ScanOptions.checks` (each check's execution is gated; coverage keeps only the selected checks) and `ScanOptions.baselineScanId`. Tiers come from the selected checks.
+- `baseline_scan_id` is a new `scan_sessions` column, added through the existing add-column-if-missing migration in `openDatabase`; the rescan's `scan_type` is `rescan`. `comparison_scan_id` stays null: setting it makes the report diff the partial rescan against the whole baseline, so every issue on unscanned pages and checks would show as resolved.
+- Diff is by `elementSignature` (Phase 2), per cluster and per page, using Phase 1 coverage. A page counts as verified only if every check the cluster needs has status `ran` on it; otherwise it is "not verified" with the reason, and a cluster with any not-verified page and no still-broken page is "not verified", never "fixed". Newly broken = rescan signature on a rescanned page where the baseline did not have it; signatures whose baseline pages are known only by count are not reported as new.
+- Output: `verify.md` and `verify.json` in the rescan's folder, and `report.html` (the rescan's HTML report with a "Fix verification" section; `wcag report <rescan-id>` also picks up `verify.json`). The client summary uses plain descriptions per failure type and never prints cluster or scan ids; the per-cluster table below it does.
+
+#### Live verify results (2026-10-11)
+
+`wcag verify --baseline e779c8b0-03f2-44fd-87cc-b960bc230785 --cluster 8337cc8d1cc1 --cluster a3a4bb7a9bee`. Rescan `69271047-f1b0-4813-9cdb-32ff79817d0c`: 50 pages, checks `axe-core` and `widget-aria`, 1m 15s, 8 Claude calls.
+
+| Cluster | Issue | Status | Pages fixed / still broken / not verified | Occurrences before → after |
+|---|---|---|---|---|
+| `8337cc8d1cc1` | Text colour #286140 contrast | fixed | 50 / 0 / 0 | 174 → 0 |
+| `a3a4bb7a9bee` | div.btn.full.modal: custom interactive no role | fixed | 49 / 0 / 0 | 49 → 0 |
+
+- The contrast cluster is fixed on every page, as expected after the link colour change.
+- `div.btn.modal` is fixed too: the element now has `role="button"` and `tabindex="0"`. On that same element the widget-ARIA check now returns a hedged Claude verdict (`needs_review`, failure type `semantic`: it cannot tell from the DOM snippet whether the button has an accessible name). That is reported as newly broken on 49 pages.
+- 12 newly broken items in total. Apart from the one above: 8 are inside YouTube and Instagram embeds (axe results reported against the `iframe` selector, whose content changes between loads); 2 Instagram embeds are missing a frame title (a newly embedded reel); 1 is a different Claude-chosen failure type for the same dropdown (`missing_button_role_and_keyboard_focusability` instead of `custom_interactive_no_role`); 1 is an Instagram footer link in text colour #347653 on one page.
+- No page was "not verified": both checks ran on all 50 pages.
+
+### Coverage tables
+
+Reference scan `e779c8b0`: coverage was not recorded (the scan predates Phase 1), so the report section says "not recorded". The only scans with coverage are the live verify rescan and the test fixtures. Rescan `69271047` (a check-subset scan):
+
+| Check | Tier | Ran | Failed | Skipped | Not recorded |
+|---|---|---|---|---|---|
+| axe-core rules | 1 | 50/50 | 0 | 0 | 0 |
+| Widget ARIA (4.1.2) | 3 | 50/50 | 0 | 0 | 0 |
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
 - Recognising GrowSurf by `data-grsf-*` attributes or `growsurf-prod` image URLs, which would move the three GrowSurf images (Top fixes 5 to 7) to Third-party.
 - The report's "Findings by Type" cards merge different axe rules that share a `finding_type_hash` (for example `aria-prohibited-attr` inside the "aria allowed attr" card), and a card shows one remediation for the whole group. Top fixes keeps them apart. Fixing the card grouping changes report structure beyond these phases.
+- Treating axe results inside cross-origin iframes (YouTube, Instagram embeds; `element_selector` is the `iframe` while `element_html` is the embed's own markup) as Third-party. They change between loads and showed up as 8 of the 12 "newly broken" items in the live verify.
+- Leaving hedged Claude verdicts (`needs_review` with no failure type, shown as `semantic`) out of "newly broken", and making Claude's failure-type names stable across runs. Both change signatures between scans without the site changing.
 - Enabling `typescript-eslint` recommended rules. They would flag existing code across the repo (unused vars, `any`), and fixing that is a refactor outside these phases.

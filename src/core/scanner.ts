@@ -95,6 +95,15 @@ export interface ScanOptions {
    * ScanResult.excludedByNoindex, and excluded from the scan.
    */
   includeNoindex?: boolean;
+  /**
+   * Rescan exactly these page URLs instead of crawling (no discovery, no
+   * link following). Used by `wcag verify`.
+   */
+  urls?: string[];
+  /** Run only these check ids (see check-registry.ts); default: every check in `tiers` */
+  checks?: string[];
+  /** For a verification rescan: the scan whose fixes this one checks */
+  baselineScanId?: string;
 }
 
 export interface ScanResult {
@@ -706,6 +715,8 @@ export async function scan(
   const viewport = options.viewport ?? { width: 1280, height: 800, deviceScaleFactor: 1 };
   const reporter = options.reporter ?? new ScanProgressReporter();
   const pageConcurrency = Math.max(1, options.pageConcurrency ?? 4);
+  // Check subset (verification rescans); every check runs when unset
+  const runs = (check: string): boolean => !options.checks || options.checks.includes(check);
   const envConcurrency = Number(process.env.WCAG_CONCURRENCY);
   const llmConcurrency = options.concurrency
     ?? (Number.isInteger(envConcurrency) && envConcurrency > 0 ? envConcurrency : 5);
@@ -747,9 +758,10 @@ export async function scan(
     initiated_at: new Date().toISOString(),
     completed_at: "",
     comparison_scan_id: null,
-    scan_type: "initial",
+    scan_type: options.baselineScanId ? "rescan" : "initial",
     detection_manifest: buildDetectionManifest(tiers, options),
     excluded_pages: null,
+    baseline_scan_id: options.baselineScanId ?? null,
   };
   insertScanSession(db, scanSession);
 
@@ -781,7 +793,8 @@ export async function scan(
       reporter,
       includeNoindex: options.includeNoindex ?? false,
       concurrency: pageConcurrency,
-      onPage: tiers.includes(1)
+      urlList: options.urls,
+      onPage: tiers.includes(1) && runs("axe-core")
         ? async (page, snapshot, screenshot) => {
             const endAxe = startPhase("axe_in_crawl");
             try {
@@ -968,6 +981,7 @@ export async function scan(
             criterion: string,
             run: () => Promise<CheckResult[]> | CheckResult[],
           ): Promise<CheckResult[]> => {
+            if (!runs(check)) return [];
             try {
               const results = await run();
               if (results.length > 0) semanticViolationCriteria.add(criterion);
@@ -1104,7 +1118,7 @@ export async function scan(
           if (pageSnapshots.length <= 1) {
             coverage.recordAll("consistent-nav", 3, navUrls, "skipped", "needs 2 or more pages to compare");
           }
-          if (pageSnapshots.length > 1) {
+          if (runs("consistent-nav") && pageSnapshots.length > 1) {
             try {
               const navResults = await runConsistentNavChecks(pageSnapshots, runner);
               coverage.recordAll("consistent-nav", 3, navUrls, "ran");
@@ -1183,14 +1197,15 @@ export async function scan(
 
             const pageResults: CheckResult[] = [];
 
-            // 2a: Keyboard reachability + trap checks
-            try {
+            // 2a: Keyboard reachability + trap checks (focus visible and
+            // focus order need its tab sequence)
+            if (runs("keyboard") || runs("focus-visible") || runs("focus-order")) try {
               const { results: keyboardResults, tabSequence } = await runKeyboardChecks(page);
-              pageResults.push(...keyboardResults);
+              if (runs("keyboard")) pageResults.push(...keyboardResults);
               coverage.ran("keyboard", 2, snapshot.url);
 
               // 2b: Focus visible (needs tab sequence from keyboard check)
-              try {
+              if (runs("focus-visible")) try {
                 const focusResults = await runFocusVisibleChecks(page, tabSequence);
                 pageResults.push(...focusResults);
                 coverage.ran("focus-visible", 2, snapshot.url);
@@ -1207,7 +1222,7 @@ export async function scan(
               }
 
               // 2c: Focus order (needs tab sequence)
-              try {
+              if (runs("focus-order")) try {
                 const orderResults = runFocusOrderChecks(tabSequence);
                 pageResults.push(...orderResults);
                 coverage.ran("focus-order", 2, snapshot.url);
@@ -1224,7 +1239,7 @@ export async function scan(
               }
 
               // Create passing criterion results for keyboard if no violations
-              if (keyboardResults.length === 0) {
+              if (runs("keyboard") && keyboardResults.length === 0) {
                 const passCr = makeCriterionResult(scanId, "2.1.1", "passed", "playwright",
                   `All ${tabSequence.focusStops.length} interactive elements reachable via keyboard`);
                 upsertCriterionResult(db, passCr);
@@ -1240,7 +1255,7 @@ export async function scan(
             }
 
             // 2d: Keyboard traps
-            try {
+            if (runs("keyboard-trap")) try {
               const trapResults = await runTrapChecks(page);
               pageResults.push(...trapResults);
               coverage.ran("keyboard-trap", 2, snapshot.url);
@@ -1257,7 +1272,7 @@ export async function scan(
             }
 
             // 2e: Skip navigation
-            try {
+            if (runs("skip-nav")) try {
               const skipResults = await runSkipNavChecks(page);
               pageResults.push(...skipResults);
               coverage.ran("skip-nav", 2, snapshot.url);
@@ -1274,7 +1289,7 @@ export async function scan(
             }
 
             // 2f: Modal focus management
-            try {
+            if (runs("modal")) try {
               const { results: modalResults } = await runModalChecks(page);
               pageResults.push(...modalResults);
               coverage.ran("modal", 2, snapshot.url);
@@ -1429,7 +1444,7 @@ export async function scan(
                 coverage.skipped(check, 4, snapshot.url, "no ANTHROPIC_API_KEY");
               }
             }
-            if (formRunner) {
+            if (formRunner && runs("high-risk-forms")) {
               try {
                 const highRiskResults = (await evaluateHighRiskForms(forms, formRunner)).flatMap((r) => {
                   const form = forms.find((f) => f.selector === r.element_selector);
@@ -1458,7 +1473,8 @@ export async function scan(
             }
 
             // 4c: Form submission + error evaluation (needs browser)
-            if (context) {
+            const browserFormChecks = ["form-submission", "error-messages", "input-purpose", "on-input"];
+            if (context && browserFormChecks.some(runs)) {
               for (const form of forms) {
                 const page = await context.newPage();
                 // The page is already loaded when fields are filled; anything
@@ -1482,12 +1498,13 @@ export async function scan(
                   }
 
                   // Test form submission
-                  const { states, results: rawSubmissionResults } = interactive
+                  // Error-message evaluation needs the submission's error states
+                  const { states, results: rawSubmissionResults } = interactive && (runs("form-submission") || runs("error-messages"))
                     ? await testFormSubmission(page, form)
                     : { states: [], results: [] };
-                  const submissionResults = annotateShared(rawSubmissionResults, form);
+                  const submissionResults = runs("form-submission") ? annotateShared(rawSubmissionResults, form) : [];
                   allSubmissionStates.push(...states);
-                  if (interactive) coverage.ran("form-submission", 4, snapshot.url);
+                  if (interactive && runs("form-submission")) coverage.ran("form-submission", 4, snapshot.url);
                   if (interactive && formRunner && states.length === 0) {
                     coverage.skipped("error-messages", 4, snapshot.url, "submission produced no error states");
                   }
@@ -1508,7 +1525,7 @@ export async function scan(
                   }
 
                   // Error message evaluation (LLM)
-                  if (formRunner && states.length > 0) {
+                  if (formRunner && states.length > 0 && runs("error-messages")) {
                     try {
                       const errorResults = annotateShared(await evaluateErrorMessages(states, formRunner), form);
                       coverage.ran("error-messages", 4, snapshot.url);
@@ -1534,7 +1551,7 @@ export async function scan(
                   }
 
                   // Input purpose evaluation (LLM)
-                  if (formRunner) {
+                  if (formRunner && runs("input-purpose")) {
                     try {
                       const purposeResults = annotateShared(await evaluateInputPurpose(form, formRunner), form);
                       coverage.ran("input-purpose", 4, snapshot.url);
@@ -1560,7 +1577,7 @@ export async function scan(
                   }
 
                   // On-input state changes (3.2.2)
-                  if (interactive) try {
+                  if (interactive && runs("on-input")) try {
                     const onInputResults = annotateShared((await checkOnInput(page, form)).results, form);
                     coverage.ran("on-input", 4, snapshot.url);
                     if (onInputResults.length > 0) {
@@ -1605,7 +1622,7 @@ export async function scan(
         if (allSubmissionStates.length === 0) {
           coverage.recordAll("error-quality", 4, allPageUrls, "skipped", "no form submission states on any page");
         }
-        if (allSubmissionStates.length > 0) {
+        if (allSubmissionStates.length > 0 && runs("error-quality")) {
           try {
             const qualityResults = surfaceErrorQualityFindings(allSubmissionStates);
             coverage.recordAll("error-quality", 4, allPageUrls, "ran");
@@ -1675,7 +1692,7 @@ export async function scan(
           const pageResults: CheckResult[] = [];
 
           // 5a: Pause, stop, hide (2.2.2)
-          try {
+          if (runs("pause-stop-hide")) try {
             const pshResults = checkPauseStopHide(snapshot);
             coverage.ran("pause-stop-hide", 5, snapshot.url);
             pageResults.push(...pshResults);
@@ -1687,7 +1704,7 @@ export async function scan(
           }
 
           // 5b: Three flashes (2.3.1)
-          try {
+          if (runs("three-flashes")) try {
             const flashResults = checkThreeFlashes(snapshot);
             coverage.ran("three-flashes", 5, snapshot.url);
             pageResults.push(...flashResults);
@@ -1699,7 +1716,7 @@ export async function scan(
           }
 
           // 5c: Multiple ways (2.4.5)
-          try {
+          if (runs("multiple-ways")) try {
             const mwResults = checkMultipleWays(snapshot);
             coverage.ran("multiple-ways", 5, snapshot.url);
             pageResults.push(...mwResults);
@@ -1711,7 +1728,7 @@ export async function scan(
           }
 
           // 5d: Motion actuation (2.5.4)
-          try {
+          if (runs("motion-actuation")) try {
             const motionResults = checkMotionActuation(snapshot);
             coverage.ran("motion-actuation", 5, snapshot.url);
             pageResults.push(...motionResults);
@@ -1829,6 +1846,8 @@ export async function scan(
 
     // --- Phase 10b: Coverage ----------------------------------------------------
     const coverageData = coverage.toJSON(scanId, pageSnapshots.map((p) => p.url));
+    // A check-subset scan records only the checks it was asked to run
+    coverageData.entries = coverageData.entries.filter((e) => runs(e.check));
     try {
       writeCoverage(options.dataDir, coverageData);
     } catch (err) {

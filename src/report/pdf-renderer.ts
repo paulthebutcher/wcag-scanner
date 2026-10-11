@@ -4,6 +4,7 @@ import type { ProgressReporter } from "../core/progress.js";
 import { renderHtmlReport, type RenderOptions } from "./templates/html-template.js";
 import { loadCoverage } from "../core/coverage.js";
 import { exclusionFor } from "./clustering.js";
+import { loadVerification } from "./verify-report.js";
 import {
   queryFindings,
   groupFindingsByHash,
@@ -193,6 +194,7 @@ export async function generatePdfReport(
     executiveSummaryHtml: options.executiveSummaryHtml,
     dataDir: options.dataDir,
     coverage: options.dataDir ? loadCoverage(options.dataDir, scanId) : undefined,
+    verification: options.dataDir ? loadVerification(options.dataDir, scanId) : undefined,
   };
   const html = renderHtmlReport(data, renderOpts);
 

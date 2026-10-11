@@ -9,6 +9,7 @@ import {
 import { renderHtmlReport } from "../../report/templates/html-template.js";
 import { dumpFindings } from "../../report/findings-dump.js";
 import { loadCoverage } from "../../core/coverage.js";
+import { loadVerification } from "../../report/verify-report.js";
 import { ScanProgressReporter, QuietProgressReporter } from "../../core/progress.js";
 import type { Severity } from "../../types.js";
 
@@ -96,7 +97,12 @@ export function createReportCommand(): Command {
           const pageUrlMap = buildPageUrlMap(db, scanId);
 
           reporter.update("report", "Rendering HTML...");
-          const html = renderHtmlReport(data, { pageUrlMap, dataDir, coverage: loadCoverage(dataDir, scanId) });
+          const html = renderHtmlReport(data, {
+            pageUrlMap,
+            dataDir,
+            coverage: loadCoverage(dataDir, scanId),
+            verification: loadVerification(dataDir, scanId),
+          });
 
           const { writeFileSync } = await import("node:fs");
           writeFileSync(outputPath, html, "utf-8");

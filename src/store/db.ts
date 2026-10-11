@@ -125,6 +125,9 @@ export function openDatabase(dbPath: string): Database.Database {
   if (!colNames.has("excluded_pages")) {
     db.exec("ALTER TABLE scan_sessions ADD COLUMN excluded_pages TEXT");
   }
+  if (!colNames.has("baseline_scan_id")) {
+    db.exec("ALTER TABLE scan_sessions ADD COLUMN baseline_scan_id TEXT");
+  }
 
   return db;
 }
@@ -138,10 +141,11 @@ export function insertScanSession(db: Database.Database, session: ScanSession): 
     ...session,
     detection_manifest: session.detection_manifest ? JSON.stringify(session.detection_manifest) : null,
     excluded_pages: session.excluded_pages ? JSON.stringify(session.excluded_pages) : null,
+    baseline_scan_id: session.baseline_scan_id ?? null,
   };
   db.prepare(`
-    INSERT INTO scan_sessions (id, url, platform, platform_detected_via, initiated_at, completed_at, comparison_scan_id, scan_type, detection_manifest, excluded_pages)
-    VALUES (@id, @url, @platform, @platform_detected_via, @initiated_at, @completed_at, @comparison_scan_id, @scan_type, @detection_manifest, @excluded_pages)
+    INSERT INTO scan_sessions (id, url, platform, platform_detected_via, initiated_at, completed_at, comparison_scan_id, scan_type, detection_manifest, excluded_pages, baseline_scan_id)
+    VALUES (@id, @url, @platform, @platform_detected_via, @initiated_at, @completed_at, @comparison_scan_id, @scan_type, @detection_manifest, @excluded_pages, @baseline_scan_id)
   `).run(row);
 }
 

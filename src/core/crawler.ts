@@ -46,6 +46,11 @@ export interface CrawlOptions {
    * page is closed, so callers can run checks without loading the page again.
    */
   onPage?: (page: Page, snapshot: PageSnapshot, screenshot: Buffer) => Promise<void>;
+  /**
+   * Load exactly these URLs: no robots.txt or sitemap discovery, no link
+   * following, no CMS sampling. Used to rescan the pages of a baseline scan.
+   */
+  urlList?: string[];
 }
 
 export interface ExcludedPage {
@@ -512,7 +517,11 @@ export async function crawl(
   options: CrawlOptions,
   browser?: Browser,
 ): Promise<CrawlResult> {
-  const maxPages = options.maxPages ?? 50;
+  // A fixed URL list (rescan) is loaded in full and nothing else is added
+  const fixedList = options.urlList
+    ? Array.from(new Set(options.urlList.map((u) => normalizeUrl(u, u)).filter((u): u is string => u !== null)))
+    : null;
+  const maxPages = fixedList ? fixedList.length : options.maxPages ?? 50;
   const timeoutMs = options.timeoutMs ?? 30_000;
   const idleTimeoutMs = options.idleTimeoutMs ?? 15_000;
   const concurrency = Math.max(1, options.concurrency ?? 4);
@@ -541,13 +550,13 @@ export async function crawl(
   const rootOrigin = new URL(normalizedRoot).origin;
 
   // ----- Phase 1: robots.txt --------------------------------------------------
-  const robotsTxt = await fetchText(`${rootOrigin}/robots.txt`, timeoutMs);
+  const robotsTxt = fixedList ? null : await fetchText(`${rootOrigin}/robots.txt`, timeoutMs);
   const robotsRules: RobotsRules = robotsTxt
     ? parseRobotsTxt(robotsTxt)
     : { disallowedPaths: [], sitemapUrls: [] };
 
   // ----- Phase 2: sitemaps -----------------------------------------------------
-  const sitemapPageUrls = await fetchAllSitemapUrls(
+  const sitemapPageUrls = fixedList ? [] : await fetchAllSitemapUrls(
     rootOrigin,
     robotsRules.sitemapUrls,
     timeoutMs,
@@ -556,8 +565,8 @@ export async function crawl(
   // ----- Phase 3: seed queue ---------------------------------------------------
   const visited = new Set<string>();
   // Every URL ever queued, so each is queued (and counted) once.
-  const queued = new Set<string>([normalizedRoot]);
-  const queue: string[] = [normalizedRoot];
+  const queued = new Set<string>(fixedList ?? [normalizedRoot]);
+  const queue: string[] = fixedList ? [...fixedList] : [normalizedRoot];
 
   const enqueue = (raw: string, base: string): void => {
     const normalized = normalizeUrl(raw, base);
@@ -575,7 +584,7 @@ export async function crawl(
   for (const raw of sitemapPageUrls) enqueue(raw, rootOrigin);
 
   const cmsSamples = options.cmsSamples ?? 5;
-  const fullCrawl = options.fullCrawl ?? false;
+  const fullCrawl = (options.fullCrawl ?? false) || fixedList !== null;
 
   const snapshots: PageSnapshot[] = [];
   const excludedByNoindex: ExcludedPage[] = [];
@@ -746,7 +755,7 @@ export async function crawl(
           (a) => a.getAttribute("href") ?? "",
         ),
       );
-      for (const href of hrefs) enqueue(href, url);
+      if (!fixedList) for (const href of hrefs) enqueue(href, url);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       options.reporter?.warn("crawl", `Skipping ${url}: ${msg}`);

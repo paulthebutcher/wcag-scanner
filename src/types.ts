@@ -143,6 +143,8 @@ export interface ScanSession {
   detection_manifest: DetectionManifest | null;
   /** Pages skipped at crawl time because they're hidden from SERPs */
   excluded_pages: Array<{ url: string; source: string }> | null;
+  /** For a verification rescan (`wcag verify`): the scan whose fixes it checks */
+  baseline_scan_id?: string | null;
 }
 
 export interface PageSnapshot {

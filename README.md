@@ -169,6 +169,24 @@ npx wcag review <finding-id> --verdict downgraded --severity minor
 | `--reviewer <name>` | Reviewer name (default `cli-user`) |
 | `--data-dir <path>` | Data directory |
 
+### `wcag verify --baseline <scan-id>`
+
+Check whether fixes from a scan's Top fixes have landed. Rescans only the pages those issues were found on, with only the checks that found them, and compares issue by issue.
+
+```bash
+npx wcag verify --baseline <scan-id>                          # the baseline's Top fixes
+npx wcag verify --baseline <scan-id> --cluster 8337cc8d1cc1   # specific issues (repeatable)
+npx wcag verify --baseline <scan-id> --all                    # every issue in the baseline
+```
+
+Each issue is reported as fixed, still broken (occurrences before → after), or not verified (the page or check failed in the rescan; never counted as fixed), plus anything newly broken on the rescanned pages. The rescan is stored as a normal scan linked to the baseline (`baseline_scan_id`); `verify.md`, `verify.json` and `report.html` are written to its folder. Cluster ids are listed in the baseline's Top fixes (findings.md).
+
+## Report sections
+
+- **Top fixes:** findings grouped by component and failure type, ranked by how many page occurrences one fix clears.
+- **Coverage:** for every check, how many crawled pages it ran on, failed on or skipped (`coverage.json` in the scan folder). Checks that failed on any page are flagged.
+- **Needs manual check / Third-party:** axe contrast results where the background could not be measured, and elements of known third-party embeds (GrowSurf), listed separately and left out of failure counts.
+
 ## Development
 
 ```bash
