@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Skip link with delayed focus</title>
+  <style>
+    .skip-link { position: absolute; left: -999px; }
+    .skip-link:focus { left: 8px; top: 8px; }
+    nav a { margin-right: 12px; }
+  </style>
+</head>
+<!--
+  Mimics webflow.js: the click on a same-page anchor is intercepted, the page
+  smooth-scrolls, and focus moves to the target 600 ms later.
+  data-focus="never" makes the handler swallow the click without moving focus.
+-->
+<body data-focus="delayed">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <nav>
+    <a href="/one">One</a>
+    <a href="/two">Two</a>
+    <a href="/three">Three</a>
+  </nav>
+  <section id="main-content" tabindex="-1">
+    <h1>Main content</h1>
+    <p>Body text.</p>
+    <a href="/inside">A link inside the main content</a>
+  </section>
+  <script>
+    document.querySelector(".skip-link").addEventListener("click", function (event) {
+      event.preventDefault();
+      if (document.body.dataset.focus === "never") return;
+      var target = document.getElementById("main-content");
+      target.scrollIntoView({ behavior: "smooth" });
+      setTimeout(function () { target.focus(); }, 600);
+    });
+  </script>
+</body>
+</html>

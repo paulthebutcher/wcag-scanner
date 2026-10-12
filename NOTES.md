@@ -110,6 +110,17 @@ Also: axe results inside embedded frames (the `iframe` selector with the frame's
 
 Retuning: all hours are in `EFFORT_MODEL`. findings.md lists every unit with its hours under "Effort estimate", so the list can be compared with a timesheet.
 
+## Scanner bug fixes (2026-10-12)
+
+Reference scans: `0b7d5e28` (latest) and `4d008e9e`. Tests before these fixes: 1,288.
+
+### Fix 1: skip links that move focus late
+
+- After Enter on a `#fragment` skip link, the check now polls (every 50 ms, up to 1,500 ms) for focus on or inside the target, instead of reading focus after a fixed 100 ms. The failure path is unchanged when the wait times out. Non-fragment skip links keep the 100 ms wait (narrowest reading: the reported problem is webflow.js handling of same-page anchors).
+- Fixture `test/fixtures/skip-link-delayed-focus.html`: focus after 600 ms passes (it fails on the old code); `data-focus="never"` still reports `broken_skip_navigation`.
+- Before, scan `0b7d5e28`: 3 `broken_skip_navigation` findings, 50 page occurrences (48 for `#main-content`, plus 2 pages whose skip link points at `#win`). Scan `4d008e9e` had none.
+- After, live rescan of `/brands` and `/creators` with the `skip-nav` check only: 0 `broken_skip_navigation`, 2.4.1 passed, the check ran on both pages. The `#win` pages were not in the allowed URL list and were not rescanned.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.

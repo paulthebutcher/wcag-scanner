@@ -171,6 +171,9 @@ function isSkipNavLink(text: string, href: string): boolean {
   return false;
 }
 
+/** How long to wait for a skip link to move focus to its target. */
+const SKIP_LINK_FOCUS_TIMEOUT_MS = 1500;
+
 /**
  * Activate a skip link and verify it works correctly.
  */
@@ -193,8 +196,24 @@ async function activateAndVerifySkipLink(
   // Activate the skip link
   await page.keyboard.press("Enter");
 
-  // Wait for navigation/focus change
-  await page.waitForTimeout(100);
+  // Wait for the focus change. Site scripts often intercept same-page
+  // anchors, smooth-scroll, and only then move focus (webflow.js lands on
+  // the target 400-800 ms after activation), so poll for focus on or inside
+  // the fragment target instead of reading it after a fixed delay. On
+  // timeout the check below reports the link as broken, as before.
+  if (href.startsWith("#") && href.length > 1) {
+    await page.waitForFunction(
+      (targetId: string) => {
+        const target = document.getElementById(targetId);
+        const active = document.activeElement;
+        return !!target && !!active && (active === target || target.contains(active));
+      },
+      href.slice(1),
+      { timeout: SKIP_LINK_FOCUS_TIMEOUT_MS, polling: 50 },
+    ).catch(() => {});
+  } else {
+    await page.waitForTimeout(100);
+  }
 
   // Check where focus moved
   const targetInfo = await page.evaluate((expectedHref: string) => {

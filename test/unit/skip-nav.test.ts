@@ -14,6 +14,8 @@ import {
 const fixturePath = join(import.meta.dirname, "..", "fixtures", "skip-nav-test.html");
 const fixtureHtml = readFileSync(fixturePath, "utf-8");
 
+const delayedFocusHtml = readFileSync(join(import.meta.dirname, "..", "fixtures", "skip-link-delayed-focus.html"), "utf-8");
+
 // ---------------------------------------------------------------------------
 // verifySkipNav tests
 // ---------------------------------------------------------------------------
@@ -258,6 +260,48 @@ describe("verifySkipNav", () => {
 // ---------------------------------------------------------------------------
 // runSkipNavChecks — CheckResult generation
 // ---------------------------------------------------------------------------
+
+describe("skip link that moves focus after a delay (webflow.js style)", () => {
+  let browser: Browser;
+  let context: BrowserContext;
+
+  beforeAll(async () => {
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext();
+  });
+
+  afterAll(async () => {
+    await browser.close();
+  });
+
+  it("passes when a click handler focuses the target 600 ms later", async () => {
+    const page = await context.newPage();
+    try {
+      await page.setContent(delayedFocusHtml);
+      const result = await verifySkipNav(page);
+      expect(result.found).toBe(true);
+      expect(result.focusMoved).toBe(true);
+      expect(result.failureReason).toBeNull();
+      await page.setContent(delayedFocusHtml);
+      expect(await runSkipNavChecks(page)).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("still fails when focus never moves to the target", async () => {
+    const page = await context.newPage();
+    try {
+      await page.setContent(delayedFocusHtml.replace('data-focus="delayed"', 'data-focus="never"'));
+      const results = await runSkipNavChecks(page);
+      expect(results).toHaveLength(1);
+      expect((results[0].raw_result as { type: string }).type).toBe("broken_skip_navigation");
+      expect(results[0].measured_values?.focus_moved).toBe(false);
+    } finally {
+      await page.close();
+    }
+  });
+});
 
 describe("runSkipNavChecks", () => {
   let browser: Browser;
