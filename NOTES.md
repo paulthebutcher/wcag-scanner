@@ -189,6 +189,30 @@ The truncation did not reproduce in 9 keyboard-only sweeps, so the retry path ra
   - Before: the 3 GrowSurf landing-page images (`alt="1"`, `"2"`, `"3"`, 144 page occurrences) were Top fixes #4–6; GrowSurf third-party occurrences 338.
   - After: no GrowSurf rows in Top fixes or Findings by Type; the images are in the Third-party section; GrowSurf third-party occurrences 482.
 
+### Fix 5: cluster signature included element text
+
+- `elementSignature` now hashes the whole element, including its text, only for content failure types where the wording is the problem (`signatureKeepsText`):
+  - alt-text quality: `alt_not_descriptive`, `empty_alt_on_informative`, `decorative_with_alt`, `missing_alt`, `image-alt`, `filename_as_alt`, `placeholder_alt`, `alt_too_long`, `redundant_alt`, `redundant_with_context`;
+  - link text: `generic_link_text`, `duplicate_link_text`, `ambiguous_without_context`, `url_as_link_text`, `non_descriptive_link`, `empty_link`, `image_link_no_alt`, `link-name`;
+  - heading text: `non_descriptive`, `heading_too_generic`, `empty_heading`, `heading_too_long`, `style_not_structure`;
+  - Claude's generic `semantic` type under 1.1.1, 2.4.4 or 2.4.6.
+
+  For every other failure type the hash covers only the element's own opening tag (volatile attributes removed).
+- Assumptions:
+  - "Keep text only for content types" is applied literally: the brief's structural list (focus, role, keyboard, contrast, landmarks, skip nav, hidden focus) is covered, and so is any other non-content type.
+  - Inline formatting inside an element counts as content too. Removing only text nodes left the FAQ in two clusters, because 4 of its 17 links wrap the text in `<strong>`.
+  - Measured colour contrast was already keyed by text colour, so it is unaffected.
+- Before/after, reclustering stored data:
+
+| Scan | Measure | Before | After |
+|---|---|---|---|
+| `4d008e9e` | focus_on_hidden_element (FAQ) clusters | 17 (1 occurrence each) | 1 (17 occurrences) |
+| `4d008e9e` | all clusters | 254 | 123 |
+| `0b7d5e28` | all clusters | 239 | 130 |
+| both | generic_link_text clusters (text kept) | 4 / 3 | 4 / 3 |
+
+Tests after all five fixes: 1,305 (1,288 before).
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.

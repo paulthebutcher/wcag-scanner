@@ -106,11 +106,41 @@ export function failureTypeOf(finding: Finding): string {
 }
 
 /**
+ * Failure types where the wording is the problem (alt text, link text,
+ * heading text): one cluster per distinct text. Every other failure type is
+ * about the component itself (focus, role, keyboard, landmarks, skip links,
+ * hidden focus), so its text is left out and every instance of the
+ * component clusters together.
+ */
+const TEXT_SIGNATURE_TYPES = new Set([
+  // Alt text quality
+  "alt_not_descriptive", "empty_alt_on_informative", "decorative_with_alt", "missing_alt",
+  "image-alt", "filename_as_alt", "placeholder_alt", "alt_too_long", "redundant_alt", "redundant_with_context",
+  // Link text
+  "generic_link_text", "duplicate_link_text", "ambiguous_without_context", "url_as_link_text",
+  "non_descriptive_link", "empty_link", "image_link_no_alt", "link-name",
+  // Heading text
+  "non_descriptive", "heading_too_generic", "empty_heading", "heading_too_long", "style_not_structure",
+]);
+
+/** Claude's generic "semantic" type is a wording judgement under these criteria. */
+const TEXT_SIGNATURE_SEMANTIC_CRITERIA = new Set(["1.1.1", "2.4.4", "2.4.6"]);
+
+export function signatureKeepsText(finding: Finding): boolean {
+  const ft = failureTypeOf(finding);
+  if (TEXT_SIGNATURE_TYPES.has(ft)) return true;
+  return ft === "semantic" && TEXT_SIGNATURE_SEMANTIC_CRITERIA.has(finding.wcag_criterion);
+}
+
+/**
  * Deterministic signature of a finding's component and failure.
  *
  * Normally: criterion | failure type | selector without :nth-* | root class
- * list | data-w-id | hash of the HTML with src/href/srcset/style values
- * removed.
+ * list | data-w-id | hash of the markup with src/href/srcset/style values
+ * removed. For content failure types (signatureKeepsText) the hash covers
+ * the whole element including its text; for every other type it covers
+ * only the element's own opening tag, so text and inline formatting inside
+ * it (a <strong> in one FAQ link, none in another) do not split one fix.
  *
  * Measured axe colour-contrast results are keyed by their foreground colour
  * instead: the fix is one colour change, and that colour is usually shared by
@@ -129,7 +159,7 @@ export function elementSignature(finding: Finding): string {
     normalizeSelector(finding.evidence.element_selector ?? ""),
     rootClassList(html).join(" "),
     dataWId(html) ?? "",
-    sha1(stripVolatileAttributes(html)),
+    sha1(stripVolatileAttributes(signatureKeepsText(finding) ? html : rootTag(html))),
   ].join("|");
 }
 

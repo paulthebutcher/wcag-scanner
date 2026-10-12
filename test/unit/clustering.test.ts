@@ -61,6 +61,32 @@ describe("signature normalization", () => {
     expect(elementSignature(footer)).toBe("1.4.3|color-contrast|fg:#286140");
   });
 
+  it("leaves text out of the signature for structural failures (one FAQ fix, one cluster)", () => {
+    const faq = (text: string, n: number) => makeTestFinding({
+      criterion: "2.4.7", failureType: "focus_on_hidden_element", detectedBy: "playwright",
+      selector: `body > section:nth-of-type(${n}) > div > div > p:nth-of-type(${n}) > a`,
+      html: `<a href="https://www.popfly.com/post/${n}">${text}</a>`,
+    });
+    const sigs = new Set([
+      faq("how to launch an affiliate program", 1),
+      faq("<strong>ambassador program</strong>", 2),
+      faq("Sign-up for an onboarding call", 3),
+    ].map(elementSignature));
+    expect(sigs.size).toBe(1);
+
+    const footer = (text: string) => makeTestFinding({ criterion: "2.4.7", failureType: "no_visible_focus_indicator", detectedBy: "playwright", selector: "footer a", html: `<a href="/x" class="footer-link-l2">${text}</a>` });
+    expect(elementSignature(footer("Centralize"))).toBe(elementSignature(footer("Ambassadorship")));
+  });
+
+  it("keeps text in the signature where the wording is the problem", () => {
+    const link = (text: string) => makeTestFinding({ criterion: "2.4.4", failureType: "generic_link_text", detectedBy: "claude_api", selector: "main a", html: `<a href="/x" class="c-btn">${text}</a>` });
+    expect(elementSignature(link("Learn more"))).not.toBe(elementSignature(link("Read more")));
+    const alt = (a: string) => makeTestFinding({ criterion: "1.1.1", failureType: "placeholder_alt", html: `<img src="x.png" alt="${a}">`, selector: "img" });
+    expect(elementSignature(alt("image"))).not.toBe(elementSignature(alt("photo")));
+    const semanticAlt = (a: string) => makeTestFinding({ criterion: "1.1.1", failureType: "semantic", html: `<img src="x.png" alt="${a}">`, selector: "img" });
+    expect(elementSignature(semanticAlt("1"))).not.toBe(elementSignature(semanticAlt("2")));
+  });
+
   it("is deterministic across calls", () => {
     const f = makeTestFinding({ failureType: "aria-prohibited-attr", html: '<div aria-label="Next" class="swiper-button-next"></div>' });
     expect(elementSignature(f)).toBe(elementSignature(structuredClone(f)));
