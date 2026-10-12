@@ -175,6 +175,20 @@ The truncation did not reproduce in 9 keyboard-only sweeps, so the retry path ra
 | `4d008e9e` | potentially_missing_accessible_name | 1, 46 | none |
 | `4d008e9e` | custom_interactive_no_role / missing_aria_role_on_custom_interactive_element (`fail`) | 4, 16 | unchanged |
 
+### Fix 4: GrowSurf images not tagged third-party
+
+- `isGrowSurfElement()` in `src/report/clustering.ts` is now the one place GrowSurf is recognised:
+  - the element's own `data-grsf-*` attribute;
+  - a `grsf-` id or class on the element, or on any ancestor named in its selector path;
+  - a `[data-grsf…]` attribute selector;
+  - a `src`/`href`/`srcset` (or an attribute selector on one) containing "growsurf".
+
+  `exclusionFor` uses it; the old `THIRD_PARTY_EMBEDS` prefix list is removed.
+- Assumption: stored findings keep only the element's own markup and its selector, not ancestor markup, so "any ancestor" is checked through the ids and classes in the selector path. A `data-grsf-*` attribute on an ancestor that is not in the selector is not seen.
+- Before/after, regenerating the `0b7d5e28` report from stored data:
+  - Before: the 3 GrowSurf landing-page images (`alt="1"`, `"2"`, `"3"`, 144 page occurrences) were Top fixes #4–6; GrowSurf third-party occurrences 338.
+  - After: no GrowSurf rows in Top fixes or Findings by Type; the images are in the Third-party section; GrowSurf third-party occurrences 482.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.

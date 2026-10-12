@@ -142,11 +142,6 @@ export function clusterId(signature: string): string {
 // Exclusions
 // ---------------------------------------------------------------------------
 
-/** Known third-party embeds, recognised by id/class prefix. */
-export const THIRD_PARTY_EMBEDS: Array<{ name: string; prefix: string }> = [
-  { name: "GrowSurf", prefix: "grsf-" },
-];
-
 function idAndClassTokens(finding: Finding): string[] {
   const tag = rootTag(finding.evidence.element_html ?? "");
   const tokens = [
@@ -158,16 +153,35 @@ function idAndClassTokens(finding: Finding): string[] {
 }
 
 /**
+ * GrowSurf (referral widget) content. One function so every rule lives in
+ * one place: the element's own data-grsf-* attribute or grsf- id/class, a
+ * grsf- id/class on any ancestor named in its selector path, or a
+ * src/href/srcset pointing at GrowSurf. Stored findings keep only the
+ * element's own markup, so ancestors are seen through the selector.
+ */
+export function isGrowSurfElement(finding: Finding): boolean {
+  const html = finding.evidence.element_html ?? "";
+  const selector = finding.evidence.element_selector ?? "";
+  const tag = rootTag(html);
+  if (/\sdata-grsf[\w-]*(\s*=|[\s>/])/i.test(tag)) return true;
+  if (idAndClassTokens(finding).some((t) => t.startsWith("grsf-"))) return true;
+  if (/\[data-grsf/i.test(selector)) return true;
+  for (const attr of ["src", "href", "srcset"]) {
+    if (/growsurf/i.test(attrValue(tag, attr) ?? "")) return true;
+  }
+  // Attribute selectors such as img[src="https://…growsurf-prod/…"]
+  return /\[(?:src|href|srcset)[^\]]*growsurf/i.test(selector);
+}
+
+/**
  * Why a finding is left out of Top fixes and failure counts, or null:
  * - axe colour-contrast where the background could not be determined
  *   (image, gradient, overlap) → needs a manual check;
- * - an element of a known third-party embed (id/class prefix) → third party.
+ * - GrowSurf content (isGrowSurfElement) or content inside an embedded
+ *   frame → third party.
  */
 export function exclusionFor(finding: Finding): { reason: ExclusionReason; detail: string } | null {
-  const tokens = idAndClassTokens(finding);
-  for (const embed of THIRD_PARTY_EMBEDS) {
-    if (tokens.some((t) => t.startsWith(embed.prefix))) return { reason: "third_party", detail: embed.name };
-  }
+  if (isGrowSurfElement(finding)) return { reason: "third_party", detail: "GrowSurf" };
   // axe reports results inside an embedded frame against the iframe's
   // selector, with the frame's own markup as the element: content from
   // YouTube, Instagram and similar embeds the site cannot edit.

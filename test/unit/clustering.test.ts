@@ -9,6 +9,7 @@ import {
   clusterFindings,
   rankClusters,
   exclusionFor,
+  isGrowSurfElement,
   partitionExclusions,
   type Cluster,
 } from "../../src/report/clustering.js";
@@ -153,6 +154,31 @@ describe("exclusions", () => {
     const bySelector = makeTestFinding({ failureType: "missing_autocomplete", selector: ".grsf-form-control:nth-child(2)", html: '<input name="email">' });
     for (const f of [byId, byClass, bySelector]) expect(exclusionFor(f)).toEqual({ reason: "third_party", detail: "GrowSurf" });
     expect(exclusionFor(makeTestFinding({ failureType: "x", html: '<div class="mygrsf-thing">' }))).toBeNull();
+  });
+
+  it("recognises GrowSurf content in one function: data-grsf-*, grsf- on element or ancestor, growsurf URLs", () => {
+    // The landing-page images that ranked #4-6 in Top fixes on 0b7d5e28
+    const image = makeTestFinding({
+      criterion: "1.1.1", failureType: "alt_not_descriptive", detectedBy: "claude_api",
+      selector: 'img[src="https://res.cloudinary.com/growsurf-prod/image/upload/v1763678699/landing_pages/"]',
+      html: '<img src="https://res.cloudinary.com/growsurf-prod/image/upload/v1763678699/landing_pages/bbpflr0mijggzpm1fn9i.png" alt="1" loading="lazy" decoding="async" fetchpriority="low" data-grsf-lazy-applied="true">',
+    });
+    expect(isGrowSurfElement(image)).toBe(true);
+    expect(exclusionFor(image)).toEqual({ reason: "third_party", detail: "GrowSurf" });
+
+    const cases: Array<[string, string, boolean]> = [
+      ['<span data-grsf-campaign="x">Refer</span>', "span", true],                       // data-grsf-* on the element
+      ['<div class="grsf-window-slider-chrome">', "div", true],                         // grsf- class on the element
+      ["<a>here</a>", "#grsf-share-modal > div > a", true],                             // grsf- id on an ancestor
+      ["<p>Copy</p>", ".grsf-window .content > p", true],                                // grsf- class on an ancestor
+      ['<a href="https://growsurf.com/referral">Join</a>', "a", true],                  // growsurf href
+      ['<img src="/hero.png" alt="">', "img", false],
+      ['<div class="mygrsf-thing">', "div", false],                                      // not a prefix
+      ['<a href="/surf-trip">Growing your surf brand</a>', "a", false],
+    ];
+    for (const [html, selector, expected] of cases) {
+      expect(isGrowSurfElement(makeTestFinding({ failureType: "x", html, selector })), html).toBe(expected);
+    }
   });
 
   it("partitions findings and renders separate sections", () => {
