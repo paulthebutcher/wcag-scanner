@@ -27,10 +27,19 @@ export interface WidgetCandidate {
   hasRole: boolean;
   hasTabindex: boolean;
   tagName: string;
+  /** role attribute value, if any */
+  role: string | null;
+  /** tabindex attribute value, if any */
+  tabindex: string | null;
+  /** Accessible name: aria-label, aria-labelledby target text, or visible text */
+  accessibleName: string;
+  /** Looks like it opens a modal dialog (aria-haspopup="dialog", modal/popup/lightbox classes) */
+  opensModal: boolean;
 }
 
 interface WidgetEvaluation {
-  verdict: "pass" | "fail" | "needs_review";
+  /** "uncertain" is requested; older-style "needs_review" is read as uncertain */
+  verdict: "pass" | "fail" | "uncertain" | "needs_review";
   confidence: number;
   reasoning: string;
   wcag_criterion: string;
@@ -56,6 +65,15 @@ Check if the element:
 1. Has an appropriate ARIA role (button, tab, menuitem, etc.) if it's a non-native interactive element
 2. Has required ARIA states (aria-expanded for accordions, aria-selected for tabs)
 3. Is keyboard accessible (has tabindex if not natively focusable)
+
+For this evaluation the "verdict" field must be exactly one of "fail", "pass" or "uncertain":
+- "fail": you can point to a specific failure in the evidence given.
+- "pass": the element meets 4.1.2. An element with a valid role, a tabindex of 0 (or native focusability) and a non-empty accessible name meets the Name, Role and focusability requirements; never report those for it.
+- "uncertain": the evidence cannot settle it. Do not express doubt through the failure type (no "possible_" or "potentially_" prefixes).
+
+aria-expanded applies only to controls that show or hide content in place (disclosure, accordion, dropdown or navigation menu). A button that opens a modal dialog does not need aria-expanded; do not report missing_aria_expanded for it.
+
+The accessible name is given to you (from aria-label, aria-labelledby or the element's visible text); the HTML shown may be only the opening tag.
 
 Common failure types: missing_aria_expanded, missing_tab_role, custom_interactive_no_role`,
   outputSchema: ELEMENT_EVAL_OUTPUT_SCHEMA,
@@ -86,6 +104,105 @@ function buildSelector(tagName: string, attrStr: string, index: number): string 
     return `${tagName}.${classes}`;
   }
   return `${tagName}:nth-of-type(${index + 1})`;
+}
+
+// ---------------------------------------------------------------------------
+// Accessible name, role and focusability (deterministic pre-check)
+// ---------------------------------------------------------------------------
+
+/** Roles that make a non-native element an interactive control. */
+const VALID_WIDGET_ROLES = new Set([
+  "button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox",
+  "menuitemradio", "option", "combobox", "slider", "spinbutton", "textbox", "treeitem", "gridcell",
+]);
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Inner HTML of the element whose opening tag starts at `openIndex`,
+ * found by balancing tags of the same name. Empty if it cannot be closed.
+ */
+export function innerHtmlAt(dom: string, openIndex: number, tagName: string): string {
+  const openEnd = dom.indexOf(">", openIndex);
+  if (openEnd === -1) return "";
+  const re = new RegExp(`<(/?)${tagName}\\b[^>]*>`, "gi");
+  re.lastIndex = openEnd + 1;
+  let depth = 1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(dom)) !== null) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return dom.slice(openEnd + 1, m.index);
+  }
+  return "";
+}
+
+/** Accessible name from aria-label, aria-labelledby targets, or visible text. */
+export function accessibleNameOf(dom: string, attrStr: string, innerHtml: string): string {
+  const label = getAttr(attrStr, "aria-label");
+  if (label && label.trim()) return label.trim();
+  const labelledBy = getAttr(attrStr, "aria-labelledby");
+  if (labelledBy) {
+    const parts = labelledBy.split(/\s+/).filter(Boolean).map((id) => {
+      const m = dom.match(new RegExp(`<([a-zA-Z0-9-]+)\\b[^>]*\\bid\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>`));
+      return m ? stripTags(innerHtmlAt(dom, m.index!, m[1])) : "";
+    }).filter(Boolean);
+    if (parts.length > 0) return parts.join(" ");
+  }
+  return stripTags(innerHtml);
+}
+
+/** Opens a modal dialog rather than toggling content in place. */
+function looksLikeModalOpener(attrStr: string): boolean {
+  if (/aria-haspopup\s*=\s*["']dialog["']/i.test(attrStr)) return true;
+  const cls = getAttr(attrStr, "class") ?? "";
+  return /\b(modal|popup|pop-up|lightbox|dialog)\b/i.test(cls);
+}
+
+/**
+ * Deterministic pre-check: a valid role, focusable, and a non-empty
+ * accessible name. When it passes, name-, role- and focusability-related
+ * failures are not reported for the element.
+ */
+export function passesNameRoleFocusPreCheck(candidate: Pick<WidgetCandidate, "role" | "tabindex" | "accessibleName" | "tagName">): boolean {
+  const role = candidate.role?.trim().toLowerCase() ?? "";
+  const nativeControl = candidate.tagName === "a" || candidate.tagName === "button";
+  const validRole = VALID_WIDGET_ROLES.has(role) || (nativeControl && role === "");
+  const tabindex = candidate.tabindex !== null ? parseInt(candidate.tabindex, 10) : NaN;
+  const focusable = (!Number.isNaN(tabindex) && tabindex >= 0) || (nativeControl && Number.isNaN(tabindex));
+  return validRole && focusable && candidate.accessibleName.trim().length > 0;
+}
+
+/** Failure types about the accessible name, the role or keyboard focusability. */
+const NAME_ROLE_FOCUS_FAILURE = /name|label|role|focus|tabindex|keyboard|custom_interactive/i;
+
+export type WidgetVerdict = "fail" | "pass" | "uncertain";
+
+/**
+ * Map the model's answer to a verdict. Only "fail" becomes a finding;
+ * "uncertain" becomes a needs-review item. Hedged failure types
+ * (possible_/potentially_) are uncertain. Name/role/focus failures on an
+ * element that passes the pre-check, and missing_aria_expanded on a modal
+ * opener, contradict the evidence and are dropped.
+ */
+export function mapWidgetVerdict(
+  evaluation: Pick<WidgetEvaluation, "verdict" | "failure_type">,
+  candidate: Pick<WidgetCandidate, "role" | "tabindex" | "accessibleName" | "tagName" | "opensModal">,
+): WidgetVerdict {
+  const ft = evaluation.failure_type ?? "";
+  let verdict: WidgetVerdict = evaluation.verdict === "fail" ? "fail" : evaluation.verdict === "pass" ? "pass" : "uncertain";
+  if (verdict === "fail" && /^(possible|possibly|potentially)_/i.test(ft)) verdict = "uncertain";
+  if (verdict === "pass") return "pass";
+  if (ft && NAME_ROLE_FOCUS_FAILURE.test(ft) && passesNameRoleFocusPreCheck(candidate)) return "pass";
+  if (/aria_expanded/i.test(ft) && candidate.opensModal) return "pass";
+  return verdict;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +243,10 @@ export function collectWidgetCandidates(dom: string): WidgetCandidate[] {
       hasRole: getAttr(attrStr, "role") !== null,
       hasTabindex: getAttr(attrStr, "tabindex") !== null,
       tagName,
+      role: getAttr(attrStr, "role"),
+      tabindex: getAttr(attrStr, "tabindex"),
+      accessibleName: accessibleNameOf(dom, attrStr, match[3]),
+      opensModal: looksLikeModalOpener(attrStr),
     });
     accIndex++;
   }
@@ -149,6 +270,10 @@ export function collectWidgetCandidates(dom: string): WidgetCandidate[] {
       hasRole: getAttr(attrStr, "role") !== null || hasTabRole,
       hasTabindex: getAttr(attrStr, "tabindex") !== null,
       tagName,
+      role: getAttr(attrStr, "role"),
+      tabindex: getAttr(attrStr, "tabindex"),
+      accessibleName: accessibleNameOf(dom, attrStr, match[3]),
+      opensModal: looksLikeModalOpener(attrStr),
     });
     tabIndex++;
   }
@@ -189,6 +314,12 @@ export function collectWidgetCandidates(dom: string): WidgetCandidate[] {
       hasRole,
       hasTabindex,
       tagName,
+      role: getAttr(attrStr, "role"),
+      tabindex: getAttr(attrStr, "tabindex"),
+      // Only the opening tag is kept as the element HTML; the name comes
+      // from the whole element (visible text such as "Request a Demo")
+      accessibleName: accessibleNameOf(dom, attrStr, innerHtmlAt(dom, match.index, tagName)),
+      opensModal: looksLikeModalOpener(attrStr),
     });
     intIndex++;
   }
@@ -293,6 +424,10 @@ export async function runWidgetAriaChecks(
           tabindex: "",
         },
       });
+    } else if (passesNameRoleFocusPreCheck(candidate) && candidate.opensModal) {
+      // A named, focusable control with a valid role that opens a modal:
+      // nothing left for 4.1.2 to fail (aria-expanded does not apply)
+      continue;
     } else {
       // Ambiguous — needs Claude evaluation
       ambiguousCandidates.push(candidate);
@@ -310,10 +445,12 @@ ${candidate.html}
 
 Widget type detected: ${candidate.type}
 Tag name: ${candidate.tagName}
-Has ARIA role: ${candidate.hasRole}
-Has tabindex: ${candidate.hasTabindex}
+Has ARIA role: ${candidate.hasRole}${candidate.role ? ` (role="${candidate.role}")` : ""}
+Has tabindex: ${candidate.hasTabindex}${candidate.tabindex !== null ? ` (tabindex="${candidate.tabindex}")` : ""}
 Has aria-expanded: ${candidate.hasAriaExpanded}
-Has role="tab": ${candidate.hasTabRole}`,
+Has role="tab": ${candidate.hasTabRole}
+Accessible name: ${candidate.accessibleName ? `"${candidate.accessibleName.slice(0, 120)}"` : "(none found)"}
+Appears to open a modal dialog: ${candidate.opensModal}`,
     }));
 
     const llmResults: PromptResult<WidgetEvaluation>[] = await runner.runPrompts<WidgetEvaluation>(inputs);
@@ -339,14 +476,18 @@ Has role="tab": ${candidate.hasTabRole}`,
             widget_type: candidate.type,
             has_role: candidate.hasRole,
             has_tabindex: candidate.hasTabindex,
+            verdict: "uncertain",
           },
         });
         continue;
       }
 
       const evaluation = result.data;
+      const verdict = mapWidgetVerdict(evaluation, candidate);
 
-      if (evaluation.verdict === "fail" || evaluation.verdict === "needs_review") {
+      // Only "fail" is a finding; "uncertain" is kept for review (scored
+      // needs_review, so it stays out of Top fixes and failure counts)
+      if (verdict !== "pass") {
         results.push({
           element_selector: candidate.selector,
           element_html: candidate.html,
@@ -359,6 +500,8 @@ Has role="tab": ${candidate.hasTabRole}`,
             has_role: candidate.hasRole,
             has_tabindex: candidate.hasTabindex,
             confidence: evaluation.confidence,
+            verdict,
+            accessible_name: candidate.accessibleName,
           },
           aria_attributes: {
             role: candidate.hasRole ? "present" : "",

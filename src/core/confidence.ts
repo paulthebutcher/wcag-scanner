@@ -259,6 +259,13 @@ export function scoreConfidence(finding: Finding): Confidence {
         tier = "moderate";
       }
 
+      // A check that maps the model's answer to "uncertain" asks for review
+      if (measured?.verdict === "uncertain") {
+        score = Math.min(score, 0.4);
+        tier = "needs_review";
+        break;
+      }
+
       // Override: if Claude returned low confidence, downgrade
       const claudeConfidence = measured?.confidence as number | undefined;
       if (claudeConfidence !== undefined && claudeConfidence < score) {

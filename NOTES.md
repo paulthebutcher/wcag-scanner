@@ -152,6 +152,29 @@ Reference scans: `0b7d5e28` (latest) and `4d008e9e`. Tests before these fixes: 1
 
 The truncation did not reproduce in 9 keyboard-only sweeps, so the retry path ran only in the fixture tests, and what stole focus on the truncated runs is still unknown: the reference scans predate `lastFocusedSelector`. The truncated runs were full scans (all checks, 4 pages at a time); these were keyboard-only subset scans. The next full scan that truncates will record the element in `first_sweep_last_focused` and in the coverage message.
 
+### Fix 3: AI findings that contradict their own reasoning
+
+- Root cause: for `data-w-id` elements the check sent the model only the opening tag (`<div tabindex="0" role="button" … class="btn modal full">`), so it never saw the visible text "Request a Demo". It then flagged a missing name while saying the element had a valid role and focus.
+- Changes in `src/checks/semantic/widget-aria.ts`:
+  - Each candidate gets its role, tabindex, accessible name (aria-label, aria-labelledby target text, or visible text of the whole element, found by tag balancing) and whether it opens a modal (`aria-haspopup="dialog"` or a modal/popup/lightbox/dialog class).
+  - The name is passed to the model.
+  - Deterministic pre-check: with a valid widget role, focusable (tabindex ≥ 0, or a native link/button) and a non-empty name, failure types about name, label, role, focus, tabindex or keyboard are dropped. A pre-check-passing modal opener is not sent to the model at all.
+  - `mapWidgetVerdict`: the prompt asks for `fail` | `pass` | `uncertain` (`needs_review` is read as uncertain; `possible_`/`possibly_`/`potentially_` failure types are uncertain). Only `fail` is a failure. `uncertain` is stored with `measured_values.verdict = "uncertain"`, which `confidence.ts` scores needs_review (one added branch). The existing client-report filter (`possibly_noisy`) then keeps it out of Top fixes and failure counts, while it stays in findings.md.
+  - `missing_aria_expanded` is dropped for modal openers. The prompt says aria-expanded applies only to controls that show or hide content in place.
+- Assumption: the widget prompt is defined in `widget-aria.ts`, not `src/prompts/`. The shared `ELEMENT_EVAL_BASE_SYSTEM` in `src/prompts/element-evaluation.ts` is used by every element prompt and was left unchanged; the widget prompt adds a verdict override.
+- Before/after (stored model answers replayed through the new pre-check and mapping, using each page's stored DOM; no live scan for this fix):
+
+| Scan | Finding | Before | After |
+|---|---|---|---|
+| `0b7d5e28` | missing_aria_expanded on div.btn.modal.full | 1 finding, 49 occurrences | none (modal opener, not sent to the model) |
+| `0b7d5e28` | missing_accessible_name on div.btn.modal | 2 findings, 2 occurrences | none |
+| `0b7d5e28` | potentially_missing_accessible_name (named, focusable button) | 1 finding, 46 occurrences | none |
+| `0b7d5e28` | semantic (hedged) | 1, 1 | uncertain: review only, out of counts |
+| `0b7d5e28` | custom_interactive_no_role (model `fail`) | 4, 16 | unchanged |
+| `4d008e9e` | missing_accessible_name on div.btn.modal.full | 1, 49 | none |
+| `4d008e9e` | potentially_missing_accessible_name | 1, 46 | none |
+| `4d008e9e` | custom_interactive_no_role / missing_aria_role_on_custom_interactive_element (`fail`) | 4, 16 | unchanged |
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.

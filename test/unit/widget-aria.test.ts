@@ -3,8 +3,13 @@ import {
   collectWidgetCandidates,
   runWidgetAriaChecks,
   getAttr,
+  passesNameRoleFocusPreCheck,
+  mapWidgetVerdict,
 } from "../../src/checks/semantic/widget-aria.js";
 import { PromptRunner } from "../../src/core/prompt-runner.js";
+import { scoreConfidence } from "../../src/core/confidence.js";
+import { shouldFilterFromClientReport } from "../../src/report/findings-dump.js";
+import { makeTestFinding } from "./finding-factory.js";
 
 // ---------------------------------------------------------------------------
 // Test HTML snippets
@@ -346,5 +351,105 @@ describe("runWidgetAriaChecks", () => {
       r => r.detected_by === "playwright" && r.measured_values?.failure_type === "custom_interactive_no_role"
     );
     expect(structural).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pre-check and verdict mapping (contradicting AI findings)
+// ---------------------------------------------------------------------------
+
+describe("name/role/focus pre-check and verdict mapping", () => {
+  // The element from scan 0b7d5e28 that was flagged missing_accessible_name
+  // and missing_aria_expanded on 49 pages
+  const REQUEST_DEMO = `<div tabindex="0" role="button" data-w-id="ff1fba9b-c373-5725-91ea-e26e90dbbe5c" class="btn modal full"><div>Request a Demo</div></div>`;
+  const page = (body: string) => `<html><body>${body}</body></html>`;
+
+  const llm = (data: Record<string, unknown>) => ({
+    success: true,
+    data: { confidence: 0.8, reasoning: "r", wcag_criterion: "4.1.2", suggestion: null, affected_users: [], requires_human_verification: false, ...data },
+    rawResponse: "{}", model: "m", tokensUsed: 1, latencyMs: 1, retries: 0,
+  });
+
+  let mockRunner: PromptRunner;
+  let runPromptsSpy: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    mockRunner = new PromptRunner("test-key", { max_retries: 0 });
+    runPromptsSpy = vi.fn().mockResolvedValue([]);
+    mockRunner.runPrompts = runPromptsSpy;
+  });
+
+  it("reads the accessible name from visible text, aria-label and aria-labelledby", () => {
+    const [demo] = collectWidgetCandidates(page(REQUEST_DEMO));
+    expect(demo.accessibleName).toBe("Request a Demo");
+    expect(demo.role).toBe("button");
+    expect(demo.tabindex).toBe("0");
+    expect(demo.opensModal).toBe(true);
+    expect(passesNameRoleFocusPreCheck(demo)).toBe(true);
+
+    const [labelled] = collectWidgetCandidates(page(`<span id="lbl">Next slide</span><div data-w-id="a" role="button" tabindex="0" aria-labelledby="lbl"><img src="arrow.svg" alt=""></div>`));
+    expect(labelled.accessibleName).toBe("Next slide");
+    const [aria] = collectWidgetCandidates(page(`<div data-w-id="b" role="button" tabindex="0" aria-label="Close"></div>`));
+    expect(aria.accessibleName).toBe("Close");
+  });
+
+  it("fails the pre-check without a role, without focusability, or without a name", () => {
+    const base = { role: "button", tabindex: "0", accessibleName: "Go", tagName: "div" };
+    expect(passesNameRoleFocusPreCheck(base)).toBe(true);
+    expect(passesNameRoleFocusPreCheck({ ...base, role: null })).toBe(false);
+    expect(passesNameRoleFocusPreCheck({ ...base, role: "presentation" })).toBe(false);
+    expect(passesNameRoleFocusPreCheck({ ...base, tabindex: null })).toBe(false);
+    expect(passesNameRoleFocusPreCheck({ ...base, tabindex: "-1" })).toBe(false);
+    expect(passesNameRoleFocusPreCheck({ ...base, accessibleName: "  " })).toBe(false);
+  });
+
+  it("maps verdicts: only fail is a failure; hedged types are uncertain", () => {
+    const plain = { role: null, tabindex: null, accessibleName: "", tagName: "div", opensModal: false };
+    expect(mapWidgetVerdict({ verdict: "fail", failure_type: "custom_interactive_no_role" }, plain)).toBe("fail");
+    expect(mapWidgetVerdict({ verdict: "pass", failure_type: null }, plain)).toBe("pass");
+    expect(mapWidgetVerdict({ verdict: "uncertain", failure_type: null }, plain)).toBe("uncertain");
+    expect(mapWidgetVerdict({ verdict: "needs_review", failure_type: null }, plain)).toBe("uncertain");
+    expect(mapWidgetVerdict({ verdict: "fail", failure_type: "possible_missing_accessible_name" }, plain)).toBe("uncertain");
+    expect(mapWidgetVerdict({ verdict: "fail", failure_type: "potentially_missing_aria_selected_or_aria_controls" }, plain)).toBe("uncertain");
+  });
+
+  it("drops name/role/focus failures and modal aria-expanded for the Request a Demo button", () => {
+    const [demo] = collectWidgetCandidates(page(REQUEST_DEMO));
+    expect(mapWidgetVerdict({ verdict: "fail", failure_type: "missing_accessible_name" }, demo)).toBe("pass");
+    expect(mapWidgetVerdict({ verdict: "needs_review", failure_type: "potentially_missing_accessible_name" }, demo)).toBe("pass");
+    expect(mapWidgetVerdict({ verdict: "fail", failure_type: "missing_aria_expanded" }, demo)).toBe("pass");
+    // A disclosure that toggles content in place still needs aria-expanded
+    const [toggle] = collectWidgetCandidates(page(`<div data-w-id="c" role="button" tabindex="0" class="faq-question">Shipping</div>`));
+    expect(toggle.opensModal).toBe(false);
+    expect(mapWidgetVerdict({ verdict: "fail", failure_type: "missing_aria_expanded" }, toggle)).toBe("fail");
+  });
+
+  it("creates no finding for the Request a Demo button and does not ask the model", async () => {
+    const results = await runWidgetAriaChecks(page(REQUEST_DEMO), mockRunner);
+    expect(results).toHaveLength(0);
+    expect(runPromptsSpy).not.toHaveBeenCalled();
+  });
+
+  it("drops a contradicting model failure and keeps uncertain answers for review only", async () => {
+    const dom = page(`
+      <div data-w-id="d1" role="button" tabindex="0" class="card-toggle">Pricing details</div>
+      <div data-w-id="d2" role="button" class="card-toggle">Plans</div>
+      <div data-w-id="d3" role="tab" tabindex="0" class="slider-dot"></div>`);
+    runPromptsSpy.mockResolvedValue([
+      llm({ verdict: "fail", failure_type: "missing_accessible_name" }), // contradicts the pre-check
+      llm({ verdict: "fail", failure_type: "custom_interactive_no_role" }), // no tabindex: a real failure
+      llm({ verdict: "fail", failure_type: "possible_missing_accessible_name" }), // hedged
+    ]);
+    const results = await runWidgetAriaChecks(dom, mockRunner);
+    const byType = Object.fromEntries(results.map((r) => [r.measured_values?.failure_type as string, r.measured_values?.verdict]));
+    expect(byType).toEqual({ custom_interactive_no_role: "fail", possible_missing_accessible_name: "uncertain" });
+  });
+});
+
+describe("uncertain widget verdicts are scored for review", () => {
+  it("scores verdict uncertain as needs_review, which the client report filters", () => {
+    const f = makeTestFinding({ criterion: "4.1.2", failureType: "possible_missing_accessible_name", detectedBy: "claude_api", measured: { verdict: "uncertain", confidence: 0.8 } });
+    const c = scoreConfidence(f);
+    expect(c.tier).toBe("needs_review");
+    expect(shouldFilterFromClientReport({ ...f, confidence: c })).toBe(true);
   });
 });
