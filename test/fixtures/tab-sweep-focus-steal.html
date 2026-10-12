@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tab sweep with focus stolen to body</title>
+</head>
+<!--
+  After the fourth link receives focus, the next three elements to receive
+  focus are blurred straight away, so three Tab presses in a row land on
+  <body> (the way some widget scripts steal focus). The keyboard sweep stops
+  there with only 4 of 12 links reached.
+  data-steal="once" steals only on the first load of the session, so a
+  reload-and-retry sweeps the whole page.
+-->
+<body data-steal="always">
+  <nav>
+    <a id="l1" href="/1">One</a>
+    <a id="l2" href="/2">Two</a>
+    <a id="l3" href="/3">Three</a>
+    <a id="l4" href="/4">Four</a>
+  </nav>
+  <main>
+    <a id="l5" href="/5">Five</a>
+    <a id="l6" href="/6">Six</a>
+    <a id="l7" href="/7">Seven</a>
+    <a id="l8" href="/8">Eight</a>
+    <a id="l9" href="/9">Nine</a>
+    <a id="l10" href="/10">Ten</a>
+    <a id="l11" href="/11">Eleven</a>
+    <a id="l12" href="/12">Twelve</a>
+  </main>
+  <script>
+    (function () {
+      var once = document.body.dataset.steal === "once";
+      if (once && sessionStorage.getItem("stolen")) return;
+      var armed = false;
+      var steals = 0;
+      document.addEventListener("focusin", function (event) {
+        if (event.target.id === "l4") { armed = true; return; }
+        if (armed && steals < 3) {
+          steals++;
+          if (once) sessionStorage.setItem("stolen", "1");
+          event.target.blur();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

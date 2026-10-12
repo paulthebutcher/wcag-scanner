@@ -1188,9 +1188,10 @@ export async function scan(
             // 2a: Keyboard reachability + trap checks (focus visible and
             // focus order need its tab sequence)
             if (runs("keyboard") || runs("focus-visible") || runs("focus-order")) try {
-              const { results: keyboardResults, tabSequence } = await runKeyboardChecks(page);
+              const { results: keyboardResults, tabSequence, partialReason, sweepSummary } = await runKeyboardChecks(page);
               if (runs("keyboard")) pageResults.push(...keyboardResults);
-              coverage.ran("keyboard", 2, snapshot.url);
+              if (partialReason) coverage.record("keyboard", 2, snapshot.url, "partial", partialReason);
+              else coverage.record("keyboard", 2, snapshot.url, "ran", sweepSummary);
 
               // 2b: Focus visible (needs tab sequence from keyboard check)
               if (runs("focus-visible")) try {

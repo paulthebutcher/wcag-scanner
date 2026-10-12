@@ -306,6 +306,8 @@ export function mapToSeverity(
     "motion_actuation_detected",
     "animated_content_needs_review",
     "animated_content_no_pause",
+    // Keyboard sweep cut short: a note for review, not a failure
+    "truncated_tab_sweep",
   ]);
   const isTier5FailureType = failureType !== undefined && (
     tier5FailureTypes.has(failureType) ||

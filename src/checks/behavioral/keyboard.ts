@@ -34,7 +34,21 @@ export interface TabSequenceResult {
   endedByCycle: boolean;
   /** Whether max tabs limit ended the sequence */
   endedByMax: boolean;
+  /** Why the sweep stopped */
+  exitReason: TabSweepExitReason;
+  /** Selector of the last element that had focus before the sweep stopped */
+  lastFocusedSelector: string | null;
+  /** Keyboard-reachable interactive elements on the page (reached or not) */
+  candidateCount: number;
 }
+
+/**
+ * cycle: focus returned to an earlier element (a full lap).
+ * max: the Tab press limit was reached.
+ * body_focus: focus landed on <body> MAX_CONSECUTIVE_BODY times in a row.
+ * repeat_cap: focus stayed on one element (an embedded frame) too long.
+ */
+export type TabSweepExitReason = "cycle" | "max" | "body_focus" | "repeat_cap";
 
 export interface UnreachableElement {
   selector: string;
@@ -247,6 +261,8 @@ export async function recordTabSequence(
   let endedByCycle = false;
   let endedByMax = false;
   let totalTabs = 0;
+  let exitReason: TabSweepExitReason = "max";
+  let lastFocusedSelector: string | null = null;
 
   // Reset focus. Calling body.focus() alone doesn't always reset the
   // browser's sequential-focus-navigation starting point; if something was
@@ -280,17 +296,24 @@ export async function recordTabSequence(
       // body repeatedly with no page element in between, the page has
       // nothing focusable left and we should stop.
       consecutiveBodyFocuses++;
-      if (consecutiveBodyFocuses >= MAX_CONSECUTIVE_BODY) break;
+      if (consecutiveBodyFocuses >= MAX_CONSECUTIVE_BODY) {
+        exitReason = "body_focus";
+        break;
+      }
       lastSelector = null;
       continue;
     }
     consecutiveBodyFocuses = 0;
+    lastFocusedSelector = info.selector;
 
     if (info.selector === lastSelector) {
       // Still inside the same embedded document. Past the cap, focus is
       // stuck there; the keyboard-trap check reports that case.
       consecutiveRepeats++;
-      if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) break;
+      if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
+        exitReason = "repeat_cap";
+        break;
+      }
       continue;
     }
     consecutiveRepeats = 0;
@@ -299,6 +322,7 @@ export async function recordTabSequence(
     // Cycle detection: an earlier element focused again — we've completed a lap.
     if (visitedSelectors.has(info.selector)) {
       endedByCycle = true;
+      exitReason = "cycle";
       break;
     }
 
@@ -319,7 +343,7 @@ export async function recordTabSequence(
   }
 
   // Find interactive elements not reached by tabbing
-  const unreachableElements = await findUnreachableElements(page, visitedSelectors);
+  const { unreachable: unreachableElements, candidateCount } = await findUnreachableElements(page, visitedSelectors);
 
   return {
     focusStops,
@@ -327,6 +351,9 @@ export async function recordTabSequence(
     totalTabs,
     endedByCycle,
     endedByMax,
+    exitReason,
+    lastFocusedSelector,
+    candidateCount,
   };
 }
 
@@ -336,9 +363,10 @@ export async function recordTabSequence(
 async function findUnreachableElements(
   page: Page,
   reachedSelectors: Set<string>,
-): Promise<UnreachableElement[]> {
+): Promise<{ unreachable: UnreachableElement[]; candidateCount: number }> {
   const interactiveElements = await page.$$(INTERACTIVE_SELECTOR);
   const unreachable: UnreachableElement[] = [];
+  let candidateCount = 0;
 
   for (const handle of interactiveElements) {
     const reachable = await isKeyboardReachable(handle);
@@ -346,6 +374,7 @@ async function findUnreachableElements(
       await handle.dispose();
       continue;
     }
+    candidateCount++;
 
     const info = await handle.evaluate((el) => {
       const htmlEl = el as HTMLElement;
@@ -395,7 +424,7 @@ async function findUnreachableElements(
     await handle.dispose();
   }
 
-  return unreachable;
+  return { unreachable, candidateCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,8 +440,87 @@ async function findUnreachableElements(
 export async function runKeyboardChecks(
   page: Page,
   options?: KeyboardCheckOptions,
-): Promise<{ results: CheckResult[]; tabSequence: TabSequenceResult }> {
-  const tabSequence = await recordTabSequence(page, options);
+): Promise<{
+  results: CheckResult[];
+  tabSequence: TabSequenceResult;
+  /** Set when the sweep stayed truncated after a retry: the check is partial on this page */
+  partialReason: string | null;
+  /** Whether the page was reloaded and swept a second time */
+  retried: boolean;
+  /** How the first sweep ended when it was retried (shows what stole focus) */
+  firstSweep: { exitReason: TabSweepExitReason; stops: number; lastFocusedSelector: string | null } | null;
+  /** One-line description of the sweep, for coverage */
+  sweepSummary: string;
+}> {
+  let tabSequence = await recordTabSequence(page, options);
+  let retried = false;
+  let firstSweep: { exitReason: TabSweepExitReason; stops: number; lastFocusedSelector: string | null } | null = null;
+
+  // A sweep that stops on <body> focus or a stuck element after reaching
+  // fewer than half of the page's controls usually means something stole
+  // focus (intermittently), not that the rest is unreachable. Retry once on
+  // a fresh load.
+  if (isTruncatedSweep(tabSequence)) {
+    retried = true;
+    firstSweep = {
+      exitReason: tabSequence.exitReason,
+      stops: tabSequence.focusStops.length,
+      lastFocusedSelector: tabSequence.lastFocusedSelector,
+    };
+    await page.reload({ waitUntil: "load", timeout: 30_000 }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+    tabSequence = await recordTabSequence(page, options);
+  }
+
+  const sweepValues = {
+    tab_sequence_length: tabSequence.focusStops.length,
+    total_tabs: tabSequence.totalTabs,
+    ended_by_cycle: tabSequence.endedByCycle,
+    ended_by_max: tabSequence.endedByMax,
+    exit_reason: tabSequence.exitReason,
+    last_focused_selector: tabSequence.lastFocusedSelector,
+    candidate_count: tabSequence.candidateCount,
+    retried,
+    ...(firstSweep ? {
+      first_sweep_exit_reason: firstSweep.exitReason,
+      first_sweep_stops: firstSweep.stops,
+      first_sweep_last_focused: firstSweep.lastFocusedSelector,
+    } : {}),
+  };
+  const firstSweepText = firstSweep
+    ? `; first sweep ${firstSweep.exitReason} after ${firstSweep.stops} stops, last focused ${firstSweep.lastFocusedSelector ?? "nothing"}`
+    : "";
+  const sweepSummary = `sweep ended by ${tabSequence.exitReason} after ${tabSequence.focusStops.length} stops, ` +
+    `last focused ${tabSequence.lastFocusedSelector ?? "nothing"}, retried ${retried ? "yes" : "no"}${firstSweepText}`;
+
+  // Still truncated: the unreached elements were never tested, so report
+  // the sweep for review instead of calling them unreachable.
+  if (isTruncatedSweep(tabSequence)) {
+    const reached = tabSequence.candidateCount - tabSequence.unreachableElements.length;
+    const partialReason = `tab sweep stopped early (${tabSequence.exitReason}) after ${tabSequence.focusStops.length} stops, ` +
+      `${reached} of ${tabSequence.candidateCount} controls reached, last focused ${tabSequence.lastFocusedSelector ?? "nothing"}; retried once${firstSweepText}`;
+    return {
+      results: [{
+        element_selector: tabSequence.lastFocusedSelector ?? "body",
+        element_html: `<tab-sweep-summary exit-reason="${tabSequence.exitReason}" stops="${tabSequence.focusStops.length}" candidates="${tabSequence.candidateCount}"/>`,
+        wcag_criterion: "2.1.1",
+        detected_by: "playwright",
+        raw_result: {
+          type: "truncated_tab_sweep",
+          exitReason: tabSequence.exitReason,
+          stopsReached: tabSequence.focusStops.length,
+          lastFocusedSelector: tabSequence.lastFocusedSelector,
+          description: partialReason,
+        },
+        measured_values: { ...sweepValues, controls_reached: reached },
+      }],
+      tabSequence,
+      partialReason,
+      retried,
+      firstSweep,
+      sweepSummary,
+    };
+  }
 
   const results: CheckResult[] = [];
 
@@ -430,16 +538,22 @@ export async function runKeyboardChecks(
         totalTabStops: tabSequence.focusStops.length,
         totalTabs: tabSequence.totalTabs,
       },
-      measured_values: {
-        tab_sequence_length: tabSequence.focusStops.length,
-        total_tabs: tabSequence.totalTabs,
-        ended_by_cycle: tabSequence.endedByCycle,
-        ended_by_max: tabSequence.endedByMax,
-      },
+      measured_values: { ...sweepValues },
     });
   }
 
-  return { results, tabSequence };
+  return { results, tabSequence, partialReason: null, retried, firstSweep, sweepSummary };
+}
+
+/**
+ * A sweep cut short before a full lap: it stopped on body focus or a stuck
+ * element, having reached fewer than half of the page's candidate controls.
+ */
+export function isTruncatedSweep(seq: TabSequenceResult): boolean {
+  if (seq.exitReason !== "body_focus" && seq.exitReason !== "repeat_cap") return false;
+  if (seq.candidateCount === 0) return false;
+  const reached = seq.candidateCount - seq.unreachableElements.length;
+  return reached / seq.candidateCount < 0.5;
 }
 
 // ---------------------------------------------------------------------------

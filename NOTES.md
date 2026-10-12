@@ -121,10 +121,43 @@ Reference scans: `0b7d5e28` (latest) and `4d008e9e`. Tests before these fixes: 1
 - Before, scan `0b7d5e28`: 3 `broken_skip_navigation` findings, 50 page occurrences (48 for `#main-content`, plus 2 pages whose skip link points at `#win`). Scan `4d008e9e` had none.
 - After, live rescan of `/brands` and `/creators` with the `skip-nav` check only: 0 `broken_skip_navigation`, 2.4.1 passed, the check ran on both pages. The `#win` pages were not in the allowed URL list and were not rescanned.
 
+### Fix 2: truncated tab sweeps
+
+- `recordTabSequence` now returns `exitReason` (`cycle` | `max` | `body_focus` | `repeat_cap`), `lastFocusedSelector` (the last element with focus before the sweep stopped) and `candidateCount` (keyboard-reachable controls on the page). All of them, plus `retried` and, after a retry, the first sweep's exit reason, stops and last focused element, are in the keyboard findings' `measured_values`. `MAX_CONSECUTIVE_BODY` and the cycle logic are unchanged.
+- A sweep that ends by `body_focus` or `repeat_cap` with fewer than 50% of candidate controls reached is reloaded and swept once more. If it is still truncated, no `unreachable_interactive_element` findings are emitted for the page. Instead there is one `truncated_tab_sweep` finding (2.1.1), and the keyboard check is recorded as `partial` in coverage.json with the reason.
+- Coverage gains a `partial` status (ranked between failed and ran). The Coverage section shows a Partial column, the grouped reasons, and a warning.
+- Every keyboard coverage entry now carries a one-line sweep summary (exit reason, stops, last focused, retried), so intermittent truncation can be diagnosed from coverage.json without findings.
+- To make the truncated-sweep finding a needs-review item rather than a failure, files outside the brief's list changed by one line or case each:
+  - `confidence.ts`: `truncated_tab_sweep` → needs_review, 0.4.
+  - `evidence.ts`: advisory severity.
+  - `analyzer.ts`: readable reasoning.
+  - `check-registry.ts`: maps it to the `keyboard` check.
+  - `verify.ts`: a `partial` page counts as not verified.
+- Fixture `test/fixtures/tab-sweep-focus-steal.html`: after the fourth link, the next three focus events are blurred, so three Tab presses land on `<body>`. The result is partial with zero unreachable findings, and `data-steal="once"` shows a successful retry.
+- Before: scan `0b7d5e28` had 39 `unreachable_interactive_element` findings (all `/platform/storefronts`, sweep 8 stops / 12 presses). Scan `4d008e9e` had 40 (`/platform/user-generated-content-ugc` 33, `/platform/affiliate-program` 7; 6 stops / 10 presses each).
+
+#### Live keyboard-only rescans (2026-10-12, 3 runs)
+
+| Run | Page | Exit reason | Stops reached | Retry used | Unreachable | Last focused before stop |
+|---|---|---|---|---|---|---|
+| 1 | /platform/storefronts | cycle | 49 | n | 0 | n/a (full lap) |
+| 1 | /platform/user-generated-content-ugc | cycle | 48 | n | 0 | n/a (full lap) |
+| 1 | /platform/affiliate-program | cycle | 49 | n | 0 | n/a (full lap) |
+| 2 | /platform/storefronts | cycle | 49 | n | 0 | n/a (full lap) |
+| 2 | /platform/user-generated-content-ugc | cycle | 48 | n | 0 | n/a (full lap) |
+| 2 | /platform/affiliate-program | cycle | 49 | n | 0 | n/a (full lap) |
+| 3 | /platform/storefronts | cycle | 49 | n | 0 | n/a (full lap) |
+| 3 | /platform/user-generated-content-ugc | cycle | 48 | n | 0 | n/a (full lap) |
+| 3 | /platform/affiliate-program | cycle | 49 | n | 0 | n/a (full lap) |
+
+The truncation did not reproduce in 9 keyboard-only sweeps, so the retry path ran only in the fixture tests, and what stole focus on the truncated runs is still unknown: the reference scans predate `lastFocusedSelector`. The truncated runs were full scans (all checks, 4 pages at a time); these were keyboard-only subset scans. The next full scan that truncates will record the element in `first_sweep_last_focused` and in the coverage message.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
 - Recognising GrowSurf by `data-grsf-*` attributes or `growsurf-prod` image URLs, which would move the three GrowSurf images (Top fixes 5 to 7) to Third-party.
 - The report's "Findings by Type" cards merge different axe rules that share a `finding_type_hash` (for example `aria-prohibited-attr` inside the "aria allowed attr" card), and a card shows one remediation for the whole group. Top fixes keeps them apart. Fixing the card grouping changes report structure beyond these phases.
 - Leaving hedged Claude verdicts (`needs_review` with no failure type, shown as `semantic`) out of "newly broken", and making Claude's failure-type names stable across runs. Both change signatures between scans without the site changing.
+- A `truncated_tab_sweep` finding still marks 2.1.1 as failed in the criterion results, because any finding fails its criterion during reconciliation. A needs-review note arguably should not. Changing criterion reconciliation is outside these fixes.
+- Finding what steals focus in full scans: needs a full scan that truncates (see the Fix 2 table).
 - Enabling `typescript-eslint` recommended rules. They would flag existing code across the repo (unused vars, `any`), and fixing that is a refactor outside these phases.

@@ -230,7 +230,11 @@ export function scoreConfidence(finding: Finding): Confidence {
 
     case "playwright": {
       const cal = PLAYWRIGHT_CALIBRATION[criterion];
-      if (cal) {
+      if (failureType === "truncated_tab_sweep") {
+        // The sweep was cut short; nothing was established about the page
+        score = 0.4;
+        tier = "needs_review";
+      } else if (cal) {
         score = cal.score;
         tier = cal.tier;
       } else {

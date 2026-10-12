@@ -75,7 +75,8 @@ export function renderCoverageMarkdown(coverage: ScanCoverage | null): string {
   }
   const rows = summarizeCoverage(coverage);
   const withFailures = rows.filter((r) => r.failed > 0);
-  lines.push(`Pages crawled: ${coverage.page_urls.length}. Each row shows how many of those pages the check ran on, failed on, or skipped.`);
+  const withPartials = rows.filter((r) => r.partial > 0);
+  lines.push(`Pages crawled: ${coverage.page_urls.length}. Each row shows how many of those pages the check ran on, ran on only partly, failed on, or skipped.`);
   if (coverage.crawl_failures.length > 0) {
     lines.push("", `**Warning:** ${coverage.crawl_failures.length} page(s) could not be loaded by the crawl and were not checked at all:`);
     for (const f of coverage.crawl_failures) lines.push(`- ${f.url}: ${mdEsc(f.error)}`);
@@ -83,16 +84,23 @@ export function renderCoverageMarkdown(coverage: ScanCoverage | null): string {
   if (withFailures.length > 0) {
     lines.push("", `**Warning:** ${withFailures.length} check(s) failed on at least one page. Pages where a check failed were not tested for it.`);
   }
-  lines.push("", "| Check | Tier | Ran | Failed | Skipped | Not recorded |", "|---|---|---|---|---|---|");
+  if (withPartials.length > 0) {
+    lines.push("", `**Warning:** ${withPartials.length} check(s) only partly ran on some pages. Part of those pages was not tested.`);
+  }
+  lines.push("", "| Check | Tier | Ran | Partial | Failed | Skipped | Not recorded |", "|---|---|---|---|---|---|---|");
   for (const r of rows) {
     const failed = r.failed > 0 ? `**${r.failed}** ⚠` : "0";
-    lines.push(`| ${checkLabel(r.check)} | ${r.tier} | ${r.ran}/${r.pages_crawled} | ${failed} | ${r.skipped} | ${r.not_recorded} |`);
+    const partial = r.partial > 0 ? `**${r.partial}** ⚠` : "0";
+    lines.push(`| ${checkLabel(r.check)} | ${r.tier} | ${r.ran}/${r.pages_crawled} | ${partial} | ${failed} | ${r.skipped} | ${r.not_recorded} |`);
   }
   for (const r of rows) {
-    if (r.failures.length === 0 && r.skips.length === 0) continue;
+    if (r.failures.length === 0 && r.skips.length === 0 && r.partials.length === 0) continue;
     lines.push("", `### ${checkLabel(r.check)}`);
     for (const f of r.failures) {
       lines.push(`- Failed on ${f.pages.length} page(s): ${mdEsc(f.message)} (${pageList(f.pages)})`);
+    }
+    for (const p of r.partials) {
+      lines.push(`- Partial on ${p.pages.length} page(s): ${mdEsc(p.reason)} (${pageList(p.pages)})`);
     }
     for (const s of r.skips) {
       lines.push(`- Skipped on ${s.pages.length} page(s): ${mdEsc(s.reason)}`);
@@ -107,11 +115,12 @@ export function renderCoverageMarkdown(coverage: ScanCoverage | null): string {
 // ---------------------------------------------------------------------------
 
 function rowHtml(r: CheckCoverageRow): string {
-  const warn = r.failed > 0 ? ` class="coverage-warn"` : "";
+  const warn = r.failed > 0 || r.partial > 0 ? ` class="coverage-warn"` : "";
   return `<tr${warn}>
-      <td>${htmlEsc(checkLabel(r.check))}${r.failed > 0 ? ` <span class="coverage-flag" title="Failed on some pages">&#9888;</span>` : ""}</td>
+      <td>${htmlEsc(checkLabel(r.check))}${r.failed > 0 || r.partial > 0 ? ` <span class="coverage-flag" title="Failed or only partly ran on some pages">&#9888;</span>` : ""}</td>
       <td>${r.tier}</td>
       <td>${r.ran} / ${r.pages_crawled}</td>
+      <td>${r.partial}</td>
       <td>${r.failed}</td>
       <td>${r.skipped}</td>
     </tr>`;
@@ -127,20 +136,25 @@ export function renderCoverageHtml(coverage: ScanCoverage | null): string {
   }
   const rows = summarizeCoverage(coverage);
   const withFailures = rows.filter((r) => r.failed > 0);
+  const withPartials = rows.filter((r) => r.partial > 0);
 
   const warnings: string[] = [];
   if (coverage.crawl_failures.length > 0) {
     warnings.push(`<div class="coverage-warning"><strong>${coverage.crawl_failures.length} page(s) could not be loaded</strong> and were not checked: ${htmlEsc(pageList(coverage.crawl_failures.map((f) => f.url)))}.</div>`);
+  }
+  if (withPartials.length > 0) {
+    warnings.push(`<div class="coverage-warning"><strong>${withPartials.length} check(s) only partly ran on some pages:</strong> ${withPartials.map((r) => `${htmlEsc(checkLabel(r.check))} (${r.partial})`).join(", ")}. Part of those pages was not tested.</div>`);
   }
   if (withFailures.length > 0) {
     warnings.push(`<div class="coverage-warning"><strong>${withFailures.length} check(s) failed on some pages:</strong> ${withFailures.map((r) => `${htmlEsc(checkLabel(r.check))} (${r.failed})`).join(", ")}. Those pages were not tested by those checks, so a missing finding there does not mean a pass.</div>`);
   }
 
   const details = rows
-    .filter((r) => r.failures.length > 0 || r.skips.length > 0)
+    .filter((r) => r.failures.length > 0 || r.skips.length > 0 || r.partials.length > 0)
     .map((r) => {
       const items = [
         ...r.failures.map((f) => `<li><strong>Failed on ${f.pages.length} page${f.pages.length !== 1 ? "s" : ""}:</strong> ${htmlEsc(f.message)} <span class="coverage-pages">(${htmlEsc(pageList(f.pages))})</span></li>`),
+        ...r.partials.map((p) => `<li><strong>Partial on ${p.pages.length} page${p.pages.length !== 1 ? "s" : ""}:</strong> ${htmlEsc(p.reason)} <span class="coverage-pages">(${htmlEsc(pageList(p.pages))})</span></li>`),
         ...r.skips.map((s) => `<li>Skipped on ${s.pages.length} page${s.pages.length !== 1 ? "s" : ""}: ${htmlEsc(s.reason)}</li>`),
       ];
       return `<h4>${htmlEsc(checkLabel(r.check))}</h4><ul>${items.join("")}</ul>`;
@@ -150,10 +164,10 @@ export function renderCoverageHtml(coverage: ScanCoverage | null): string {
   return `
     <section class="coverage" id="coverage">
       <h2>Coverage</h2>
-      <p class="section-intro">How many of the ${coverage.page_urls.length} crawled pages each check ran on. Skipped pages had nothing for the check to test (for example no forms); failed pages were not tested.</p>
+      <p class="section-intro">How many of the ${coverage.page_urls.length} crawled pages each check ran on. Skipped pages had nothing for the check to test (for example no forms); partial pages were only partly tested; failed pages were not tested.</p>
       ${warnings.join("")}
       <table class="coverage-table">
-        <thead><tr><th>Check</th><th>Tier</th><th>Ran</th><th>Failed</th><th>Skipped</th></tr></thead>
+        <thead><tr><th>Check</th><th>Tier</th><th>Ran</th><th>Partial</th><th>Failed</th><th>Skipped</th></tr></thead>
         <tbody>${rows.map(rowHtml).join("")}</tbody>
       </table>
       ${details ? `<div class="coverage-details">${details}</div>` : ""}

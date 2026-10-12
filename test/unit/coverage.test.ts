@@ -35,6 +35,21 @@ describe("CoverageRecorder", () => {
     expect(onInput.message).toBe("boom");
   });
 
+  it("ranks partial between failed and ran, and reports it in the summary and report", () => {
+    const rec = new CoverageRecorder();
+    rec.ran("keyboard", 2, "https://a.test/");
+    rec.record("keyboard", 2, "https://a.test/", "partial", "tab sweep stopped early (body_focus) after 6 stops");
+    rec.ran("keyboard", 2, "https://a.test/b");
+    const cov = rec.toJSON("s", ["https://a.test/", "https://a.test/b"]);
+    const [row] = summarizeCoverage(cov);
+    expect(row).toMatchObject({ ran: 1, partial: 1, failed: 0 });
+    expect(row.partials[0].reason).toContain("body_focus");
+    const md = renderCoverageMarkdown(cov);
+    expect(md).toContain("| Keyboard reachability (2.1.1) | 2 | 1/2 | **1** ⚠ | 0 | 0 | 0 |");
+    expect(md).toContain("Partial on 1 page(s): tab sweep stopped early");
+    expect(renderCoverageHtml(cov)).toContain("only partly ran");
+  });
+
   it("keeps only the first line of multi-line errors", () => {
     expect(firstLine("page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating")).toBe("page.goto: Timeout 30000ms exceeded.");
   });
@@ -107,7 +122,7 @@ describe("coverage report sections", () => {
   it("markdown lists every check, warns on failures and crawl failures, groups messages", () => {
     const md = renderCoverageMarkdown(sampleCoverage());
     expect(md).toContain("## Coverage");
-    expect(md).toContain("| Keyboard reachability (2.1.1) | 2 | 1/3 | **2** ⚠ | 0 | 0 |");
+    expect(md).toContain("| Keyboard reachability (2.1.1) | 2 | 1/3 | 0 | **2** ⚠ | 0 | 0 |");
     expect(md).toContain("**Warning:** 1 check(s) failed");
     expect(md).toContain("could not be loaded by the crawl");
     expect(md).toContain("Failed on 2 page(s): page load failed: net::ERR_EMPTY_RESPONSE (/b, /c)");

@@ -5,7 +5,8 @@ import { join } from "node:path";
 // Types
 // ---------------------------------------------------------------------------
 
-export type CoverageStatus = "ran" | "failed" | "skipped";
+/** partial: the check ran but could only test part of the page (reason in message) */
+export type CoverageStatus = "ran" | "partial" | "failed" | "skipped";
 
 /** One check's outcome on one page. */
 export interface CoverageEntry {
@@ -15,7 +16,7 @@ export interface CoverageEntry {
   tier: number;
   page_url: string;
   status: CoverageStatus;
-  /** Error message (failed) or reason (skipped) */
+  /** Error message (failed) or reason (partial, skipped) */
   message?: string;
 }
 
@@ -35,6 +36,7 @@ export interface CheckCoverageRow {
   tier: number;
   pages_crawled: number;
   ran: number;
+  partial: number;
   failed: number;
   skipped: number;
   /** Pages with no recorded outcome for this check */
@@ -43,13 +45,15 @@ export interface CheckCoverageRow {
   failures: Array<{ message: string; pages: string[] }>;
   /** Skip reasons grouped, most pages first */
   skips: Array<{ reason: string; pages: string[] }>;
+  /** Partial-run reasons grouped, most pages first */
+  partials: Array<{ reason: string; pages: string[] }>;
 }
 
 // ---------------------------------------------------------------------------
 // Recorder
 // ---------------------------------------------------------------------------
 
-const STATUS_RANK: Record<CoverageStatus, number> = { failed: 3, ran: 2, skipped: 1 };
+const STATUS_RANK: Record<CoverageStatus, number> = { failed: 4, partial: 3, ran: 2, skipped: 1 };
 
 /** First line of an error message, trimmed (Playwright appends call logs). */
 export function firstLine(message: string): string {
@@ -59,7 +63,7 @@ export function firstLine(message: string): string {
 /**
  * Collects check outcomes during a scan. A check can report several times
  * for one page (one per form, say); the page's status is the most
- * significant one: failed, then ran, then skipped.
+ * significant one: failed, then partial, then ran, then skipped.
  */
 export class CoverageRecorder {
   private readonly byKey = new Map<string, CoverageEntry>();
@@ -142,17 +146,20 @@ export function summarizeCoverage(coverage: ScanCoverage): CheckCoverageRow[] {
   for (const [check, entries] of byCheck) {
     const failedEntries = entries.filter((e) => e.status === "failed");
     const skippedEntries = entries.filter((e) => e.status === "skipped");
+    const partialEntries = entries.filter((e) => e.status === "partial");
     const ran = entries.filter((e) => e.status === "ran").length;
     rows.push({
       check,
       tier: entries[0].tier,
       pages_crawled: pagesCrawled,
       ran,
+      partial: partialEntries.length,
       failed: failedEntries.length,
       skipped: skippedEntries.length,
       not_recorded: Math.max(0, pagesCrawled - entries.length),
       failures: groupBy(failedEntries).map((g) => ({ message: g.text, pages: g.pages })),
       skips: groupBy(skippedEntries).map((g) => ({ reason: g.text, pages: g.pages })),
+      partials: groupBy(partialEntries).map((g) => ({ reason: g.text, pages: g.pages })),
     });
   }
   return rows.sort((a, b) => a.tier - b.tier || a.check.localeCompare(b.check));

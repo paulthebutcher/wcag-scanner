@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   recordTabSequence,
   runKeyboardChecks,
+  isTruncatedSweep,
   type FocusStop,
   type TabSequenceResult,
 } from "../../src/checks/behavioral/keyboard.js";
@@ -477,6 +478,89 @@ describe("runKeyboardChecks", () => {
 
       const { results } = await runKeyboardChecks(page, { maxTabs: 50 });
       expect(results).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Truncated sweeps (focus stolen to <body>)
+// ---------------------------------------------------------------------------
+
+describe("truncated tab sweep", () => {
+  let browser: Browser;
+  let context: BrowserContext;
+  const stealHtml = readFileSync(join(import.meta.dirname, "..", "fixtures", "tab-sweep-focus-steal.html"), "utf-8");
+
+  beforeAll(async () => {
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext();
+  });
+
+  afterAll(async () => {
+    await browser.close();
+  });
+
+  /** Serve the fixture from a URL so a reload reloads it. */
+  async function openFixture(html: string): Promise<Page> {
+    const page = await context.newPage();
+    await page.route("http://sweep.test/**", (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto("http://sweep.test/");
+    return page;
+  }
+
+  it("records the exit reason and the last focused element", async () => {
+    const page = await openFixture(stealHtml);
+    try {
+      const seq = await recordTabSequence(page, { maxTabs: 40 });
+      expect(seq.exitReason).toBe("body_focus");
+      expect(seq.lastFocusedSelector).toBe("#l4");
+      expect(seq.focusStops).toHaveLength(4);
+      expect(seq.candidateCount).toBe(12);
+      expect(seq.endedByCycle).toBe(false);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("retries once, then reports a partial sweep for review instead of unreachable elements", async () => {
+    const page = await openFixture(stealHtml);
+    try {
+      const { results, partialReason, retried } = await runKeyboardChecks(page, { maxTabs: 40 });
+      expect(retried).toBe(true);
+      expect(partialReason).toContain("body_focus");
+      expect(partialReason).toContain("#l4");
+      expect(results.filter((r) => (r.raw_result as { type: string }).type === "unreachable_interactive_element")).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect((results[0].raw_result as { type: string }).type).toBe("truncated_tab_sweep");
+      expect(results[0].measured_values).toMatchObject({ exit_reason: "body_focus", last_focused_selector: "#l4", tab_sequence_length: 4, retried: true });
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("uses the retry when the second sweep completes", async () => {
+    const page = await openFixture(stealHtml.replace('data-steal="always"', 'data-steal="once"'));
+    try {
+      const { results, partialReason, retried, tabSequence } = await runKeyboardChecks(page, { maxTabs: 40 });
+      expect(retried).toBe(true);
+      expect(partialReason).toBeNull();
+      expect(tabSequence.exitReason).toBe("cycle");
+      expect(tabSequence.focusStops).toHaveLength(12);
+      expect(results).toHaveLength(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("does not retry a sweep that completes a lap", async () => {
+    const page = await openFixture(stealHtml.replace("<script>", "<script>return;").replace("(function () {", "(function () { return;"));
+    try {
+      const { retried, tabSequence } = await runKeyboardChecks(page, { maxTabs: 40 });
+      expect(retried).toBe(false);
+      expect(tabSequence.exitReason).toBe("cycle");
+      expect(isTruncatedSweep(tabSequence)).toBe(false);
     } finally {
       await page.close();
     }

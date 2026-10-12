@@ -180,6 +180,7 @@ function unverifiedReason(coverage: ScanCoverage | null, page: string, checks: s
     if (!entry) return `${check} was not recorded on this page`;
     if (entry.status === "failed") return `${check} failed: ${entry.message ?? "unknown error"}`;
     if (entry.status === "skipped") return `${check} skipped: ${entry.message ?? "no reason given"}`;
+    if (entry.status === "partial") return `${check} only partly ran: ${entry.message ?? "no reason given"}`;
   }
   return null;
 }

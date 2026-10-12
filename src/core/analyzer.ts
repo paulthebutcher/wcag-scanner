@@ -209,6 +209,11 @@ function generateRuleBasedReasoning(checkResult: CheckResult): string {
         return "Skip navigation link exists but does not function correctly. " +
           `Target: ${measured.skip_target ?? "unknown"}, focus moved: ${measured.focus_moved ?? "no"}.`;
 
+      case "truncated_tab_sweep":
+        return `The keyboard sweep stopped early (${measured.exit_reason ?? "unknown reason"}) after ${measured.tab_sequence_length ?? "?"} stops, ` +
+          `reaching ${measured.controls_reached ?? "?"} of ${measured.candidate_count ?? "?"} controls, even after a reload and retry. ` +
+          `The last element focused was ${measured.last_focused_selector ?? "unknown"}. The rest of the page was not tested for keyboard reachability; check it by hand.`;
+
       case "focus_order_mismatch":
         return `Focus order does not match visual layout. ` +
           `Visual position and tab order diverge at element index ${measured.divergence_index ?? "?"}.`;
