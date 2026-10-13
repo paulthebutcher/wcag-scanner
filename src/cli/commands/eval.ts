@@ -461,6 +461,13 @@ export function createEvalCommand(): Command {
         run.manifest.extra = { ...run.manifest.extra, outcomes: counts, synthetic: r0.synthetic, cache_misses: r0.model.cache_misses };
         if (r0.model.cache_misses > 0) run.unavailable("model-dependent static cases", `${r0.model.cache_misses} request(s) not recorded in ${String(opts.cache)}`);
         const m = run.finish("completed");
+        // Committed aggregate: case ids, outcomes and reasons only
+        writeExport(join(paths.committedRunsDir, m.run_id, "static.json"), {
+          run_id: m.run_id, engine: { label: engine.label, sha: engine.sha, bridge: engine.bridge }, harness: { sha: m.harness.sha, dirty: m.harness.dirty },
+          cache_namespace: String(opts.cache), validity: m.validity, replays_identical: run.manifest.extra.replays_identical ?? null,
+          outcomes: r0.outcomes.map((o) => ({ case_id: o.case_id, outcome: o.outcome, reason: o.reason, severity_ok: o.severity_ok })),
+          counts, synthetic: r0.synthetic, cache_misses: r0.model.cache_misses, egress: run.manifest.totals.attempted_egress,
+        }, knownPrivateHosts(paths));
         for (const o of r0.outcomes.filter((x) => x.outcome !== "not_run")) process.stdout.write(`${o.case_id} ${o.outcome}: ${o.reason}\n`);
         if (r0.synthetic) process.stdout.write(`SL-001 ${r0.synthetic.sl001.outcome}: ${r0.synthetic.sl001.detail}\nSL-016 ${r0.synthetic.sl016.outcome}: ${r0.synthetic.sl016.detail}\n`);
         process.stdout.write(`${JSON.stringify(counts)}; cache misses ${r0.model.cache_misses}; egress ${run.manifest.totals.attempted_egress}; valid=${m.validity.valid}\n`);
