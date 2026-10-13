@@ -34,7 +34,7 @@ import { CollectingReporter, type EngineHandle, type EngineRunOptions } from "./
 export const BASELINE_SHA = "ffdcd308610527525fb82ccd118a7f7b89334b66";
 
 /** The 26 check ids, present at the baseline under the same names (verified in its scanner). */
-const ALL_CHECKS = [
+export const BASELINE_CHECKS = [
   "axe-core", "keyboard", "focus-visible", "focus-order", "keyboard-trap", "skip-nav", "modal",
   "alt-text", "link-text", "headings", "landmark-labels", "widget-aria", "table-structure", "duplicate-links", "consistent-nav",
   "form-discovery", "high-risk-forms", "form-submission", "error-messages", "input-purpose", "on-input", "error-quality",
@@ -161,7 +161,7 @@ export async function legacyEngine(options: LegacyEngineOptions): Promise<Engine
     bridge,
     promptModule,
     errors: Anthropic,
-    checks: ALL_CHECKS,
+    checks: BASELINE_CHECKS,
     supportsUrlList: options.supportsUrlList,
     importModule: async <T>(rel: string) => import(pathToFileURL(join(dist, `${rel}.js`)).href) as Promise<T>,
     syntheticFetches: (rootUrl, pageUrls) => {

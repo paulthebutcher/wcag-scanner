@@ -23,6 +23,12 @@ import { loadManifest, inputHash } from "../../eval/manifest.js";
 import { readJson, writeJson } from "../../eval/util.js";
 import { resolveStatic, writeResolution, runStatic, staticRunsMatch, type StaticRunResult } from "../../eval/static.js";
 import { CHECK_TIERS } from "../../core/check-registry.js";
+import { compareRuns, labelSnapshotSha } from "../../eval/compare.js";
+import { capabilityMap, historicalContext, referenceExport } from "../../eval/reference.js";
+import { BASELINE_CHECKS } from "../../eval/engine/legacy.js";
+import { LabelStore } from "../../eval/labels.js";
+import { verifySite, type Split as CorpusSplit } from "../../eval/corpus.js";
+import type { StaticFile, StaticCaseOutcome } from "../../eval/static.js";
 import { existsSync } from "node:fs";
 import type { Batch } from "../../eval/labels.js";
 
@@ -460,6 +466,82 @@ export function createEvalCommand(): Command {
         process.exitCode = 2;
       }
     });
+
+  const runCompare = (opts: Record<string, string | undefined>, command: "compare" | "reference") => {
+    if (opts.dataDir) process.env.WCAG_EVAL_DATA_DIR = opts.dataDir;
+    const { paths, config } = context();
+    const baseM = loadManifest(paths.runsDir, String(opts.base));
+    const headM = loadManifest(paths.runsDir, String(opts.head));
+    const purpose = parsePurpose(String(opts.purpose ?? "diagnostic"));
+    const run = begin(command, [command, ...process.argv.slice(4)], purpose);
+    const labels = loadLabelInputs(paths, opts.labelsThrough !== undefined ? Number(opts.labelsThrough) : null);
+    const snapshot = labelSnapshotSha(new LabelStore(paths.labels).events(), labels.labelsThrough);
+    // Re-verify the frozen artifacts both runs used
+    const corpusProblems: string[] = [];
+    if (headM.corpus) {
+      for (const site of headM.corpus.sites) {
+        try {
+          for (const p of verifySite(paths, { version: headM.corpus.version, split: headM.corpus.split as CorpusSplit, siteId: site }).problems) corpusProblems.push(`${p.site}${p.page ? `/${p.page}` : ""}: ${p.problem}`);
+        } catch (err) {
+          corpusProblems.push(`${site}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+    const staticOutcomes = (id?: string): StaticCaseOutcome[] | undefined => {
+      if (!id) return undefined;
+      return readJson<Array<{ outcomes: StaticCaseOutcome[] }>>(join(paths.runsDir, id, "static-results.json"))[0].outcomes;
+    };
+    const settled = existsSync(paths.lakewoodStatic) ? new Set(readJson<StaticFile>(paths.lakewoodStatic).cases.filter((c) => c.adjudication === "settled").map((c) => c.case_id)) : undefined;
+    const result = compareRuns({
+      config, base: loadRunInputs(paths, baseM), head: loadRunInputs(paths, headM), labels, labelSnapshotSha: snapshot,
+      expectedLabelSnapshotSha: opts.labelsSha, staticBase: staticOutcomes(opts.staticBase), staticHead: staticOutcomes(opts.staticHead), staticSettled: settled, corpusProblems,
+    });
+    run.manifest.consumes = [baseM.run_id, headM.run_id, ...(opts.staticBase ? [opts.staticBase] : []), ...(opts.staticHead ? [opts.staticHead] : [])];
+    run.manifest.corpus = headM.corpus;
+    run.manifest.inputs = {
+      labels: inputHash(paths.labels, { through_sequence: labels.labelsThrough }), cases: inputHash(paths.cases, { count: labels.cases.length }),
+      overrides: inputHash(paths.labelOverrides), static_expectations: inputHash(paths.lakewoodStatic), config: inputHash(paths.config),
+    };
+    run.manifest.extra = { exit: result.exit, label_snapshot_sha256: snapshot, regressions: result.regressions.length, existing_blockers: result.existing_blockers.length, invalid: result.invalid };
+    for (const reason of result.invalid) run.invalidate(`comparison: ${reason}`);
+    writeJson(join(run.dir, "compare.json"), result);
+    const m = run.finish("completed");
+    const hosts = knownPrivateHosts(paths);
+    const summary = { run_id: m.run_id, base: baseM.run_id, head: headM.run_id, exit: result.exit, invalid: result.invalid, regressions: result.regressions, existing_blockers: result.existing_blockers, report: result.report, label_snapshot_sha256: snapshot };
+    if (purpose !== "diagnostic" || command === "reference") writeExport(join(paths.committedRunsDir, m.run_id, "compare.json"), summary, hosts);
+    if (command === "reference" && headM.corpus && headM.corpus.split !== "pilot") {
+      const exportBody = referenceExport({ base: baseM, head: headM, compare: result, capability: capabilityMap(BASELINE_CHECKS, Object.keys(CHECK_TIERS)), history: historicalContext(paths), compareRunId: m.run_id });
+      writeExport(join(paths.committedBaselinesDir, "2026-10-04", `reference-${headM.corpus.split}.json`), exportBody, hosts);
+    }
+    process.stdout.write(`compare ${baseM.engine.label} → ${headM.engine.label}: exit ${result.exit}\n`);
+    for (const r of result.invalid) process.stdout.write(`INVALID ${r}\n`);
+    for (const r of result.regressions) process.stdout.write(`REGRESSION ${r.kind}: ${r.detail}\n`);
+    for (const r of result.existing_blockers) process.stdout.write(`existing blocker ${r.kind}: ${r.detail}\n`);
+    process.stdout.write(`shared pages ${result.report.shared_pages}; added ${JSON.stringify(result.report.findings_added)}; removed ${JSON.stringify(result.report.findings_removed)}\n`);
+    process.stdout.write(`criterion transitions ${result.report.criterion_transitions.length}; case changes ${result.report.case_changes.length}; coverage changes ${result.report.coverage_changes.length} (${result.report.coverage_comparison}); unlabeled ${result.report.unlabeled.base} → ${result.report.unlabeled.head}; tooling errors ${result.report.tooling_errors.base} → ${result.report.tooling_errors.head}\n`);
+    process.exitCode = result.exit;
+  };
+
+  for (const name of ["compare", "reference"] as const) {
+    cmd.command(name)
+      .description(name === "compare" ? "D7: compare two pinned replay runs (exit 0 no regression, 1 regression, 2 invalid)" : "D6: baseline vs HEAD reference comparison and the eval/baselines export")
+      .requiredOption("--base <id>", "Base replay run id")
+      .requiredOption("--head <id>", "Head replay run id")
+      .option("--labels-through <seq>", "Score both against labels through this sequence (default: all)")
+      .option("--labels-sha <sha256>", "Refuse if the label snapshot differs from this pinned hash")
+      .option("--static-base <id>", "Static run of the base engine")
+      .option("--static-head <id>", "Static run of the head engine")
+      .option("--purpose <purpose>", "diagnostic | official-regression", "diagnostic")
+      .option("--data-dir <path>", "Private data root (default wcag-data)")
+      .action((opts: Record<string, string | undefined>) => {
+        try {
+          runCompare(opts, name);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : err);
+          process.exitCode = 2;
+        }
+      });
+  }
 
   cmd.command("pace")
     .description("D9: labelling pace by criterion and batch")
