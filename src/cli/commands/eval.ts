@@ -21,6 +21,8 @@ import { paceReport, formatPace } from "../../eval/pace.js";
 import { computeMetrics, loadRunInputs, loadLabelInputs, aggregateExport } from "../../eval/metrics.js";
 import { loadManifest, inputHash } from "../../eval/manifest.js";
 import { readJson, writeJson } from "../../eval/util.js";
+import { resolveStatic, writeResolution, runStatic, staticRunsMatch, type StaticRunResult } from "../../eval/static.js";
+import { CHECK_TIERS } from "../../core/check-registry.js";
 import { existsSync } from "node:fs";
 import type { Batch } from "../../eval/labels.js";
 
@@ -384,6 +386,79 @@ export function createEvalCommand(): Command {
         manifest: { run_id: manifest.run_id, purpose: manifest.purpose, harness: { sha: manifest.harness.sha, dirty: manifest.harness.dirty }, consumes: manifest.consumes, inputs: Object.fromEntries(Object.entries(manifest.inputs).map(([k, v]) => [k, { sha256: v.sha256, through_sequence: v.through_sequence ?? null, count: v.count ?? null }])), validity: manifest.validity },
       }, knownPrivateHosts(paths));
       process.stdout.write(`export ${out}\n`);
+    });
+
+  cmd.command("static")
+    .description("D10: Lakewood static regression set (resolve seeds; run DOM-only checks per engine offline)")
+    .option("--resolve", "Resolve the seeds against wcag-old.db and write eval/lakewood-static.json (no model, no network)")
+    .option("--engine <sha>", "head | baseline | <sha>")
+    .option("--cache <namespace>", "Static response cache namespace (separate from corpus caches)", "static-v1")
+    .option("--record", "Make live model calls for missing static cache entries")
+    .option("--max-cost-usd <amount>", "Budget for --record")
+    .option("--repeat <n>", "Run N times; runs must match", "2")
+    .option("--synthetic", "Also run the scan-level synthetic fixtures (SL-001, SL-016)")
+    .option("--purpose <purpose>", "diagnostic | official-regression", "diagnostic")
+    .action(async (opts: Record<string, string | boolean | undefined>) => {
+      const { paths, config } = context();
+      if (opts.resolve) {
+        const run = begin("static-resolve", ["static", "--resolve"], "diagnostic");
+        const engines = { head: Object.keys(CHECK_TIERS), baseline: Object.keys(CHECK_TIERS) };
+        const r = resolveStatic(paths, config, engines);
+        writeResolution(paths, r);
+        run.manifest.inputs = { seeds: inputHash(paths.seedLabels), overrides: inputHash(paths.labelOverrides), static_expectations: inputHash(paths.lakewoodStatic), seed_resolutions: inputHash(paths.seedResolutions) };
+        run.manifest.extra = { cases: r.file.cases.length, by_status: r.file.cases.reduce<Record<string, number>>((m, c) => ({ ...m, [c.status]: (m[c.status] ?? 0) + 1 }), {}), new_resolutions: r.resolutions.length, problems: r.problems };
+        for (const p of r.problems) run.invalidate(p);
+        const m = run.finish("completed");
+        process.stdout.write(`${r.file.cases.length} static case(s); ${r.resolutions.length} new seed resolution record(s); problems: ${r.problems.length ? r.problems.join("; ") : "none"}; valid=${m.validity.valid}\n`);
+        return;
+      }
+      if (!opts.engine) { console.error("--engine is required (or --resolve)"); process.exit(2); }
+      const purpose = parsePurpose(String(opts.purpose));
+      const run = begin("static", ["static", ...process.argv.slice(4)], purpose);
+      try {
+        const engine = await resolveEngine(paths, String(opts.engine), run.manifest.harness.sha, log);
+        const cache = new ResponseCache(paths.cacheDir, String(opts.cache));
+        let client: Parameters<typeof runStatic>[0]["client"] = { mode: "replay", cache };
+        if (opts.record) {
+          const budget = Number(opts.maxCostUsd);
+          if (!Number.isFinite(budget) || budget <= 0) throw new Error("--record needs --max-cost-usd");
+          if (!process.env.ANTHROPIC_API_KEY) throw new Error("--record needs ANTHROPIC_API_KEY");
+          client = { mode: "record", cache, live: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages as never, maxCostUsd: budget };
+        }
+        run.manifest.engine = { label: engine.label, sha: engine.sha, bridge: engine.bridge };
+        run.manifest.inputs = { static_expectations: inputHash(paths.lakewoodStatic), seed_resolutions: inputHash(paths.seedResolutions) };
+        const repeat = opts.record ? 1 : Math.max(1, parseInt(String(opts.repeat), 10));
+        const results: StaticRunResult[] = [];
+        for (let i = 0; i < repeat; i++) {
+          results.push(await runStatic({ paths, config, engine, client, runId: run.manifest.run_id, includeSynthetic: Boolean(opts.synthetic) && i === 0, log }));
+        }
+        const r0 = results[0];
+        writeJson(join(run.dir, "static-results.json"), results.map((r) => ({ engine: r.engine, outcomes: r.outcomes, model: { ...r.model, attempts_used: r.model.attempts_used.length }, egress: r.egress, static_resources_refused: r.static_resources_refused, synthetic: r.synthetic })));
+        const attempts = Array.from(new Set(results.flatMap((r) => r.model.attempts_used))).sort();
+        run.manifest.model = {
+          cache_namespace: String(opts.cache), mode: client.mode, entries_read: r0.model.entries_read, entries_created: r0.model.entries_created,
+          model_ids: [], template_hashes: {}, system_prompt_hashes: {}, parameters: { max_tokens: 4096, temperature: 0 }, image_index_sha256: null,
+          shared_responses: 0, entries_sha256: attempts.length ? (await import("../../eval/util.js")).sha256(attempts.join("\n")) : null, cost_usd_estimate: r0.model.cost_usd,
+        };
+        run.manifest.totals.attempted_egress = results.reduce((n, r) => n + r.egress, 0);
+        if (repeat > 1) {
+          const cmp = staticRunsMatch(results[0], results[1]);
+          if (!cmp.identical) run.invalidate(`static replays differ: ${cmp.differences.join(", ")}`);
+          run.manifest.extra.replays_identical = cmp.identical;
+        }
+        const counts = r0.outcomes.reduce<Record<string, number>>((m, o) => ({ ...m, [o.outcome]: (m[o.outcome] ?? 0) + 1 }), {});
+        run.manifest.extra = { ...run.manifest.extra, outcomes: counts, synthetic: r0.synthetic, cache_misses: r0.model.cache_misses };
+        if (r0.model.cache_misses > 0) run.unavailable("model-dependent static cases", `${r0.model.cache_misses} request(s) not recorded in ${String(opts.cache)}`);
+        const m = run.finish("completed");
+        for (const o of r0.outcomes.filter((x) => x.outcome !== "not_run")) process.stdout.write(`${o.case_id} ${o.outcome}: ${o.reason}\n`);
+        if (r0.synthetic) process.stdout.write(`SL-001 ${r0.synthetic.sl001.outcome}: ${r0.synthetic.sl001.detail}\nSL-016 ${r0.synthetic.sl016.outcome}: ${r0.synthetic.sl016.detail}\n`);
+        process.stdout.write(`${JSON.stringify(counts)}; cache misses ${r0.model.cache_misses}; egress ${run.manifest.totals.attempted_egress}; valid=${m.validity.valid}\n`);
+      } catch (err) {
+        run.invalidate(`static error: ${err instanceof Error ? err.message : String(err)}`);
+        run.finish("failed");
+        console.error(err instanceof Error ? err.stack : err);
+        process.exitCode = 2;
+      }
     });
 
   cmd.command("pace")

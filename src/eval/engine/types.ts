@@ -55,6 +55,8 @@ export interface EngineHandle {
   /** Node fetch responses the bridge synthesises (declared in the manifest) */
   syntheticFetches(rootUrl: string, pageUrls: string[]): Map<string, SyntheticResponse>;
   run(options: EngineRunOptions): Promise<EngineRunResult>;
+  /** Load one of this engine's own modules, e.g. "checks/semantic/link-text" (static runs) */
+  importModule<T = Record<string, unknown>>(relPath: string): Promise<T>;
 }
 
 /** Collects engine warnings (tooling errors surface here and in coverage). */

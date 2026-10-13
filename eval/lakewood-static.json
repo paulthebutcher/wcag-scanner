@@ -1,0 +1,755 @@
+{
+  "schema_version": 1,
+  "source_store": "wcag-old.db",
+  "cases": [
+    {
+      "case_id": "LS-001",
+      "seeds": [
+        "SL-004"
+      ],
+      "fixture_sha256": "319d58080c63239b80530534de3152976af1ca607278e728542d04ef5defba5f",
+      "criterion": "4.1.2",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "FAQ accordion toggles without aria-expanded; 11 identical instances on the page, one case"
+    },
+    {
+      "case_id": "LS-002",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-003",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-004",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-005",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-006",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-007",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-008",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-009",
+      "seeds": [
+        "SL-007"
+      ],
+      "fixture_sha256": "49d668ba9f6798155b28f436b6c1c481c9a774084c3f7f485f3c2dbe34dc69cb",
+      "criterion": "2.4.4",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Image link with no accessible name (link-name), one of 8 repeated header/footer links"
+    },
+    {
+      "case_id": "LS-010",
+      "seeds": [
+        "SL-009"
+      ],
+      "fixture_sha256": "f5af9e3a5bb1e13ce7033122df46731231221d57e4e205a9c77860df3e52ffd9",
+      "criterion": "3.3.4",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Password gate form; no legal, financial or data commitment"
+    },
+    {
+      "case_id": "LS-011",
+      "seeds": [
+        "SL-018"
+      ],
+      "fixture_sha256": "d8ed7b686c4a3322b90686c540f3ee4464ea7d115d237f6b4688624afcdd99c0",
+      "criterion": "3.3.4",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Same form as LS-010 in a later snapshot"
+    },
+    {
+      "case_id": "LS-012",
+      "seeds": [
+        "SL-011",
+        "SL-017"
+      ],
+      "fixture_sha256": "14f5d703f865e94f91c341862e3a92b6635d222c34aa8d8ae72ae0ce40f95483",
+      "criterion": "2.4.4",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Navigation link whose text states its purpose; flagged as a duplicate link on every page (inflation)"
+    },
+    {
+      "case_id": "LS-013",
+      "seeds": [
+        "SL-011"
+      ],
+      "fixture_sha256": "eea6a51bda16783dbfd5deed597b3bab94d809287ecb9231b618d1097d1bf464",
+      "criterion": "2.4.4",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "pending",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Two form links with the same accessible name on one page; whether they share a purpose is not settled"
+    },
+    {
+      "case_id": "LS-014",
+      "seeds": [
+        "SL-017"
+      ],
+      "fixture_sha256": "75cdb2af23de38ef6b920030b30dfa7f97911894de1113729c2fbc3ec90fca0c",
+      "criterion": "2.4.4",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Same navigation link as LS-012 in a later snapshot"
+    },
+    {
+      "case_id": "LS-015",
+      "seeds": [
+        "SL-012"
+      ],
+      "fixture_sha256": "bef087e8d3685a55b31277fd2fb8dc93fa1f4608a1f88442b8da6c219c9dfb10",
+      "criterion": "1.3.5",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Input with a valid autocomplete token"
+    },
+    {
+      "case_id": "LS-016",
+      "seeds": [
+        "SL-012"
+      ],
+      "fixture_sha256": "bef087e8d3685a55b31277fd2fb8dc93fa1f4608a1f88442b8da6c219c9dfb10",
+      "criterion": "1.3.5",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Input with a valid autocomplete token"
+    },
+    {
+      "case_id": "LS-017",
+      "seeds": [
+        "SL-012"
+      ],
+      "fixture_sha256": "bef087e8d3685a55b31277fd2fb8dc93fa1f4608a1f88442b8da6c219c9dfb10",
+      "criterion": "1.3.5",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Input with a valid autocomplete token (tel); same class as the seed's name and email inputs"
+    },
+    {
+      "case_id": "LS-101",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "dcf3dfc5f5f14bb0685388d9767a95d0ada5a8c9b5dc6d3a1a4717424c5f4b23",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-102",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "4c2f25244b89453034c45fbc840de14f2680190d10c8068cf2985a93b5512385",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-103",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "bb0b95a9efe3843a0d5fd6df84089207a50de25f6f47051b8737c05ab1f769fa",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-104",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "4f2388abc81e66514117dd867d9492b3b4473da9638423c4ff2dd2397b0b355b",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-105",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "e696f169b66c361285d06475fbe867a9bfe9ab200e1619e0637c8093315579b1",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-106",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "6f95a108b9db9658391dd7ae09c337d9f4475b8f85aab5dc1f26fb38fe24f07f",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-107",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "aa83b4ae24bad283f8941ac78c7086e6cdc724749f8d04182a91f5410e55ae4a",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-108",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "95c0ce4d69be8894df4c8ae2bffdb03644548a109164501e261616bbd8ab73a2",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-109",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "adf5e39bdc09f6812456e58f06ee03ddea21918ebd869c504a0683a252814d07",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-110",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "1e9f16dfce13615df7861be00cd9524964a5726a2c220a0c74cacb25bf7cac50",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-111",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "1359fe8546114a235a650400db0ec00195ccce23a6d252ae43ef428db43189e4",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-112",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "5289803d81b2938d47933e1e84e05c2d671c9fba56ba17c76ae3251d7123cef3",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-113",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "cfd42c195b3eb8805fb7cc2cc8ea09e25e0f49372633de8be118c32ebaad9d52",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-114",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "03f6c613f4c7b6e075278fe7852ab3976b15f196a05156e1b3a2e75b71382ac1",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-115",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "8386cd598d0aecb7ab1a64c8fd3285f8ba35959c4c02a72c4aab457825ef5595",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-116",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "c9a72ccb5aefecf4668d6ef197479b087abfdd8dc51d2e11b9fad8df9338610a",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-117",
+      "seeds": [
+        "SL-015"
+      ],
+      "fixture_sha256": "f1596ffa0238cf3840b9dabcb27ce6672637e5836559d02a966d5ab5ec914e10",
+      "criterion": "2.4.5",
+      "expected_outcome": "detected",
+      "expected_severity": "advisory",
+      "adjudication": "settled",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No second way to find pages; issue real, severity advisory"
+    },
+    {
+      "case_id": "LS-040",
+      "seeds": [
+        "SL-003"
+      ],
+      "fixture_sha256": "2f0840ab637a296368e962aa34c06579acf308d0c43a77739d7f9a1c97783689",
+      "criterion": "4.1.2",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "disputed",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Rendered tabs already carry tab roles and states; label may describe pre-script template markup"
+    },
+    {
+      "case_id": "LS-041",
+      "seeds": [
+        "SL-013"
+      ],
+      "fixture_sha256": "dcf3dfc5f5f14bb0685388d9767a95d0ada5a8c9b5dc6d3a1a4717424c5f4b23",
+      "criterion": "1.1.1",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "disputed",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Empty-alt icon inside a link named by its own visible text"
+    },
+    {
+      "case_id": "LS-042",
+      "seeds": [
+        "SL-014"
+      ],
+      "fixture_sha256": "8386cd598d0aecb7ab1a64c8fd3285f8ba35959c4c02a72c4aab457825ef5595",
+      "criterion": "2.4.6",
+      "expected_outcome": "detected",
+      "expected_severity": "major",
+      "adjudication": "disputed",
+      "status": "runnable",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Skipped heading level; best-practice since f6389d6; awaiting adjudication"
+    },
+    {
+      "case_id": "LS-043",
+      "seeds": [
+        "SL-005"
+      ],
+      "fixture_sha256": null,
+      "criterion": "1.3.1",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "disputed",
+      "status": "unresolved_fixture",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No table elements in any snapshot; fee schedules are div grids"
+    },
+    {
+      "case_id": "LS-044",
+      "seeds": [
+        "SL-006"
+      ],
+      "fixture_sha256": null,
+      "criterion": "1.3.1",
+      "expected_outcome": "detected",
+      "expected_severity": null,
+      "adjudication": "disputed",
+      "status": "unresolved_fixture",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "No navigation landmarks in any snapshot"
+    },
+    {
+      "case_id": "LS-045",
+      "seeds": [
+        "SL-008"
+      ],
+      "fixture_sha256": "5e5495c103d6edb3a7adcc969a47456978b14e84dbf88d4a709e6c95f5f31a81",
+      "criterion": "1.4.3",
+      "expected_outcome": null,
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "requires_rendering",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Contrast over a background image needs rendered evidence; none stored"
+    },
+    {
+      "case_id": "LS-046",
+      "seeds": [
+        "SL-010"
+      ],
+      "fixture_sha256": null,
+      "criterion": "1.1.1",
+      "expected_outcome": "not_detected",
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "unresolved_fixture",
+      "applicability": {
+        "head": "applicable",
+        "baseline": "applicable"
+      },
+      "note": "Labelled image not present in any stored snapshot"
+    },
+    {
+      "case_id": "LS-047",
+      "seeds": [
+        "SL-001"
+      ],
+      "fixture_sha256": null,
+      "criterion": "scan",
+      "expected_outcome": null,
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "scan_level",
+      "applicability": {
+        "head": "not_applicable",
+        "baseline": "not_applicable"
+      },
+      "note": "Synthetic: a hidden reCAPTCHA response field must not stall or fail form testing"
+    },
+    {
+      "case_id": "LS-048",
+      "seeds": [
+        "SL-002"
+      ],
+      "fixture_sha256": null,
+      "criterion": "scan",
+      "expected_outcome": null,
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "scan_level",
+      "applicability": {
+        "head": "not_applicable",
+        "baseline": "not_applicable"
+      },
+      "note": "Suspected Tier 5 false negative without a concrete element; kept as a note, not testable"
+    },
+    {
+      "case_id": "LS-049",
+      "seeds": [
+        "SL-016"
+      ],
+      "fixture_sha256": null,
+      "criterion": "scan",
+      "expected_outcome": null,
+      "expected_severity": null,
+      "adjudication": "settled",
+      "status": "scan_level",
+      "applicability": {
+        "head": "not_applicable",
+        "baseline": "not_applicable"
+      },
+      "note": "Synthetic: API failures and partial checks must never produce a criterion pass"
+    }
+  ]
+}

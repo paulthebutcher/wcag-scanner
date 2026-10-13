@@ -163,6 +163,7 @@ export async function legacyEngine(options: LegacyEngineOptions): Promise<Engine
     errors: Anthropic,
     checks: ALL_CHECKS,
     supportsUrlList: options.supportsUrlList,
+    importModule: async <T>(rel: string) => import(pathToFileURL(join(dist, `${rel}.js`)).href) as Promise<T>,
     syntheticFetches: (rootUrl, pageUrls) => {
       const map = new Map<string, SyntheticResponse>();
       if (options.supportsUrlList) return map;
