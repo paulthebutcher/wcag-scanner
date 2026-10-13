@@ -26,10 +26,19 @@ export interface Prediction {
   confidence_score: number;
   detected_by: string;
   reasoning: string;
+  /** A failed model evaluation recorded as a finding: a tooling error, not a detection */
+  tooling_error: boolean;
   model_image: boolean;
   also_found_on: string[];
   evidence: { element_screenshot: string | null; context_screenshot: string | null; page_screenshot: string | null };
   measured_values: Record<string, unknown>;
+}
+
+/** Reasoning strings the checks and the prompt runner write when a model call failed. */
+export const API_FAILURE_RE = /^(Prompt evaluation failed|API evaluation failed|High-risk form evaluation failed|Error message evaluation failed|Input purpose evaluation failed|Claude evaluation failed)\b/;
+
+export function isApiFailure(f: Finding): boolean {
+  return f.evidence.detected_by === "claude_api" && (API_FAILURE_RE.test(f.analysis.reasoning ?? "") || (f.analysis.llm_output !== null && f.analysis.llm_output?.raw_response === "" && f.confidence.tier === "needs_review"));
 }
 
 export function predictionState(f: Finding): string {
@@ -67,6 +76,7 @@ export function buildPredictions(site: string, findings: Finding[], snapshots: P
       confidence_score: f.confidence.score,
       detected_by: f.evidence.detected_by,
       reasoning: f.analysis.reasoning,
+      tooling_error: isApiFailure(f),
       model_image: Boolean(f.analysis.llm_input?.screenshot_provided),
       also_found_on: also,
       evidence: {

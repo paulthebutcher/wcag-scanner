@@ -119,7 +119,7 @@ function associate(c: CaseRecord, predictions: Prediction[]): Candidate[] {
 const LEVEL_NAME = { 1: "exact", 2: "selector", 3: "html", 4: "alias", 5: "page" } as const;
 
 function qualifies(p: Prediction, criterion: string, view: View): boolean {
-  if (p.criterion !== criterion) return false;
+  if (p.criterion !== criterion || p.tooling_error) return false;
   if (view === "confirmed" && p.confidence_tier === "needs_review") return false;
   return true;
 }
@@ -196,13 +196,18 @@ export function matchCases(input: MatchInput): MatchResult {
         });
         continue;
       }
-      // No qualifying prediction: was the outcome established at all?
+      // No qualifying prediction: was the outcome established at all? A
+      // failed model evaluation of this target means it was not.
+      if (candidates.some((x) => x.p.criterion === a.criterion && x.p.tooling_error)) {
+        outcomes.push({ ...base, class: "tooling_error", wrong_criterion: wrong, detail: "model evaluation failed for this target" });
+        continue;
+      }
       const est = establishment(input.config, input.coverage, c.site, c.page, a.criterion);
       if (est !== "established") { outcomes.push({ ...base, class: est, wrong_criterion: wrong, needs_review_only: nrOnly }); continue; }
       outcomes.push({ ...base, class: j.verdict === "violation" ? "FN" : "TN", wrong_criterion: wrong, needs_review_only: nrOnly });
     }
   }
-  const unlabeled = input.predictions.filter((p) => !used.has(p.prediction_key) && !associatedWithReviewed.has(p.prediction_key));
+  const unlabeled = input.predictions.filter((p) => !p.tooling_error && !used.has(p.prediction_key) && !associatedWithReviewed.has(p.prediction_key));
   return { outcomes, unlabeled, used };
 }
 

@@ -44,7 +44,7 @@ function pred(page: string, selector: string, h: string, criterion: string, extr
   return {
     prediction_key: sha256(`${page}|${selector}|${h}|${criterion}|${JSON.stringify(extra)}`).slice(0, 12), site: "t01", page, criterion, selector,
     element_html: h, html_sha256: sha256(h), failure_type: "x", check: "alt-text", tier: 3, state: "load", severity: "major",
-    confidence_tier: "high", confidence_score: 0.8, detected_by: "claude_api", reasoning: "r", model_image: false, also_found_on: [],
+    confidence_tier: "high", confidence_score: 0.8, detected_by: "claude_api", reasoning: "r", tooling_error: false, model_image: false, also_found_on: [],
     evidence: { element_screenshot: null, context_screenshot: null, page_screenshot: null }, measured_values: {}, ...extra,
   };
 }
@@ -216,5 +216,16 @@ describe("matcher classes", () => {
     expect(cls(r, neg.case_id)).toBe("FP");
     expect(r.outcomes.find((o) => o.case_id === neg.case_id)?.association).toBe("page");
     expect(cls(r, pos.case_id)).toBe("TP");
+  });
+
+  it("a failed model evaluation is a tooling error, never a detection or a pass", () => {
+    const v = newCase("p001", "img.a", html("a"), ["1.1.1"]);
+    const n = newCase("p002", "img.b", html("b"), ["1.1.1"]);
+    labels.append([judge(v.case_id, "A1", "violation"), judge(n.case_id, "A1", "no_violation")]);
+    const failed = (page: string, sel: string, h: string) => pred(page, sel, h, "1.1.1", { tooling_error: true, confidence_tier: "needs_review", reasoning: "Prompt evaluation failed after 1 retries: 400" });
+    const r = run([failed("p001", "img.a", html("a")), failed("p002", "img.b", html("b"))], { view: "inclusive" });
+    expect(cls(r, v.case_id)).toBe("tooling_error");
+    expect(cls(r, n.case_id)).toBe("tooling_error");
+    expect(r.unlabeled).toHaveLength(0);
   });
 });

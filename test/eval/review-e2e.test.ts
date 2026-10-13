@@ -34,7 +34,7 @@ function pred(page: string, selector: string, html: string, criterion: string, c
   return {
     prediction_key: sha256(`${page}|${selector}|${criterion}`).slice(0, 16), site: "t01", page, criterion, selector, element_html: html,
     html_sha256: sha256(html), failure_type: "ft", check, tier: 3, state: "load", severity: "major", confidence_tier: "high", confidence_score: 0.8,
-    detected_by: "claude_api", reasoning: `Engine reasoning for ${selector} <b>not html</b>`, model_image: check === "alt-text", also_found_on: [],
+    detected_by: "claude_api", reasoning: `Engine reasoning for ${selector} <b>not html</b>`, tooling_error: false, model_image: check === "alt-text", also_found_on: [],
     evidence: { element_screenshot: check === "landmark-labels" ? "scan/el.png" : null, context_screenshot: null, page_screenshot: null }, measured_values: {}, ...extra,
   };
 }
