@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" data-wf-site="pilot-site-0001" data-wf-page="pilot-page-home">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="Webflow">
+  <title>Pilot Parks Department</title>
+  <link rel="stylesheet" href="/css/site.css">
+</head>
+<body class="body">
+  <a href="#main-content" class="skip-link">Skip to content</a>
+  <div class="w-nav navbar" role="banner">
+    <a href="/" class="w-nav-brand"><img src="/images/logo.png" alt="Pilot Parks" class="brand-image"></a>
+    <nav class="w-nav-menu">
+      <a href="/" class="w-nav-link w--current">Home</a>
+      <a href="/about" class="w-nav-link">About</a>
+      <a href="/contact" class="w-nav-link">Contact</a>
+    </nav>
+  </div>
+  <main id="main-content" class="main">
+    <h1>Welcome to Pilot Parks</h1>
+    <img src="/images/hero.png" alt="IMG_2041.png" class="hero-image">
+    <p>Find trails, picnic shelters and seasonal events across the county.</p>
+    <div class="team"><img src="{{CDN}}/team.png" alt="photo" class="team-image"></div>
+    <img src="/images/divider.png" alt="" class="divider">
+    <p>Planning a visit? <a href="/about">Click here</a> or <a href="/contact">read more</a>.</p>
+
+    <div class="w-tabs" data-current="Tab 1">
+      <div class="w-tab-menu">
+        <a data-w-tab="Tab 1" class="w-tab-link w--current">Trails</a>
+        <a data-w-tab="Tab 2" class="w-tab-link">Shelters</a>
+      </div>
+      <div class="w-tab-content">
+        <div data-w-tab="Tab 1" class="w-tab-pane w--tab-active"><p>Twelve marked trails.</p></div>
+        <div data-w-tab="Tab 2" class="w-tab-pane"><p>Six bookable shelters.</p></div>
+      </div>
+    </div>
+
+    <div class="open-modal btn" data-w-id="pilot-modal-open">Reserve a shelter</div>
+    <div class="modal" id="reserve-modal" hidden>
+      <div class="modal-card">
+        <h2>Shelter reservations</h2>
+        <p>Call the parks office to reserve.</p>
+        <a href="/contact" class="modal-link">Contact the office</a>
+        <div class="close-modal" data-w-id="pilot-modal-close">Close</div>
+      </div>
+    </div>
+
+    <form id="search" action="/search" method="get" class="search-form" role="search">
+      <label for="q">Search the site</label>
+      <input id="q" name="q" type="search" required>
+      <button type="submit">Search</button>
+    </form>
+  </main>
+  <footer class="footer"><a href="/about">About the department</a></footer>
+  <script src="/js/site.js"></script>
+</body>
+</html>

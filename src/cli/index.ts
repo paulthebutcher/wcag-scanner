@@ -12,6 +12,7 @@ import { createScanCommand } from "./commands/scan.js";
 import { createReportCommand } from "./commands/report.js";
 import { createReviewCommand } from "./commands/review.js";
 import { createVerifyCommand } from "./commands/verify.js";
+import { createEvalCommand } from "./commands/eval.js";
 
 const program = new Command();
 
@@ -24,5 +25,6 @@ program.addCommand(createScanCommand());
 program.addCommand(createReportCommand());
 program.addCommand(createReviewCommand());
 program.addCommand(createVerifyCommand());
+program.addCommand(createEvalCommand());
 
 program.parse();
