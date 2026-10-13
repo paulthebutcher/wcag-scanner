@@ -48,6 +48,8 @@ export interface ReplaySiteOptions {
   pages?: string[];
   /** Distinguishes several replays of one site and engine in a run */
   tag?: string;
+  /** record mode only: Node targets ("host:port") the live model client may reach */
+  allowEgress?: string[];
   log?: (message: string) => void;
 }
 
@@ -150,7 +152,7 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
   const nodeEgress = new EgressLog();
   const images = loadImages(dir, capture);
 
-  const uninstallDenial = installNodeEgressDenial(nodeEgress);
+  const uninstallDenial = installNodeEgressDenial(nodeEgress, options.allowEgress ?? []);
   const uninstallFetch = installFetch(createReplayFetch({
     records,
     loadBody: (sha) => readFileSync(join(dir, "site", "bodies", `${sha}.bin`)),

@@ -96,6 +96,8 @@ export interface ClientStats {
   vision_by_template: Record<string, number>;
   cost_usd: number;
   model_ids: string[];
+  /** Every cached attempt read or written, as "key#attempt" (pinned in the manifest) */
+  attempts_used: string[];
   template_hashes: Record<string, string>;
   system_prompt_hashes: Record<string, string>;
   miss_keys: string[];
@@ -146,7 +148,7 @@ export class EvalAnthropicClient {
   readonly stats: ClientStats = {
     requests: 0, by_template: {}, entries_read: 0, entries_created: 0, shared_responses: 0,
     cache_misses: 0, image_misses: 0, budget_refusals: 0, vision_requests: 0, no_image_requests: 0, vision_by_template: {},
-    cost_usd: 0, model_ids: [], template_hashes: {}, system_prompt_hashes: {}, miss_keys: [],
+    cost_usd: 0, model_ids: [], attempts_used: [], template_hashes: {}, system_prompt_hashes: {}, miss_keys: [],
   };
   /** Attempts served or recorded so far in this run, per key */
   private readonly attemptCounter = new Map<string, number>();
@@ -232,6 +234,7 @@ export class EvalAnthropicClient {
     const cached = cache.get(key, attempt);
     if (cached) {
       s.entries_read++;
+      s.attempts_used.push(`${key}#${attempt}`);
       // Responses another engine recorded (paired comparisons share them)
       if (cached.engine_label !== this.options.engineLabel) s.shared_responses++;
       return this.serve(cached);
@@ -279,6 +282,7 @@ export class EvalAnthropicClient {
     }
     cache.put(record);
     s.entries_created++;
+    s.attempts_used.push(`${key}#${attempt}`);
     return this.serve(record);
   }
 

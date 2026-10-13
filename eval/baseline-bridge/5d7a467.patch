@@ -1,0 +1,39 @@
+diff --git a/src/core/scanner.ts b/src/core/scanner.ts
+index b763123..5887858 100644
+--- a/src/core/scanner.ts
++++ b/src/core/scanner.ts
+@@ -105,6 +105,24 @@ export interface ScanOptions {
+   checks?: string[];
+   /** For a verification rescan: the scan whose fixes this one checks */
+   baselineScanId?: string;
++  /** Eval harness only (see src/eval). Unset in every production path. */
++  evalHooks?: EvalScanHooks;
++}
++
++/**
++ * Transport hooks for the offline eval harness. They may replace inputs with
++ * recorded ones but never change candidates, verdicts, severity, confidence
++ * or remediation.
++ */
++export interface EvalScanHooks {
++  /**
++   * Called with a form's submission states before error-message evaluation;
++   * returns the states to evaluate, with each `screenshotAfter` (the model's
++   * image input) replaced by the bytes recorded at capture time, or "" for a
++   * recorded no-image state. A screenshot rendered during replay must never
++   * reach the model.
++   */
++  submissionStates?: (pageUrl: string, form: FormInfo, states: SubmissionState[]) => SubmissionState[];
+ }
+ 
+ export interface ScanResult {
+@@ -1516,7 +1534,8 @@ export async function scan(
+                   // Error message evaluation (LLM)
+                   if (formRunner && states.length > 0 && runs("error-messages")) {
+                     try {
+-                      const errorResults = annotateShared(await evaluateErrorMessages(states, formRunner), form);
++                      const evalStates = options.evalHooks?.submissionStates?.(snapshot.url, form, states) ?? states;
++                      const errorResults = annotateShared(await evaluateErrorMessages(evalStates, formRunner), form);
+                       coverage.ran("error-messages", 4, snapshot.url);
+                       if (errorResults.length > 0) {
+                         for (const er of errorResults) formViolationCriteria.add(er.wcag_criterion);

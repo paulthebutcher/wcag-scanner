@@ -81,6 +81,8 @@ export interface ModelInfo {
   image_index_sha256: string | null;
   /** Requests served from responses another engine's run recorded */
   shared_responses: number;
+  /** sha256 over the sorted cached attempts this run used */
+  entries_sha256: string | null;
   cost_usd_estimate: number | null;
 }
 
@@ -197,6 +199,7 @@ export const RUN_MANIFEST_SCHEMA: Schema = obj({
     parameters: rec(any()),
     image_index_sha256: str({ pattern: SHA256, nullable: true }),
     shared_responses: int({ min: 0 }),
+    entries_sha256: str({ pattern: SHA256, nullable: true }),
     cost_usd_estimate: { type: "number", min: 0, nullable: true },
   }, { nullable: true }),
   inputs: rec(obj({

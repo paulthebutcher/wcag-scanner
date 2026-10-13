@@ -9,6 +9,12 @@ import { runPilot } from "../../eval/pilot.js";
 import { captureSite } from "../../eval/capture.js";
 import { verifyCorpus, type Split } from "../../eval/corpus.js";
 import { knownPrivateHosts, writeExport } from "../../eval/privacy.js";
+import Anthropic from "@anthropic-ai/sdk";
+import { resolveEngine } from "../../eval/engine/resolve.js";
+import { executeReplayRun } from "../../eval/runs.js";
+import { ResponseCache } from "../../eval/model/cache.js";
+import { deterministicInjector } from "../../eval/model/injector.js";
+import { guardSplit, HoldoutSealed } from "../../eval/holdout.js";
 
 // ---------------------------------------------------------------------------
 // `wcag eval` — thin wiring over src/eval. Every producing command prints its
@@ -143,6 +149,90 @@ export function createEvalCommand(): Command {
       process.stdout.write(result.problems.length === 0 ? "corpus verified\n" : `${result.problems.length} problem(s)\n`);
       process.exitCode = result.problems.length === 0 ? 0 : 1;
     });
+
+  const replayLike = (name: "replay" | "record") => {
+    const c = cmd.command(name)
+      .requiredOption("--engine <sha>", "head | baseline | pre-harness | <sha>")
+      .requiredOption("--corpus <version>", "Corpus version")
+      .requiredOption("--split <split>", "tuning | dev | holdout | pilot")
+      .option("--cache <namespace>", "Response cache namespace")
+      .option("--sites <ids>", "Comma-separated site ids (default: every site in the split)")
+      .option("--pages <ids>", "Comma-separated page ids (diagnostic runs only)")
+      .option("--purpose <purpose>", "diagnostic | official-regression | official-accuracy", "diagnostic")
+      .option("--unseal <reason>", "Required (and logged) for the holdout split")
+      .option("--data-dir <path>", "Private data root (default wcag-data)");
+    if (name === "replay") {
+      c.description("D2/D3: offline replay of a frozen corpus (no site or model access)")
+        .option("--repeat <n>", "Replay N times and report repeatability", "1")
+        .option("--inject", "Use deterministic injected responses instead of a cache (diagnostic, pilot corpora only)")
+        .option("--no-defects", "Do not append flaky checks to eval/phase2-defects.jsonl");
+    } else {
+      c.description("D3: replay with live model calls for missing cache entries only, within a budget (no site access)")
+        .requiredOption("--max-cost-usd <amount>", "Stop starting model calls once this much is spent");
+    }
+    c.action(async (opts: Record<string, string | boolean | undefined>) => {
+      if (opts.dataDir) process.env.WCAG_EVAL_DATA_DIR = String(opts.dataDir);
+      const { paths, config } = context();
+      const split = String(opts.split) as Split;
+      try {
+        guardSplit(paths, split, opts.unseal as string | undefined, `${name} --corpus ${opts.corpus} --split ${split}`);
+      } catch (err) {
+        if (err instanceof HoldoutSealed) { console.error(err.message); process.exit(2); }
+        throw err;
+      }
+      const inject = name === "replay" && Boolean(opts.inject);
+      if (inject && (split !== "pilot" || opts.purpose !== "diagnostic")) {
+        console.error("--inject is only for diagnostic runs on pilot corpora");
+        process.exit(2);
+      }
+      if (!inject && !opts.cache) {
+        console.error("--cache <namespace> is required");
+        process.exit(2);
+      }
+      const purpose = parsePurpose(String(opts.purpose));
+      if (name === "record" && purpose !== "diagnostic") {
+        console.error("record runs are diagnostic; official runs replay a completed record");
+        process.exit(2);
+      }
+      const run = begin(name, [name, ...process.argv.slice(4)], purpose);
+      try {
+        const engine = await resolveEngine(paths, String(opts.engine), run.manifest.harness.sha, log);
+        const cache = opts.cache ? new ResponseCache(paths.cacheDir, String(opts.cache)) : undefined;
+        let client;
+        if (inject) client = { mode: "inject" as const, injector: deterministicInjector, namespace: null };
+        else if (name === "replay") client = { mode: "replay" as const, cache, namespace: String(opts.cache) };
+        else {
+          const budget = Number(opts.maxCostUsd);
+          if (!Number.isFinite(budget) || budget <= 0) throw new Error("--max-cost-usd must be a positive number");
+          if (!process.env.ANTHROPIC_API_KEY) throw new Error("record needs ANTHROPIC_API_KEY");
+          const live = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          client = { mode: "record" as const, cache, live: live.messages as never, maxCostUsd: budget, namespace: String(opts.cache) };
+        }
+        const result = await executeReplayRun({
+          paths, config, run, engine, corpusVersion: String(opts.corpus), split,
+          sites: opts.sites ? String(opts.sites).split(",") : undefined,
+          pages: opts.pages ? String(opts.pages).split(",") : undefined,
+          client, repeat: name === "replay" ? Math.max(1, parseInt(String(opts.repeat ?? "1"), 10)) : 1,
+          logDefects: name === "replay" && opts.defects !== false,
+          allowEgress: name === "record" ? ["api.anthropic.com:443"] : [], log,
+        });
+        const m = run.finish("completed");
+        const rep = result.repeatability;
+        process.stdout.write(`pages ${m.totals.pages}, HAR/Node misses ${m.totals.har_misses}, image misses ${m.totals.image_misses}, cache misses ${m.totals.cache_misses}, egress ${m.totals.attempted_egress}\n`);
+        if (m.model) process.stdout.write(`model: ${m.model.entries_read} read, ${m.model.entries_created} recorded, ~$${(m.model.cost_usd_estimate ?? 0).toFixed(2)}\n`);
+        if (rep) process.stdout.write(`repeatability: non-behavioral identical=${rep.non_behavioral_identical}; flaky checks: ${rep.checks.filter((c) => c.varying_pairs > 0).map((c) => `${c.check} ${c.varying_pairs}/${c.tested_pairs}`).join(", ") || "none"}\n`);
+        process.stdout.write(`valid=${m.validity.valid}${m.validity.reasons.length ? ` (${m.validity.reasons.join("; ")})` : ""}\n`);
+        process.exitCode = m.validity.valid ? 0 : 1;
+      } catch (err) {
+        run.invalidate(`${name} error: ${err instanceof Error ? err.message : String(err)}`);
+        run.finish("failed");
+        console.error(err instanceof Error ? err.message : err);
+        process.exitCode = 2;
+      }
+    });
+  };
+  replayLike("replay");
+  replayLike("record");
 
   return cmd;
 }
