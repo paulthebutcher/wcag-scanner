@@ -1,5 +1,5 @@
 import type { Finding, PageSnapshot } from "../types.js";
-import { checkForFinding } from "../core/check-registry.js";
+import { evalCheckFor } from "./attribution.js";
 import { canonicalJson, sha256 } from "./util.js";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ export function buildPredictions(site: string, findings: Finding[], snapshots: P
     const snap = pageBySnapshot.get(f.page_snapshot_id);
     const mv = (f.evidence.measured_values ?? {}) as Record<string, unknown>;
     const also = Array.isArray(mv.also_found_on_urls) ? (mv.also_found_on_urls as string[]).map(pageIdOf).sort() : [];
-    const check = checkForFinding(f);
+    const check = evalCheckFor(f);
     const base = {
       site, page: snap?.page ?? "(unknown)", criterion: f.wcag_criterion, selector: f.evidence.element_selector,
       html_sha256: sha256(f.evidence.element_html ?? ""), failure_type: typeof mv.failure_type === "string" ? mv.failure_type : null,

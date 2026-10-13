@@ -44,7 +44,7 @@ section { padding:16px 20px; overflow:auto; max-height: calc(100vh - 42px); }
 .meta { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:4px 16px; margin-bottom:12px; }
 .meta div span { color:var(--muted); display:block; font-size:12px; }
 .reasoning { white-space:pre-wrap; border-left:3px solid var(--line); padding-left:10px; margin:8px 0 16px; }
-figure { margin:0 0 12px; } figure img { max-width:100%; border:1px solid var(--line); } figcaption { font-size:12px; color:var(--muted); }
+figure { margin:0 0 12px; } figure img { max-width:100%; max-height:360px; object-fit:contain; border:1px solid var(--line); } figcaption { font-size:12px; color:var(--muted); }
 pre.html { white-space:pre-wrap; word-break:break-all; background:color-mix(in srgb, var(--fg) 5%, transparent); padding:10px; border-radius:4px; max-height:260px; overflow:auto; font-size:12px; }
 pre.html .ctx { color:var(--muted); } pre.html mark { background:color-mix(in srgb, var(--warn) 30%, transparent); color:inherit; }
 .actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; position:sticky; bottom:0; background:var(--bg); padding:8px 0; border-top:1px solid var(--line); }

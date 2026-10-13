@@ -46,7 +46,7 @@ function check(schema: Schema, value: unknown, path: string, errors: string[]): 
     return;
   }
   if (value === null) {
-    if (!("nullable" in schema && schema.nullable)) errors.push(`${path}: must not be null`);
+    if (schema.type !== "any" && !("nullable" in schema && schema.nullable)) errors.push(`${path}: must not be null`);
     return;
   }
   switch (schema.type) {

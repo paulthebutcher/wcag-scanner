@@ -356,8 +356,14 @@ export function startRun(options: StartRunOptions): RunHandle {
       manifest.completion = completion;
       manifest.finished_at = utcNow();
       applyValidityRules(manifest);
-      assertValid(RUN_MANIFEST_SCHEMA, manifest, `run manifest ${runId}`);
+      // A manifest is always written; a schema problem makes it invalid and loud
+      const errors = validate(RUN_MANIFEST_SCHEMA, manifest);
+      if (errors.length > 0) {
+        manifest.validity.valid = false;
+        manifest.validity.reasons.push(`manifest schema: ${errors.slice(0, 5).join("; ")}`);
+      }
       writeJson(path, manifest);
+      if (errors.length > 0) assertValid(RUN_MANIFEST_SCHEMA, manifest, `run manifest ${runId}`);
       return manifest;
     },
   };

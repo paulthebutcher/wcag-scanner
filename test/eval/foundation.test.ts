@@ -91,6 +91,18 @@ describe("run manifest (D8)", () => {
     expect(failed.validity.valid).toBe(false);
   });
 
+  it("command detail may hold nulls, and a schema problem still writes an invalid manifest", () => {
+    const run = startRun({ command: "replay", argv: [], purpose: "diagnostic", root: REPO, runsDir: tmp, repo: CLEAN });
+    run.manifest.extra = { repeatability: null };
+    expect(run.finish("completed").validity.valid).toBe(true);
+    const bad = startRun({ command: "replay", argv: [], purpose: "diagnostic", root: REPO, runsDir: tmp, repo: CLEAN });
+    (bad.manifest.totals as unknown as Record<string, unknown>).pages = -1;
+    expect(() => bad.finish("completed")).toThrow(/Invalid run manifest/);
+    const written = JSON.parse(readFileSync(bad.path, "utf8"));
+    expect(written.completion).toBe("completed");
+    expect(written.validity.valid).toBe(false);
+  });
+
   it("consumers never accept 'latest'", () => {
     expect(() => loadManifest(tmp, "latest")).toThrow(/explicit run id/);
   });

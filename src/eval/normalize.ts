@@ -1,6 +1,6 @@
 import type { CriterionResult, Finding, PageSnapshot } from "../types.js";
 import type { ScanCoverage } from "../core/coverage.js";
-import { checkForFinding } from "../core/check-registry.js";
+import { evalCheckFor } from "./attribution.js";
 import { canonicalJson, sha256 } from "./util.js";
 
 // ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ export function findingKeys(findings: Finding[], snapshots: PageSnapshot[], page
       locator: f.evidence.element_selector,
       html_sha256: sha256(f.evidence.element_html ?? ""),
       failure_type: typeof mv.failure_type === "string" ? mv.failure_type : null,
-      check: checkForFinding(f),
+      check: evalCheckFor(f),
       severity: f.severity,
       confidence: f.confidence.tier,
       detected_by: f.evidence.detected_by,
