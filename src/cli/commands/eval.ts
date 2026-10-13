@@ -29,6 +29,11 @@ import { BASELINE_CHECKS } from "../../eval/engine/legacy.js";
 import { LabelStore } from "../../eval/labels.js";
 import { verifySite, type Split as CorpusSplit } from "../../eval/corpus.js";
 import type { StaticFile, StaticCaseOutcome } from "../../eval/static.js";
+import { admitSites, readCandidateFile, selectPages, type FetchLike } from "../../eval/admit.js";
+import { loadSitesPrivate, registerSite } from "../../eval/corpus.js";
+import { userAgentFor } from "../../eval/capture.js";
+import { Pacer } from "../../eval/transport/pacer.js";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { existsSync } from "node:fs";
 import type { Batch } from "../../eval/labels.js";
 
@@ -542,6 +547,53 @@ export function createEvalCommand(): Command {
         }
       });
   }
+
+  cmd.command("admit")
+    .description("D1b: admit municipal Webflow sites from the BuiltWith list (site access under capture etiquette; no model calls)")
+    .requiredOption("--input <file>", "Paul's candidate file (e.g. wcag-data/eval-corpus/builtwith.csv)")
+    .requiredOption("--salt-env <name>", "Environment variable holding the split salt")
+    .option("--select-pages", "Also choose up to the per-site cap of pages for newly admitted sites")
+    .action(async (opts: { input: string; saltEnv: string; selectPages?: boolean }) => {
+      const { paths, config } = context();
+      const contactUrl = process.env.EVAL_CONTACT_URL;
+      const salt = process.env[opts.saltEnv];
+      if (!contactUrl) { console.error("EVAL_CONTACT_URL is required (it goes in the user agent)."); process.exit(2); }
+      if (!salt) { console.error(`Set ${opts.saltEnv} to the split salt.`); process.exit(2); }
+      const run = begin("admit", ["admit", "--salt-env", opts.saltEnv], "diagnostic");
+      try {
+        const ua = userAgentFor(config, contactUrl!);
+        const fetchImpl: FetchLike = (url, init) => fetch(url, { headers: init?.headers, redirect: "follow" }) as never;
+        const result = await admitSites({ paths, config, csv: readCandidateFile(opts.input), salt: salt!, userAgent: ua, fetchImpl, log });
+        if (opts.selectPages) {
+          const pacer = new Pacer(config.capture.min_seconds_between_top_level_loads * 1000);
+          for (const id of result.newly_assigned) {
+            const site = loadSitesPrivate(paths).sites.find((s) => s.site_id === id)!;
+            const sel = await selectPages(site, { fetchImpl, userAgent: ua, maxPages: config.capture.max_pages_per_site, pacer });
+            if (sel.pages.length === 0) continue;
+            registerSite(paths, { siteId: id, rootUrl: site.root_url, split: site.split, urls: sel.pages });
+            const urlsDir = join(paths.corpusDir, "urls");
+            mkdirSync(urlsDir, { recursive: true });
+            writeFileSync(join(urlsDir, `${id}.txt`), [site.root_url, ...sel.pages].join("\n") + "\n");
+            writeJson(join(urlsDir, `${id}.omissions.private.json`), sel.omitted);
+          }
+        }
+        run.manifest.extra = {
+          candidates: result.candidates, duplicates: result.duplicates, admitted: result.decisions.filter((d) => d.admitted).length,
+          rejected: result.decisions.filter((d) => !d.admitted).length, families: result.families.length,
+          by_split: result.families.reduce<Record<string, number>>((m, f) => ({ ...m, [f.split]: (m[f.split] ?? 0) + f.sites.length }), {}),
+          newly_assigned: result.newly_assigned, enough_sites: result.enough_sites,
+        };
+        if (!result.enough_sites) run.unavailable("dev capture", "fewer than 15 admitted sites: ask Paul before capturing");
+        run.finish("completed");
+        process.stdout.write(`${result.candidates} candidate(s), ${result.duplicates} duplicate(s); admitted ${result.decisions.filter((d) => d.admitted).length}, rejected ${result.decisions.filter((d) => !d.admitted).length}; ${result.families.length} famil(y/ies)\n`);
+        if (!result.enough_sites) process.stdout.write("Fewer than 15 sites: admission results are ready; ask Paul before capturing dev.\n");
+      } catch (err) {
+        run.invalidate(`admit error: ${err instanceof Error ? err.message : String(err)}`);
+        run.finish("failed");
+        console.error(err instanceof Error ? err.message : err);
+        process.exitCode = 2;
+      }
+    });
 
   cmd.command("pace")
     .description("D9: labelling pace by criterion and batch")

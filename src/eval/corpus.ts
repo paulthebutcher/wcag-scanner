@@ -170,6 +170,8 @@ export interface PrivateSite {
   split: Split;
   pages: Array<{ page_id: string; url: string }>;
   notes?: string;
+  /** Webflow data-wf-site id seen at admission (one site per Webflow site) */
+  webflow_site_id?: string | null;
 }
 
 export interface SitesPrivate {
