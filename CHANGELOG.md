@@ -5,7 +5,7 @@ Unified from the supplied Claude chat reconstruction, all reachable repository h
 ## Conventions
 
 - **Date** is the local (America/Denver) date the source chat was last active. Work inside a long chat may have happened a few days earlier. Repo commit dates win on merge; scan times are initiated_at converted to Denver. [chat:14115d46] [repo:783f4b9]
-- **Source tags:** `[chat:<id8>]` = Claude chat; `[repo:<short-sha>]` = commit; `[scan:<id8>]` = stored scan or explicitly identified historical scan; `[cc:<session-id8>]` / `[codex:<session-id8>]` = local Claude Code / Codex transcript. A tag identifies evidence, not a guarantee that its artifact survives locally. [chat:5dd53c0b] [repo:86d750d]
+- **Source tags:** `[chat:<id8>]` = Claude chat; `[repo:<short-sha>]` = commit; `[scan:<id8>]` = stored scan or explicitly identified historical scan; `[cc:<session-id8>]` / `[codex:<session-id8>]` = local Claude Code / Codex transcript; `[run:<run-id>]` = eval harness run (manifest under wcag-data/eval-runs, aggregate export under eval/runs). A tag identifies evidence, not a guarantee that its artifact survives locally. [chat:5dd53c0b] [repo:86d750d]
 - **Status tags:** `shipped` = confirmed working in a later scan or test run (historical evidence, not a new test run here). `prompted` = fix prompt written and Paul reported running it, no later verification found. `planned` = proposed, no evidence it was built. Chat-only claims retain their reported status alongside any unresolved caveat; branch-only work is explicitly labelled. Observations/decisions/results may have no status. [chat:5dd53c0b] [repo:e78d715]
 - **Epistemic labels:** (observed) stated in chat, (inferred) reading of evidence, (assumed) filled gap. `(no commit found)` preserves a claim/proposal with no matching implementation; `(commit not found)` would mark an explicitly attributed but absent hash. All five hashes in the Popfly chat exist. [chat:5dd53c0b] [repo:d0421be] [repo:9e2321a] [repo:849ebe0] [repo:60d9b45] [repo:53f87d5]
 - **Merge rules:** one line per meaningful change, repo wording/date with all matched sources; independently meaningful parts of a bundled chat line are split. Numeric contradictions are retained as caveats, and plans are upgraded only where the repository proves the matching behavior. [chat:98edf333] [repo:f0e97b9]
@@ -31,10 +31,20 @@ Chat index:
 ### Added
 
 - Chat-derived eval/seed-labels.jsonl preserves 18 Lakewood labels. No eligible local-transcript findings or human_review verdicts can be appended; Popfly findings are excluded and Lakewood scan/finding references remain unresolved in the current Popfly-only store. [chat:f67d0e54] [chat:cb403267] [chat:98edf333] [codex:01a131fd] `shipped`
+- Phase 1 eval harness (`wcag eval`, src/eval): run manifests with dirty-tree refusal for official runs, privacy rules and a committed-export test, eval/config.json with coverage notes for all 50 WCAG 2.1 A/AA criteria. [repo:a72248f] [repo:91eb47b] `shipped`
+- Offline transport boundary: one controlled browser for every engine context, page, reload and popup (blocked service workers, submission containment, HAR replay, engine `route.continue()` turned into fallback, WebSockets refused, deny-and-log proxy), recorded Node fetches with socket denial, and an eval model client with an immutable response cache and image-store check. Baseline runs through a worktree bridge (adapter plus a two-hunk transport patch, sha256 6f224841…). One eval-only scanner hook, default off. [repo:b921a95] `shipped`
+- Capture, corpus verification, replay/record with budget and repeatability, cases/labels/matcher, review and blind audit screens with pace, metrics and aggregate export, Lakewood static set, compare/gate and reference export, municipal admission. [repo:513fe47] [repo:67c0256] [repo:def7e96] [repo:4e6472e] [repo:0c4dc84] [repo:34534e5] [repo:e4ee5dd] `shipped`
 
 ### Results
 
+- D0 pilot on the local fixture, clean tree at 52bfd6c: 37/37 checks; HEAD and baseline replay offline with 0 HAR, Node-fetch, image and cache misses and 0 egress; GET-form, POST, fetch, XHR and beacon submissions contained live and offline with 0 fixture submission hits; trap misses, declared exclusions and WebSockets detected; default path identical to pre-harness 5d7a467 (62 findings, 48 criterion statuses, 78 coverage entries, no diff). [repo:52bfd6c] [run:pilot-20261013T011517Z-e56772]
+- Lakewood static set: 18 seeds resolved to 44 cases (37 runnable, 3 unresolved, 3 scan level, 1 requiring rendering); new disputes SL-003 and SL-013. With an empty static cache, clean tree at 91eb47b: head 29 pass / 3 fail / 5 unavailable, baseline 30 / 3 / 4; replays identical; synthetic SL-001 passes at both. [repo:0c4dc84] [run:static-20261013T012446Z-674fb3] [run:static-20261013T012705Z-4d5436]
+
 - History reconciliation covers 88 implementation commits through snapshot HEAD 86d750d and all 12 main-folder scan directories. Every timeline line has provenance; original chat and repo working halves are merged into this file. Seed JSONL parses and excludes Popfly; unavailable Lakewood ids remain unguessed. [codex:01a131fd] [repo:86d750d]
+
+### Known issues
+
+- Static set: the duplicate-link rule still flags a self-describing navigation link at HEAD and the baseline (LS-012, LS-014; P2-009), and a throwing model-based check still lets 1.1.1, 2.4.4, 1.3.5 and 3.3.4 pass at both versions (SL-016 synthetic; P2-010). Logged in eval/phase2-defects.jsonl, not fixed in Phase 1. [run:static-20261013T012446Z-674fb3] [run:static-20261013T012705Z-4d5436]
 
 ### Planned
 

@@ -1,0 +1,314 @@
+{
+  "run_id": "static-20261013T012705Z-4d5436",
+  "engine": {
+    "label": "baseline",
+    "sha": "ffdcd308610527525fb82ccd118a7f7b89334b66",
+    "bridge": {
+      "original_sha": "ffdcd308610527525fb82ccd118a7f7b89334b66",
+      "patch_sha256": "6f224841b57697ab92c74b388c7d006bf312ea16be9fe0c7cea88d2188a456ef",
+      "adapter_sha256": "b3a48ab1308af577f7ed05f2bcc134611084c51edca8a9100937c49948702bed",
+      "effective_source_sha256": "12d6837b58aff1f0d47a3b3713c130e2413319005e4648dac8cddd7d1218c369"
+    }
+  },
+  "harness": {
+    "sha": "91eb47bb66763c31d32578d012256146156546bf",
+    "dirty": false
+  },
+  "cache_namespace": "static-v1",
+  "validity": {
+    "valid": true,
+    "official": false,
+    "reasons": [],
+    "unavailable": [
+      {
+        "result": "model-dependent static cases",
+        "reason": "258 request(s) not recorded in static-v1"
+      }
+    ]
+  },
+  "replays_identical": true,
+  "outcomes": [
+    {
+      "case_id": "LS-001",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-002",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-003",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-004",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-005",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-006",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-007",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-008",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-009",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-010",
+      "outcome": "unavailable",
+      "reason": "model responses not recorded for high-risk-forms (static cache)",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-011",
+      "outcome": "unavailable",
+      "reason": "model responses not recorded for high-risk-forms (static cache)",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-012",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-013",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-014",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-015",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-016",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-017",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-101",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-102",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-103",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-104",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-105",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-106",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-107",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-108",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-109",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-110",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-111",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-112",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-113",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-114",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-115",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-116",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-117",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-040",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-041",
+      "outcome": "unavailable",
+      "reason": "model responses not recorded for alt-text (static cache)",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-042",
+      "outcome": "unavailable",
+      "reason": "model responses not recorded for headings (static cache)",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-043",
+      "outcome": "not_run",
+      "reason": "unresolved_fixture",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-044",
+      "outcome": "not_run",
+      "reason": "unresolved_fixture",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-045",
+      "outcome": "not_run",
+      "reason": "requires_rendering",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-046",
+      "outcome": "not_run",
+      "reason": "unresolved_fixture",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-047",
+      "outcome": "not_run",
+      "reason": "scan_level",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-048",
+      "outcome": "not_run",
+      "reason": "scan_level",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-049",
+      "outcome": "not_run",
+      "reason": "scan_level",
+      "severity_ok": null
+    }
+  ],
+  "counts": {
+    "pass": 30,
+    "unavailable": 4,
+    "fail": 3,
+    "not_run": 7
+  },
+  "synthetic": {
+    "sl001": {
+      "outcome": "pass",
+      "detail": "1 submission state(s) in 3831 ms"
+    },
+    "sl016": {
+      "outcome": "fail",
+      "detail": "all model calls fail (HTTP 400): 0 false pass(es); model-based checks throw: 4 false pass(es) (1.1.1 pass_with_unestablished_checks, 1.3.5 pass_with_unestablished_checks, 2.4.4 pass_with_unestablished_checks, 3.3.4 pass_with_unestablished_checks); control: deterministic responses: 0 false pass(es)"
+    }
+  },
+  "cache_misses": 258,
+  "egress": 0
+}
