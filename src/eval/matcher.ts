@@ -14,6 +14,9 @@ import type { EvalConfig } from "./config.js";
 //      content fallback)
 //   4. a deduplicated prediction whose also_found_on lists the case page,
 //      with the same selector and HTML (the scan-wide dedup alias)
+//   5. a page-level case (no selector, no HTML, e.g. a tested negative) is
+//      about every prediction of its criterion on the page; it neither
+//      becomes ambiguous nor consumes the prediction
 // Never page plus failure type, never finding_type_hash. Candidates that tie
 // at the best level and cannot be told apart make the case ambiguous.
 // A prediction satisfies at most one assertion per page instance.
@@ -40,7 +43,7 @@ export interface AssertionOutcome {
   verdict: FoldedJudgment["verdict"] | null;
   class: MatchClass;
   prediction_key: string | null;
-  association: "exact" | "selector" | "html" | "alias" | null;
+  association: "exact" | "selector" | "html" | "alias" | "page" | null;
   /** An associated prediction exists but for another criterion */
   wrong_criterion: string[];
   /** TP with a corrected severity that differs from the engine's */
@@ -78,11 +81,16 @@ export interface MatchResult {
 
 interface Candidate {
   p: Prediction;
-  level: 1 | 2 | 3 | 4;
+  level: 1 | 2 | 3 | 4 | 5;
 }
 
 function stateMatches(caseState: string | null, p: Prediction): boolean {
   return caseState === null || caseState === p.state;
+}
+
+/** A page-level case (no selector, no HTML): any prediction on the page is about it. */
+function isPageLevel(c: CaseRecord): boolean {
+  return c.target.selector === null && c.target.html_sha256 === null;
 }
 
 function associate(c: CaseRecord, predictions: Prediction[]): Candidate[] {
@@ -90,6 +98,10 @@ function associate(c: CaseRecord, predictions: Prediction[]): Candidate[] {
   const out: Candidate[] = [];
   for (const p of predictions) {
     if (p.site !== c.site || !stateMatches(t.state, p)) continue;
+    if (isPageLevel(c)) {
+      if (p.page === c.page || p.also_found_on.includes(c.page)) out.push({ p, level: 5 });
+      continue;
+    }
     const sameSel = t.selector !== null && p.selector === t.selector;
     const sameHtml = t.html_sha256 !== null && p.html_sha256 === t.html_sha256;
     if (p.page === c.page) {
@@ -104,7 +116,7 @@ function associate(c: CaseRecord, predictions: Prediction[]): Candidate[] {
   return out.sort((a, b) => a.level - b.level);
 }
 
-const LEVEL_NAME = { 1: "exact", 2: "selector", 3: "html", 4: "alias" } as const;
+const LEVEL_NAME = { 1: "exact", 2: "selector", 3: "html", 4: "alias", 5: "page" } as const;
 
 function qualifies(p: Prediction, criterion: string, view: View): boolean {
   if (p.criterion !== criterion) return false;
@@ -160,19 +172,21 @@ export function matchCases(input: MatchInput): MatchResult {
       if (j.verdict === "unsure") { outcomes.push({ ...base, class: "unsure" }); continue; }
 
       // Judge: qualifying candidates at the strongest level that has any
-      const best = candidates.filter((x) => qualifies(x.p, a.criterion, input.view) && !claimed.has(`${x.p.prediction_key}|${c.page}`));
+      const pageLevel = isPageLevel(c);
+      const best = candidates.filter((x) => qualifies(x.p, a.criterion, input.view) && (pageLevel || !claimed.has(`${x.p.prediction_key}|${c.page}`)));
       const wrong = candidates.filter((x) => x.p.criterion !== a.criterion).map((x) => x.p.criterion);
       const nrOnly = input.view === "confirmed" && candidates.some((x) => x.p.criterion === a.criterion && x.p.confidence_tier === "needs_review") && best.length === 0;
       if (best.length > 0) {
         const topLevel = best[0].level;
         const top = best.filter((x) => x.level === topLevel);
         const distinct = new Set(top.map((x) => `${x.p.selector}|${x.p.html_sha256}|${x.p.page}`));
-        if (top.length > 1 && distinct.size > 1) {
+        // A page-level case is satisfied by any qualifying prediction on the page
+        if (!pageLevel && top.length > 1 && distinct.size > 1) {
           outcomes.push({ ...base, class: "ambiguous", detail: `${top.length} indistinguishable candidates at level ${LEVEL_NAME[topLevel]}` });
           continue;
         }
         const chosen = top[0];
-        claimed.set(`${chosen.p.prediction_key}|${c.page}`, `${c.case_id}|${a.assertion_id}`);
+        if (!pageLevel) claimed.set(`${chosen.p.prediction_key}|${c.page}`, `${c.case_id}|${a.assertion_id}`);
         used.add(chosen.p.prediction_key);
         const sev = j.verdict === "violation" && j.severity_correction && j.severity_correction !== chosen.p.severity
           ? { engine: chosen.p.severity, corrected: j.severity_correction } : null;

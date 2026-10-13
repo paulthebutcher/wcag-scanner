@@ -15,6 +15,10 @@ import { executeReplayRun } from "../../eval/runs.js";
 import { ResponseCache } from "../../eval/model/cache.js";
 import { deterministicInjector } from "../../eval/model/injector.js";
 import { guardSplit, HoldoutSealed } from "../../eval/holdout.js";
+import { startReviewServer } from "../../eval/review/server.js";
+import { createAudit } from "../../eval/review/audit.js";
+import { paceReport, formatPace } from "../../eval/pace.js";
+import type { Batch } from "../../eval/labels.js";
 
 // ---------------------------------------------------------------------------
 // `wcag eval` — thin wiring over src/eval. Every producing command prints its
@@ -233,6 +237,74 @@ export function createEvalCommand(): Command {
   };
   replayLike("replay");
   replayLike("record");
+
+  const serveUntilInterrupted = async (server: { url: string; close(): Promise<void> }) => {
+    process.stdout.write(`review screen ${server.url}  (127.0.0.1 only; Ctrl-C to stop)\n`);
+    await new Promise<void>((resolve) => process.once("SIGINT", () => resolve()));
+    await server.close();
+  };
+
+  cmd.command("review")
+    .description("D9: local review screen for a run's findings (T/F/S/U/N/Z)")
+    .requiredOption("--run <id>", "Replay run id")
+    .option("--batch <batch>", "calibration | queue | anchor | adhoc", "queue")
+    .option("--criterion <id>", "Only this criterion")
+    .option("--reviewer <name>", "Recorded with every label", "paul")
+    .option("--port <n>", "Port (default: any free port)")
+    .option("--data-dir <path>", "Private data root (default wcag-data)")
+    .action(async (opts: { run: string; batch: string; criterion?: string; reviewer: string; port?: string; dataDir?: string }) => {
+      if (opts.dataDir) process.env.WCAG_EVAL_DATA_DIR = opts.dataDir;
+      if (!["calibration", "queue", "anchor", "adhoc"].includes(opts.batch)) {
+        console.error("--batch must be calibration, queue, anchor or adhoc");
+        process.exit(2);
+      }
+      const { paths, config } = context();
+      const server = await startReviewServer({
+        paths, config, mode: "review", reviewer: opts.reviewer, runId: opts.run, batch: opts.batch as Batch,
+        criterion: opts.criterion, headedReplay: true, port: opts.port ? Number(opts.port) : undefined, log,
+      });
+      await serveUntilInterrupted(server);
+    });
+
+  cmd.command("audit")
+    .description("D9: independent audit of declared pages and criteria, blind to engine output until frozen")
+    .option("--corpus <version>", "Corpus version (new audit)")
+    .option("--split <split>", "tuning | dev (new audit)", "tuning")
+    .option("--pages <ids>", "Comma-separated site/page ids, e.g. t01/p001,t01/p004 (new audit)")
+    .option("--criteria <ids>", "Comma-separated criteria (new audit)")
+    .option("--resume <auditId>", "Resume an existing audit (AU-0001)")
+    .option("--reviewer <name>", "Recorded with every label", "paul")
+    .option("--port <n>", "Port (default: any free port)")
+    .option("--data-dir <path>", "Private data root (default wcag-data)")
+    .action(async (opts: Record<string, string | undefined>) => {
+      if (opts.dataDir) process.env.WCAG_EVAL_DATA_DIR = opts.dataDir;
+      const { paths, config } = context();
+      let auditId = opts.resume;
+      if (!auditId) {
+        if (!opts.corpus || !opts.pages || !opts.criteria) {
+          console.error("A new audit needs --corpus, --pages and --criteria (or --resume <id>)");
+          process.exit(2);
+        }
+        if (!["tuning", "dev"].includes(String(opts.split))) {
+          console.error("Audits run on tuning or dev; holdout is sealed");
+          process.exit(2);
+        }
+        const audit = createAudit(paths, { corpusVersion: opts.corpus, split: opts.split as "tuning" | "dev", pages: opts.pages.split(","), criteria: opts.criteria.split(",") });
+        auditId = audit.audit_id;
+        process.stdout.write(`audit ${auditId}\n`);
+      }
+      const server = await startReviewServer({ paths, config, mode: "audit", reviewer: String(opts.reviewer), auditId, headedReplay: true, port: opts.port ? Number(opts.port) : undefined, log });
+      await serveUntilInterrupted(server);
+    });
+
+  cmd.command("pace")
+    .description("D9: labelling pace by criterion and batch")
+    .option("--data-dir <path>", "Private data root (default wcag-data)")
+    .action((opts: { dataDir?: string }) => {
+      if (opts.dataDir) process.env.WCAG_EVAL_DATA_DIR = opts.dataDir;
+      const { paths } = context();
+      process.stdout.write(formatPace(paceReport(paths)) + "\n");
+    });
 
   return cmd;
 }

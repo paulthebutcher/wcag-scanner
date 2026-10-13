@@ -74,6 +74,8 @@ export interface ControlledBrowserOptions {
   onEvent?: (event: TransportEvent) => void;
   /** Extra launch args (tests) */
   launchArgs?: string[];
+  /** Show the browser window (review "Open in replay"); default headless */
+  headless?: boolean;
 }
 
 export interface TransportCounters {
@@ -140,7 +142,7 @@ export async function launchControlledBrowser(options: ControlledBrowserOptions)
   if (options.mode === "replay") proxy = await startDenyProxy(egress);
 
   const raw = await chromium.launch({
-    headless: true,
+    headless: options.headless ?? true,
     ...(proxy ? { proxy: proxy.launchOptions.proxy } : {}),
     args: [...(proxy?.launchOptions.args ?? []), ...(options.launchArgs ?? [])],
   });

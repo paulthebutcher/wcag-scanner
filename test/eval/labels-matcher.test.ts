@@ -206,4 +206,15 @@ describe("matcher classes", () => {
     const r = run([pred("p001", "h4", "<h4>History</h4>", "2.4.6")], { overrides: [{ seed_id: "SL-014", status: "disputed", reason: "level skip is best practice", pending: "Paul", exclude_from: ["element", "criterion"] }] });
     expect(r.outcomes[0].class).toBe("disputed");
   });
+
+  it("a page-level tested negative is an FP when the engine flags that criterion anywhere on the page", () => {
+    const neg = newCase("p001", null, null, ["1.3.1"], { unit: "page" });
+    const pos = newCase("p002", null, null, ["2.4.5"], { unit: "page" });
+    labels.append([judge(neg.case_id, "A1", "no_violation"), judge(pos.case_id, "A1", "violation")]);
+    const r = run([pred("p001", "nav.a", "<nav class=\"a\">", "1.3.1"), pred("p001", "nav.b", "<nav class=\"b\">", "1.3.1"), pred("p002", "html", "<html>", "2.4.5", { check: "multiple-ways" })],
+      { coverage: new Map([...ranEverywhere(["p001", "p002"]), ["t01|p002|multiple-ways", "ran"]]) });
+    expect(cls(r, neg.case_id)).toBe("FP");
+    expect(r.outcomes.find((o) => o.case_id === neg.case_id)?.association).toBe("page");
+    expect(cls(r, pos.case_id)).toBe("TP");
+  });
 });
