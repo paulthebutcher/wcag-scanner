@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { startRun, loadManifest, OfficialRunRefused, RUN_MANIFEST_SCHEMA } from "../../src/eval/manifest.js";
 import { validate, obj, str, int, arr, oneOf } from "../../src/eval/schema.js";
 import { loadEvalConfig, configProblems } from "../../src/eval/config.js";
-import { canonicalJson, hashJson, writeOnce, newRunId } from "../../src/eval/util.js";
+import { canonicalJson, hashJson, writeOnce, newRunId, dirtyingPath } from "../../src/eval/util.js";
 import { evalPaths } from "../../src/eval/paths.js";
 import { scanText, assertExportSafe, scanCommittedExports, knownPrivateHosts } from "../../src/eval/privacy.js";
 
@@ -30,6 +30,15 @@ describe("canonical JSON", () => {
     writeOnce(p, "one");
     expect(() => writeOnce(p, "two")).toThrow(/immutable/);
     expect(readFileSync(p, "utf8")).toBe("one");
+  });
+
+  it("only changes that can affect execution make the tree dirty", () => {
+    expect(dirtyingPath(" M", "docs/x.md")).toBe(true);
+    expect(dirtyingPath("??", "docs/x.md")).toBe(false);
+    expect(dirtyingPath("??", "src/eval/new.ts")).toBe(true);
+    expect(dirtyingPath("??", "eval/config.json")).toBe(true);
+    expect(dirtyingPath("??", "eval/runs/r1/static.json")).toBe(false);
+    expect(dirtyingPath(" M", "eval/runs/r1/static.json")).toBe(true);
   });
 
   it("run ids are sortable and explicit", () => {

@@ -104,6 +104,14 @@ export function newRunId(command: string): string {
 
 /** Paths whose uncommitted changes can affect what an eval run executes. */
 const EXECUTION_PATHS = ["src/", "test/", "eval/", "scripts/", "package.json", "package-lock.json", "tsconfig.json", "vitest.config.ts"];
+/** Committed export outputs: a new, untracked export never makes the tree dirty. */
+const OUTPUT_PATHS = ["eval/runs/", "eval/baselines/"];
+
+export function dirtyingPath(status: string, path: string): boolean {
+  if (status !== "??") return true;
+  if (OUTPUT_PATHS.some((p) => path.startsWith(p))) return false;
+  return EXECUTION_PATHS.some((p) => path === p || path.startsWith(p));
+}
 
 export interface RepoState {
   sha: string;
@@ -123,7 +131,8 @@ export function gitSha(rev = "HEAD", cwd = process.cwd()): string {
 /**
  * Commit SHA and dirty state. Tracked changes always make the tree dirty;
  * untracked files only when they sit in a path that affects execution (an
- * untracked note under docs/ cannot change a run's results).
+ * untracked note under docs/, or a new export under eval/runs/, cannot
+ * change a run's results).
  */
 export function repoState(cwd = process.cwd()): RepoState {
   const sha = gitSha("HEAD", cwd);
@@ -135,8 +144,7 @@ export function repoState(cwd = process.cwd()): RepoState {
     const status = line.slice(0, 2);
     const path = line.slice(3);
     changed.push(path);
-    if (status !== "??") dirty = true;
-    else if (EXECUTION_PATHS.some((p) => path === p || path.startsWith(p))) dirty = true;
+    if (dirtyingPath(status, path)) dirty = true;
   }
   return { sha, dirty, changed_paths: changed.sort() };
 }
