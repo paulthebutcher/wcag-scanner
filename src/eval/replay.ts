@@ -17,6 +17,8 @@ import type { EvalConfig } from "./config.js";
 import type { EvalPaths } from "./paths.js";
 import { coverageRows, criterionStatuses, findingKeys, fullFindings, type CoverageRow, type CriterionStatusRow, type FindingKey, type FullFinding } from "./normalize.js";
 import { writeJson } from "./util.js";
+import { buildPredictions, type Prediction } from "./predictions.js";
+import { CHECK_TIERS } from "../core/check-registry.js";
 
 // ---------------------------------------------------------------------------
 // D2 offline replay of one corpus site with one engine. No site or model
@@ -86,6 +88,8 @@ export interface SiteReplay {
   miss_urls: string[];
   client: ClientStats;
   image_index_sha256: string;
+  engine_data_dir: string;
+  predictions: Prediction[];
   normalized: {
     findings: FullFinding[];
     keys: FindingKey[];
@@ -255,6 +259,8 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
       miss_urls: controlled.events.filter((e) => e.decision === "miss").map((e) => e.url),
       client: client.stats,
       image_index_sha256: imageIndexHash(dir, pages),
+      engine_data_dir: engineData,
+      predictions: buildPredictions(capture.site_id, result.findings, result.pageSnapshots, pageIdOf, CHECK_TIERS),
       normalized: {
         findings: fullFindings(result.findings, result.pageSnapshots, pageIdOf),
         keys: findingKeys(result.findings, result.pageSnapshots, pageIdOf),
@@ -280,7 +286,9 @@ function writeSiteReplay(runDir: string, replay: SiteReplay, controlled: Control
     page_order_observed: replay.page_order_observed, totals: replay.totals, transport: replay.transport,
     har_merge: replay.har_merge, node_fetch: replay.node_fetch, egress: replay.egress, miss_urls: replay.miss_urls.slice(0, 500),
     client: replay.client, image_index_sha256: replay.image_index_sha256, scan_id: replay.result.scanId, warnings: replay.result.warnings,
+    engine_data_dir: replay.engine_data_dir,
   });
+  writeJson(join(out, "predictions.json"), replay.predictions);
   writeJson(join(out, "findings.full.json"), replay.normalized.findings);
   writeJson(join(out, "findings.keys.json"), replay.normalized.keys);
   writeJson(join(out, "criteria.json"), replay.normalized.criteria);

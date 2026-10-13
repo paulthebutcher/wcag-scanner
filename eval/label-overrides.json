@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "overrides": [
+    {
+      "seed_id": "SL-014",
+      "status": "disputed",
+      "reason": "Labeled as a 2.4.6 failure for a skipped heading level. Since f6389d6 the engine treats skipped levels as a best-practice annotation, not a WCAG failure; WCAG 2.4.6 concerns whether headings describe their topic, not level order.",
+      "pending": "Paul to adjudicate",
+      "exclude_from": ["element", "criterion"]
+    },
+    {
+      "seed_id": "SL-005",
+      "status": "disputed",
+      "reason": "Labeled markup (fee schedule tables missing scope/caption) has not been found in any stored snapshot yet.",
+      "pending": "resolution against wcag-old.db full_dom",
+      "exclude_from": ["element", "criterion"]
+    },
+    {
+      "seed_id": "SL-006",
+      "status": "disputed",
+      "reason": "Labeled markup (duplicate or unlabeled navigation landmarks) has not been found in any stored snapshot yet.",
+      "pending": "resolution against wcag-old.db full_dom",
+      "exclude_from": ["element", "criterion"]
+    },
+    {
+      "seed_id": "SL-011",
+      "status": "composite",
+      "reason": "Its 516 instances were 498 API-failure rows (needs_review, 'Prompt evaluation failed') plus 18 duplicate-link findings. The duplicate-link cases are resolved separately; the API failures are tooling errors, not site defects.",
+      "pending": null,
+      "exclude_from": ["element", "criterion"]
+    },
+    {
+      "seed_id": "SL-001",
+      "status": "scan_level",
+      "reason": "Scan-level tooling observation (form test timeout on a hidden reCAPTCHA field). Kept for tooling and false-pass tests.",
+      "pending": null,
+      "exclude_from": ["element", "criterion"]
+    },
+    {
+      "seed_id": "SL-002",
+      "status": "scan_level",
+      "reason": "Scan-level observation (Tier 5 emitted no needs_review items). Kept for tooling and false-pass tests.",
+      "pending": null,
+      "exclude_from": ["element", "criterion"]
+    },
+    {
+      "seed_id": "SL-016",
+      "status": "scan_level",
+      "reason": "Criteria marked passed after API credits ran out. Liability class; covered by synthetic scan-level fixtures where API failures and partial checks must never produce a pass.",
+      "pending": null,
+      "exclude_from": ["element", "criterion"]
+    }
+  ]
+}
