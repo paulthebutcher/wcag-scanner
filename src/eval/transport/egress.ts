@@ -46,11 +46,15 @@ export async function startDenyProxy(log: EgressLog): Promise<DenyProxy> {
     res.writeHead(403, { "content-type": "text/plain" });
     res.end("eval egress denied");
   });
+  // A refused client may reset its socket; an unhandled socket error would
+  // crash the harness mid-run (seen on the first real-site record)
   server.on("connect", (req, socket) => {
+    socket.on("error", () => {});
     log.record("browser", "connect", req.url ?? "");
     socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
   });
   server.on("upgrade", (req, socket) => {
+    socket.on("error", () => {});
     log.record("browser", "upgrade", req.url ?? "");
     socket.destroy();
   });

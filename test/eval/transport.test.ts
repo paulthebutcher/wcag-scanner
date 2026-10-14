@@ -9,7 +9,7 @@ import { Pacer } from "../../src/eval/transport/pacer.js";
 import { decideRobots, isAllowed, parseRobots } from "../../src/eval/robots.js";
 import { FuzzyIndex, mergeHars, normalizeCacheBusters, type Har, type HarEntry } from "../../src/eval/transport/har.js";
 import { createCaptureFetch, createReplayFetch, installFetch, fetchKey, type NodeFetchRecord } from "../../src/eval/transport/node-fetch.js";
-import { EgressLog, installNodeEgressDenial } from "../../src/eval/transport/egress.js";
+import { EgressLog, installNodeEgressDenial, startDenyProxy } from "../../src/eval/transport/egress.js";
 import { isDeclaredConnect, launchControlledBrowser, matchesDeclaredExclusion } from "../../src/eval/transport/browser.js";
 import { loadEvalConfig } from "../../src/eval/config.js";
 import { evalPaths } from "../../src/eval/paths.js";
@@ -294,5 +294,27 @@ describe("declared exclusions v2 (first real-site replay)", () => {
     expect(isDeclaredConnect("cdn.prod.website-files.com:443", patterns)).toBe(false);
     expect(isDeclaredConnect("evil.example:443", patterns)).toBe(false);
     expect(isDeclaredConnect("notinstagram.com:443", patterns)).toBe(false);
+  });
+});
+
+describe("deny proxy resilience", () => {
+  it("survives a client that resets its CONNECT socket", async () => {
+    const log = new EgressLog();
+    const proxy = await startDenyProxy(log);
+    const net = await import("node:net");
+    await new Promise<void>((resolve) => {
+      const sock = net.connect(proxy.port, "127.0.0.1", () => {
+        sock.write("CONNECT www.instagram.com:443 HTTP/1.1\r\nHost: www.instagram.com:443\r\n\r\n");
+        sock.resetAndDestroy();
+        setTimeout(resolve, 100);
+      });
+      sock.on("error", () => {});
+    });
+    // The proxy still answers
+    const status = await new Promise<number>((resolve) => {
+      http.get({ host: "127.0.0.1", port: proxy.port, path: "http://example.test/" }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }).on("error", () => resolve(-1));
+    });
+    expect(status).toBe(403);
+    await proxy.close();
   });
 });
