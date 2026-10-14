@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { readJson, readJsonl } from "./util.js";
 import { matchCases, coverageMap, type AssertionOutcome, type MatchClass, type View } from "./matcher.js";
-import { CaseStore, LabelStore, foldLabels, type CaseRecord, type FoldedJudgment, type LabelOverride, type OverridesFile, type SeedResolution } from "./labels.js";
+import { CaseStore, LabelStore, foldLabels, officialJudgments, type CaseRecord, type FoldedJudgment, type LabelOverride, type OverridesFile, type SeedResolution } from "./labels.js";
 import type { Prediction } from "./predictions.js";
 import type { CoverageRow, CriterionStatusRow } from "./normalize.js";
 import type { EvalConfig } from "./config.js";
@@ -188,6 +188,8 @@ export function computeMetrics(config: EvalConfig, run: RunInputs, labels: Label
   const corpusVersion = run.manifest.corpus!.version;
   const split = run.manifest.corpus!.split as Split;
   const minN = config.gate.insufficient_evidence_n;
+  // Provisional judgments gate regressions (compare) but are not official metrics
+  const judgments = officialJudgments(labels.judgments);
   const allPreds = run.sites.flatMap((s) => s.predictions);
   const coverage = new Map<string, string>();
   let anyCoverage = false;
@@ -203,7 +205,7 @@ export function computeMetrics(config: EvalConfig, run: RunInputs, labels: Label
   let unlabeled: Prediction[] = [];
   for (const view of views) {
     const r = matchCases({
-      config, view, cases, judgments: labels.judgments, overrides: labels.overrides, predictions: allPreds,
+      config, view, cases, judgments, overrides: labels.overrides, predictions: allPreds,
       coverage: anyCoverage ? coverage : null, corpusPages, corpusVersion, unresolvedSeeds: labels.unresolvedSeeds,
     });
     outcomes[view] = r.outcomes;
@@ -223,7 +225,7 @@ export function computeMetrics(config: EvalConfig, run: RunInputs, labels: Label
         if (!["TP", "FP", "FN", "TN"].includes(o.class)) continue;
         add(instances, o.class);
         const key = o.propagation_group ? `group:${o.propagation_group}` : `${o.case_id}|${o.assertion_id}`;
-        const s = samples.get(key) ?? { origin: originOf(o, labels.judgments), classes: [] };
+        const s = samples.get(key) ?? { origin: originOf(o, judgments), classes: [] };
         s.classes.push(o.class);
         samples.set(key, s);
       }
@@ -280,7 +282,7 @@ export function computeMetrics(config: EvalConfig, run: RunInputs, labels: Label
   const predByKey = new Map(allPreds.map((p) => [p.prediction_key, p]));
   for (const o of outcomes.confirmed) {
     if ((o.class !== "TP" && o.class !== "FP") || !o.prediction_key) continue;
-    const origin = originOf(o, labels.judgments);
+    const origin = originOf(o, judgments);
     if (origin !== "queue" && origin !== "random") continue;
     const p = predByKey.get(o.prediction_key)!;
     const entry = checkMap.get(p.check ?? "unknown") ?? { tier: p.tier, queue: emptyCounts(), random: emptyCounts() };

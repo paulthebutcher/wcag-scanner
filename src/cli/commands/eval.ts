@@ -140,7 +140,7 @@ export function createEvalCommand(): Command {
           contactUrl: contactUrl!, runId: run.manifest.run_id, harnessSha: run.manifest.harness.sha, log,
         });
         run.manifest.extra = {
-          site: opts.site, split: opts.split, version: opts.version, skipped: result.skipped,
+          site: opts.site, split: opts.split, version: opts.version, skipped: result.skipped, page_cap: result.capture?.page_cap ?? null,
           pages: result.capture?.pages.map((p) => ({ page: p.page_id, status: p.status })) ?? [],
           omissions: result.capture?.omissions.length ?? 0, uncaptured_forms: result.capture?.uncaptured_forms.length ?? 0,
           pacing: result.capture?.pacing ?? null, containment: result.capture?.containment ?? null, collected: result.collected,

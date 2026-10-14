@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { compareRuns, labelSnapshotSha, type CompareInputs } from "../../src/eval/compare.js";
 import { loadEvalConfig } from "../../src/eval/config.js";
 import { evalPaths } from "../../src/eval/paths.js";
-import { foldLabels, type CaseRecord, type LabelEvent } from "../../src/eval/labels.js";
-import type { RunInputs } from "../../src/eval/metrics.js";
+import { foldLabels, officialJudgments, LABEL_SCHEMA, type CaseRecord, type LabelEvent } from "../../src/eval/labels.js";
+import { assertValid } from "../../src/eval/schema.js";
+import { computeMetrics, type RunInputs } from "../../src/eval/metrics.js";
 import type { Prediction } from "../../src/eval/predictions.js";
 import type { CoverageRow, CriterionStatusRow } from "../../src/eval/normalize.js";
 import type { RunManifest } from "../../src/eval/manifest.js";
@@ -189,5 +190,44 @@ describe("compare and gate (D7)", () => {
     const r = compareRuns({ config, base: dev("base", preds), head: dev("head", headPreds), labels: { cases, judgments: foldLabels(evs), overrides: [], unresolvedSeeds: new Set(), labelsThrough: 100 }, labelSnapshotSha: "x" });
     expect(r.exit).toBe(1);
     expect(r.regressions.map((x) => x.kind)).toContain("metric_drop");
+  });
+});
+
+describe("provisional labels", () => {
+  const fpCase = c(4, "p002", "a.logo", "1.1.1");
+  const provisional = [...events, l(4, fpCase, "no_violation", { provisional: true, batch: "adhoc", reviewer: "review-doc:popfly-scan-review-2026-10-13" })];
+  const provInputs = (base: RunInputs, head: RunInputs): CompareInputs => ({
+    config, base, head, labels: { cases: [tp, tn, fn, fpCase], judgments: foldLabels(provisional), overrides: [], unresolvedSeeds: new Set(), labelsThrough: 4 },
+    labelSnapshotSha: labelSnapshotSha(provisional, 4),
+  });
+
+  it("validates and folds the provisional flag; official judgments leave it out until confirmed", () => {
+    expect(() => assertValid(LABEL_SCHEMA, provisional[3], "label")).not.toThrow();
+    const folded = foldLabels(provisional);
+    expect(folded.get("C-000004|A1")?.provisional).toBe(true);
+    expect(officialJudgments(folded).has("C-000004|A1")).toBe(false);
+    expect(officialJudgments(folded).has("C-000001|A1")).toBe(true);
+    const confirmed = foldLabels([...provisional, l(5, fpCase, "no_violation")]);
+    expect(confirmed.get("C-000004|A1")?.provisional).toBe(false);
+    expect(officialJudgments(confirmed).has("C-000004|A1")).toBe(true);
+  });
+
+  it("counts in the gate: a provisional false positive that returns is a regression", () => {
+    const r = compareRuns(provInputs(run("base", basePreds), run("head", [...basePreds, p("p002", "a.logo", "1.1.1")])));
+    expect(r.exit).toBe(1);
+    expect(r.regressions.map((x) => x.detail)).toEqual(expect.arrayContaining([expect.stringContaining("C-000004/A1 (1.1.1): TN → FP")]));
+  });
+
+  it("removing a finding that matches a provisional false-positive case is not a regression", () => {
+    const r = compareRuns(provInputs(run("base", [...basePreds, p("p002", "a.logo", "1.1.1")]), run("head", basePreds)));
+    expect(r.exit).toBe(0);
+    expect(r.report.case_changes).toEqual([{ case_id: "C-000004", assertion_id: "A1", criterion: "1.1.1", base: "FP", head: "TN" }]);
+  });
+
+  it("stays out of official metrics", () => {
+    const labels = { cases: [tp, tn, fn, fpCase], judgments: foldLabels(provisional), overrides: [], unresolvedSeeds: new Set<string>(), labelsThrough: 4 };
+    const m = computeMetrics(config, run("head", [...basePreds, p("p002", "a.logo", "1.1.1")]), labels);
+    const outcome = m.outcomes.confirmed.find((o) => o.case_id === "C-000004");
+    expect(outcome?.class).toBe("unreviewed");
   });
 });

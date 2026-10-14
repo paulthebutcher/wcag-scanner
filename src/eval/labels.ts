@@ -1,5 +1,5 @@
 import { appendFileSync, closeSync, existsSync, openSync, unlinkSync, readFileSync } from "node:fs";
-import { arr, int, obj, oneOf, str, num, assertValid, ISO_TIME, SHA256, type Schema } from "./schema.js";
+import { arr, bool, int, obj, oneOf, str, num, assertValid, ISO_TIME, SHA256, type Schema } from "./schema.js";
 import { readJsonl, sha256 } from "./util.js";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +79,12 @@ export interface LabelEvent {
   /** The engine output the judgment was made against, if any */
   prediction_ref: { run_id: string; prediction_key: string } | null;
   note: string | null;
+  /**
+   * A provisional judgment (e.g. from a review doc's live check) counts in
+   * the regression gate but stays out of official metrics until a reviewer
+   * confirms it with a later non-provisional judgment.
+   */
+  provisional?: boolean;
 }
 
 const ASSERTION_SCHEMA = obj({ assertion_id: str({ pattern: /^A\d+$/ }), criterion: str({ pattern: /^(\d\.\d\.\d{1,2}|scan)$/ }), issue: str(), failure_type: str({ nullable: true }) });
@@ -125,6 +131,7 @@ export const LABEL_SCHEMA: Schema = obj({
   undoes: str({ nullable: true }),
   prediction_ref: obj({ run_id: str(), prediction_key: str() }, { nullable: true }),
   note: str({ nullable: true }),
+  provisional: bool({ optional: true }),
 });
 
 // ---------------------------------------------------------------------------
@@ -260,6 +267,7 @@ export interface FoldedJudgment {
   batch: Batch;
   phase: LabelEvent["phase"];
   propagation_group: string | null;
+  provisional: boolean;
   history: string[];
 }
 
@@ -297,10 +305,16 @@ export function foldLabels(events: LabelEvent[], throughSeq = Infinity): Map<str
     if (e.propagation_group && undoneGroups.has(e.propagation_group)) continue;
     out.set(key, {
       case_id: e.case_id, assertion_id: e.assertion_id, verdict: e.verdict, severity_correction: e.severity_correction,
-      label_id: e.label_id, reviewer: e.reviewer, batch: e.batch, phase: e.phase, propagation_group: e.propagation_group, history: h,
+      label_id: e.label_id, reviewer: e.reviewer, batch: e.batch, phase: e.phase, propagation_group: e.propagation_group,
+      provisional: e.provisional === true, history: h,
     });
   }
   return out;
+}
+
+/** Judgments that count in official metrics: provisional ones are left out. */
+export function officialJudgments(judgments: Map<string, FoldedJudgment>): Map<string, FoldedJudgment> {
+  return new Map(Array.from(judgments).filter(([, j]) => !j.provisional));
 }
 
 // ---------------------------------------------------------------------------

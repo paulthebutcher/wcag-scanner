@@ -1,4 +1,4 @@
-import { arr, int, num, obj, oneOf, str, assertValid, type Schema } from "./schema.js";
+import { arr, int, num, obj, oneOf, rec, str, assertValid, type Schema } from "./schema.js";
 import { hashJson, readJson } from "./util.js";
 import { CHECK_TIERS } from "../core/check-registry.js";
 
@@ -35,6 +35,8 @@ export interface EvalConfig {
     one_active_page_per_host: boolean;
     user_agent_template: string;
     readiness: { wait_until: "load" | "domcontentloaded"; network_idle_cap_ms: number; settle_ms: number };
+    /** Per-site page caps approved above the default, with the approval recorded */
+    site_overrides?: Record<string, { max_pages_per_site: number; reason: string }>;
   };
   replay: {
     page_concurrency: number;
@@ -67,6 +69,7 @@ const CONFIG_SCHEMA: Schema = obj({
     one_active_page_per_host: { type: "boolean" },
     user_agent_template: str({ pattern: /\{EVAL_CONTACT_URL\}/ }),
     readiness: obj({ wait_until: oneOf(["load", "domcontentloaded"]), network_idle_cap_ms: int({ min: 0 }), settle_ms: int({ min: 0 }) }),
+    site_overrides: rec(obj({ max_pages_per_site: int({ min: 1 }), reason: str() }), { optional: true }),
   }),
   replay: obj({
     page_concurrency: int({ min: 1 }),
@@ -125,6 +128,14 @@ export function configProblems(config: EvalConfig): string[] {
     if (c.checks.length === 0 && c.coverage !== "manual") problems.push(`criteria ${c.id}: no checks but coverage "${c.coverage}"`);
   }
   return problems;
+}
+
+/** The page cap for one site: its approved override, or the default. */
+export function maxPagesFor(config: EvalConfig, siteId: string): { max_pages_per_site: number; source: "default" | "site_override"; reason: string | null } {
+  const o = config.capture.site_overrides?.[siteId];
+  return o
+    ? { max_pages_per_site: o.max_pages_per_site, source: "site_override", reason: o.reason }
+    : { max_pages_per_site: config.capture.max_pages_per_site, source: "default", reason: null };
 }
 
 export function isBehavioral(config: EvalConfig, check: string): boolean {

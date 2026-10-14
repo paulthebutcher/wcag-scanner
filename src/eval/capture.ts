@@ -28,12 +28,14 @@ import {
   type CorpusPage, type ImageIndexEntry, type SiteCapture, type Split,
 } from "./corpus.js";
 import type { EvalPaths } from "./paths.js";
-import type { EvalConfig } from "./config.js";
+import { maxPagesFor, type EvalConfig } from "./config.js";
 import { sha256, writeJson, writeOnce } from "./util.js";
 
 // ---------------------------------------------------------------------------
 // D1 capture. Per page, in a recording context of its own:
-//   1. load (load event, capped network idle, settle), DOM and screenshot
+//   1. load (load event, capped network idle, settle), DOM and screenshot,
+//      then a top-to-bottom scroll pass so lazy-loaded assets and
+//      scroll-triggered requests are in the HAR
 //   2. (not holdout) HEAD's own interaction paths under submission
 //      containment: axe, the behavioral checks on a fresh load, and each
 //      unique form's submission and on-input tests, so the HAR holds what
@@ -96,8 +98,9 @@ export async function captureSite(options: CaptureSiteOptions): Promise<CaptureR
   const log = options.log ?? (() => {});
   const passive = options.split === "holdout";
   const urls = Array.from(new Set(options.urls.map((u) => normalizeUrl(u, u)).filter((u): u is string => u !== null)));
-  if (urls.length > options.config.capture.max_pages_per_site) {
-    throw new Error(`${urls.length} pages requested; the limit is ${options.config.capture.max_pages_per_site} per site`);
+  const pageCap = maxPagesFor(options.config, options.siteId);
+  if (urls.length > pageCap.max_pages_per_site) {
+    throw new Error(`${urls.length} pages requested; the limit is ${pageCap.max_pages_per_site} per site${pageCap.source === "site_override" ? ` (override for ${options.siteId})` : ""}`);
   }
   const rootUrl = normalizeUrl(options.rootUrl, options.rootUrl);
   if (!rootUrl) throw new Error(`Invalid root URL`);
@@ -249,6 +252,7 @@ export async function captureSite(options: CaptureSiteOptions): Promise<CaptureR
         group: robotsPolicy.group,
         crawl_delay_seconds: robotsPolicy.crawlDelaySeconds,
       },
+      page_cap: pageCap,
       pages,
       omissions,
       uncaptured_forms: uncapturedForms,
@@ -275,6 +279,34 @@ export async function captureSite(options: CaptureSiteOptions): Promise<CaptureR
 // ---------------------------------------------------------------------------
 // One page
 // ---------------------------------------------------------------------------
+
+export const SCROLL_STEP_WAIT_MS = 300;
+export const SCROLL_IDLE_CAP_MS = 5_000;
+
+/**
+ * Scroll top to bottom in viewport steps (the page may grow as it goes),
+ * wait for the network to go quiet, then return to the top. Runs after the
+ * DOM and screenshot are taken, so it only adds requests to the HAR.
+ */
+export async function scrollPass(page: Page): Promise<{ steps: number; height: number; network_idle: "reached" | "capped" }> {
+  const { steps, height } = await page.evaluate(async (waitMs: number) => {
+    const viewport = window.innerHeight || 800;
+    let y = 0;
+    let n = 0;
+    while (y < document.documentElement.scrollHeight && n < 200) {
+      window.scrollTo(0, y);
+      await new Promise((r) => setTimeout(r, waitMs));
+      y += viewport;
+      n++;
+    }
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    await new Promise((r) => setTimeout(r, waitMs));
+    return { steps: n, height: document.documentElement.scrollHeight };
+  }, SCROLL_STEP_WAIT_MS);
+  const idle = await page.waitForLoadState("networkidle", { timeout: SCROLL_IDLE_CAP_MS }).then(() => "reached" as const, () => "capped" as const);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  return { steps, height, network_idle: idle };
+}
 
 interface CapturePageInput {
   controlled: ControlledBrowser;
@@ -352,6 +384,8 @@ async function capturePage(input: CapturePageInput): Promise<CorpusPage> {
     dom = await page.content();
     writeFileSync(join(dir, "dom.html"), dom);
     writeFileSync(join(dir, "screenshot.png"), await page.screenshot({ fullPage: true }));
+    const scroll = await step("scroll-pass", () => scrollPass(page));
+    if (scroll) milestones.scroll = scroll;
 
     if (!input.passive) {
       // 2a. axe (alt text skips images axe already flagged)

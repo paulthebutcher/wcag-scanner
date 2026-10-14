@@ -90,6 +90,8 @@ export interface SiteCapture {
   user_agent: string;
   contract: BrowserContract;
   robots: { source: "parsed" | "absent"; sha256: string | null; group: string; crawl_delay_seconds: number | null };
+  /** The page cap applied and where it came from (absent in captures before 2026-10-14) */
+  page_cap?: { max_pages_per_site: number; source: "default" | "site_override"; reason: string | null };
   pages: CorpusPage[];
   omissions: Array<{ url: string; reason: string }>;
   uncaptured_forms: Array<{ page_id: string; form_selector: string; reason: string }>;
