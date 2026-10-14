@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Skip link targets (popfly /overland shape)</title>
+  <style>
+    .skip-link { position: absolute; left: -999px; }
+    .skip-link:focus { left: 8px; top: 8px; }
+    section, footer { min-height: 400px; }
+  </style>
+</head>
+<!--
+  Shape of popfly.com /overland (tuning-v1): the skip link is the first body
+  element, .header-wrapper holds the logo and navigation, and the target is
+  the first section after it, which reuses its own id (section#win) with
+  tabindex="-1". Tests swap the skip link's href to try other targets.
+-->
+<body>
+  <a class="skip-link" href="#win">Skip to main content</a>
+  <div class="header-wrapper">
+    <header class="header">
+      <a href="/" class="header-logo-link w-nav-brand" aria-label="home"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a>
+      <span id="header-promo" tabindex="-1">Spring offer</span>
+      <nav class="nav-menu">
+        <a href="/brands">Brands</a>
+        <a href="/creators">Creators</a>
+        <a href="/platform">Platform</a>
+      </nav>
+      <a href="/start/new" class="btn">Request a demo</a>
+    </header>
+  </div>
+  <section id="win" class="section-convert-header" tabindex="-1">
+    <h1>Win more overland creators</h1>
+    <p>Body text.</p>
+    <a href="/inside">A link inside the content</a>
+  </section>
+  <section id="no-tabindex" class="section-convert-body">
+    <h2>Second section</h2>
+    <a href="/more">More</a>
+  </section>
+  <main id="main-content" tabindex="-1">
+    <h2>Main region later on the page</h2>
+  </main>
+  <footer class="footer">
+    <div id="footer-top" tabindex="-1">Footer</div>
+    <a href="/privacy">Privacy</a>
+  </footer>
+</body>
+</html>

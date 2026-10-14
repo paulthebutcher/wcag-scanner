@@ -78,5 +78,18 @@
     "defect": "P2-011",
     "models": "0705da2d (typo fixed): same page, correct </style>",
     "expected_render_health": "ok"
+  },
+  "skip-link-targets": {
+    "platform": "webflow",
+    "defect": "P2-013",
+    "provenance": "Hand-built on the structure of popfly.com /overland in corpus tuning-v1 (and scan ee56b381): first-body skip link, .header-wrapper with logo and navigation, target section#win.section-convert-header with tabindex=-1. Copy is placeholder.",
+    "expected": {
+      "#win": "pass (position)",
+      "#main-content": "pass (name)",
+      "#header-promo": "fail (inside header)",
+      "#footer-top": "fail (footer)",
+      "#nope": "fail (missing target)",
+      "#no-tabindex": "fail (focus does not move)"
+    }
   }
 }

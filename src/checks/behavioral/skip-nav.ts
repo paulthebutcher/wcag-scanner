@@ -17,8 +17,14 @@ export interface SkipLinkResult {
   } | null;
   /** Whether the skip link successfully moved focus to its target */
   focusMoved: boolean;
-  /** Whether the target is a main content region */
+  /** Whether the target is a main content region (by name, or by position: see targetRule) */
   targetIsMainContent: boolean;
+  /**
+   * Why the target counts as main content: "name" (main element, role=main,
+   * a main-like id or class), "position" (after every header and nav focus
+   * stop, at or before the first h1 or content section), or null
+   */
+  targetRule?: "name" | "position" | null;
   /** The target element details (null if link not found or broken) */
   target: {
     selector: string;
@@ -225,7 +231,7 @@ async function activateAndVerifySkipLink(
       const targetEl = document.getElementById(targetId);
 
       if (targetEl) {
-        const isMainContent =
+        const namedMain =
           targetEl.tagName.toLowerCase() === "main" ||
           targetEl.getAttribute("role") === "main" ||
           targetEl.id === "main" ||
@@ -234,6 +240,27 @@ async function activateAndVerifySkipLink(
           targetEl.id === "maincontent" ||
           targetEl.id === "primary" ||
           targetEl.classList.contains("main-content");
+
+        // A target with any other name still bypasses the blocks when it
+        // comes after every header and nav focus stop and at or before the
+        // page's first h1 or first content section (e.g. section#win right
+        // after .header-wrapper, P2-013)
+        const focusableSel = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+        const blockSel = 'header, nav, [role="banner"], [role="navigation"]';
+        const follows = (a: Node, b: Node) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+        const skipLinkEl = Array.from(document.querySelectorAll("a[href]")).find((a) => a.getAttribute("href") === expectedHref) ?? null;
+        const headerStops = Array.from(document.querySelectorAll(focusableSel)).filter((el) =>
+          el !== skipLinkEl && el.closest(blockSel) !== null && (el as HTMLElement).getAttribute("tabindex") !== "-1");
+        const afterHeaderNav = targetEl.closest(blockSel) === null
+          && headerStops.every((el) => !targetEl.contains(el) && follows(el, targetEl));
+        const firstH1 = document.querySelector("h1");
+        const firstSection = Array.from(document.querySelectorAll("main, section, article"))
+          .find((el) => el.closest('header, nav, footer, [role="banner"], [role="navigation"], [role="contentinfo"]') === null) ?? null;
+        const atOrBefore = (anchor: Element | null) => !!anchor && (anchor === targetEl || targetEl.contains(anchor) || follows(targetEl, anchor));
+        const inFooter = targetEl.closest('footer, [role="contentinfo"]') !== null;
+        const byPosition = !inFooter && afterHeaderNav && (atOrBefore(firstH1) || atOrBefore(firstSection));
+        const isMainContent = namedMain || byPosition;
+        const rule: "name" | "position" | null = namedMain ? "name" : byPosition ? "position" : null;
 
         // Check if focus actually moved to the target or is within it
         const focusedCorrectly =
@@ -250,6 +277,7 @@ async function activateAndVerifySkipLink(
           found: true,
           focusedCorrectly,
           isMainContent,
+          rule,
           selector,
           tagName: targetEl.tagName.toLowerCase(),
           role: targetEl.getAttribute("role"),
@@ -262,6 +290,7 @@ async function activateAndVerifySkipLink(
         found: false,
         focusedCorrectly: false,
         isMainContent: false,
+        rule: null,
         selector: null,
         tagName: null,
         role: null,
@@ -274,6 +303,7 @@ async function activateAndVerifySkipLink(
       found: active !== document.body,
       focusedCorrectly: active !== document.body,
       isMainContent: false,
+      rule: null,
       selector: active?.id ? `#${CSS.escape(active.id)}` : (active?.tagName?.toLowerCase() ?? null),
       tagName: active?.tagName?.toLowerCase() ?? null,
       role: active?.getAttribute("role") ?? null,
@@ -298,6 +328,7 @@ async function activateAndVerifySkipLink(
       skipLink: linkInfo,
       focusMoved: false,
       targetIsMainContent: targetInfo.isMainContent,
+      targetRule: targetInfo.rule,
       target: targetInfo.selector ? {
         selector: targetInfo.selector,
         tagName: targetInfo.tagName!,
@@ -313,6 +344,7 @@ async function activateAndVerifySkipLink(
     skipLink: linkInfo,
     focusMoved: true,
     targetIsMainContent: targetInfo.isMainContent,
+    targetRule: targetInfo.rule,
     target: {
       selector: targetInfo.selector!,
       tagName: targetInfo.tagName!,
@@ -320,7 +352,7 @@ async function activateAndVerifySkipLink(
       id: targetInfo.id,
     },
     failureReason: !targetInfo.isMainContent
-      ? `Skip link target "${href}" does not appear to be a main content region`
+      ? `Skip link target "${href}" does not appear to be a main content region (not named like main, and not placed after the header and navigation and before the first heading or content section)`
       : null,
   };
 }
@@ -379,6 +411,7 @@ export async function runSkipNavChecks(
       skipLinkHref: result.skipLink!.href,
       focusMoved: result.focusMoved,
       targetIsMainContent: result.targetIsMainContent,
+      targetRule: result.targetRule ?? null,
       failureReason: result.failureReason,
       target: result.target,
     },
