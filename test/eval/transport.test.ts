@@ -247,6 +247,12 @@ describe("controlled browser (integration)", () => {
       const res = await page.goto(`${origin}/about`);
       expect(res?.status()).toBe(200);
       expect(await page.textContent("p")).toBe("page /about");
+      // Math.random is seeded per document: every replay load draws the same sequence
+      const draws = () => page.evaluate(() => [Math.random(), Math.random(), Math.random()]);
+      const first = await draws();
+      await page.goto(`${origin}/about`);
+      expect(await draws()).toEqual(first);
+      expect(new Set(first).size).toBe(3);
       await page.goto(`${origin}/not-captured`).catch(() => null);
       await ctx.close();
       // A context created around the boundary is caught by the deny proxy

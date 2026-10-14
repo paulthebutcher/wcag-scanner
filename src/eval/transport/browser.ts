@@ -23,10 +23,24 @@ import type { Pacer } from "./pacer.js";
 // route.continue() is turned into route.fallback() so it reaches the eval
 // routes instead of the network. WebSockets are refused in both modes.
 // In replay Chromium also runs through a deny-and-log proxy, so anything
-// that slips past routing is still caught and counted.
+// that slips past routing is still caught and counted, and Math.random is
+// seeded per document so script-generated ids are the same every replay.
 // ---------------------------------------------------------------------------
 
 export type TransportMode = "capture" | "replay";
+
+/** Fixed seed for Math.random in replay documents (mulberry32). */
+export const REPLAY_RANDOM_SEED = 0x5eed1234;
+export const SEEDED_RANDOM_SCRIPT = `(() => {
+  let a = ${REPLAY_RANDOM_SEED} >>> 0;
+  Math.random = function random() {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+})();`;
 
 export type Decision =
   | "live"
@@ -362,6 +376,9 @@ export async function launchControlledBrowser(options: ControlledBrowserOptions)
       userAgent: options.contract.userAgent,
       serviceWorkers: "block",
     });
+    // Replays seed Math.random per document, so scripts that generate ids
+    // (GrowSurf's grsf-unique-<random> class) build the same DOM every time
+    if (options.mode === "replay") await ctx.addInitScript({ content: SEEDED_RANDOM_SCRIPT });
     await setUpContext(ctx, ctxId);
     return wrapContext(ctx);
   };
