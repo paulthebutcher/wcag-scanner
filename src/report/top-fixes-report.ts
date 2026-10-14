@@ -69,8 +69,13 @@ export function groupExcluded(excluded: ExcludedFinding[]): Array<{
 /** Estimated hours for a cluster's fix (its fix unit), e.g. "0.15–0.3 h". */
 export type HoursFor = (cluster: Cluster) => string;
 
+/** Page-level summaries are each page's own problem, not one fix (P2-014). */
+export function topFixClusters(clusters: Cluster[]): Cluster[] {
+  return clusters.filter((c) => !c.page_level);
+}
+
 export function renderTopFixesMarkdown(clusters: Cluster[], limit = TOP_FIXES_LIMIT, hoursFor?: HoursFor): string {
-  const top = clusters.slice(0, limit);
+  const top = topFixClusters(clusters).slice(0, limit);
   const lines = [
     "## Top fixes",
     "",
@@ -100,6 +105,31 @@ export function renderTopFixesMarkdown(clusters: Cluster[], limit = TOP_FIXES_LI
   return lines.join("\n");
 }
 
+/** Page-level clusters, one row per page, ordered by page then problem. */
+function pageLevelRows(clusters: Cluster[]): Cluster[] {
+  return clusters.filter((c) => c.page_level)
+    .sort((a, b) => a.representative.page_url.localeCompare(b.representative.page_url) || a.cluster_id.localeCompare(b.cluster_id));
+}
+
+export function renderPageLevelMarkdown(clusters: Cluster[], hoursFor?: HoursFor): string {
+  const rows = pageLevelRows(clusters);
+  if (rows.length === 0) return "";
+  const lines = [
+    `## Per-page fixes (${rows.length})`,
+    "",
+    "Problems that are specific to each page (for example the order in which focus moves through it). Each page needs its own change, so these are not in Top fixes.",
+    "",
+    `| Page | Problem | WCAG | Severity |${hoursFor ? " Est. hours |" : ""} Also on | Cluster |`,
+    `|---|---|---|---|${hoursFor ? "---|" : ""}---|---|`,
+  ];
+  for (const c of rows) {
+    const others = c.page_urls.filter((u) => u !== c.representative.page_url);
+    lines.push(`| ${pathOf(c.representative.page_url)} | ${mdCell(c.failure_type.replace(/[_-]/g, " "))} | ${c.wcag_criterion} | ${c.severity} |${hoursFor ? ` ${hoursFor(c)} |` : ""} ${others.length > 0 ? mdCell(others.map(pathOf).join(", ")) : "—"} | \`${c.cluster_id}\` |`);
+  }
+  lines.push("", "\"Also on\" lists pages where the identical summary was recorded (same template); one change there clears both.", "");
+  return lines.join("\n");
+}
+
 export function renderExcludedMarkdown(excluded: ExcludedFinding[]): string {
   const groups = groupExcluded(excluded);
   const lines: string[] = [];
@@ -125,8 +155,8 @@ export function renderExcludedMarkdown(excluded: ExcludedFinding[]): string {
 // ---------------------------------------------------------------------------
 
 export function renderTopFixesHtml(clusters: Cluster[], limit = TOP_FIXES_LIMIT, hoursFor?: HoursFor): string {
-  if (clusters.length === 0) return "";
-  const top = clusters.slice(0, limit);
+  const top = topFixClusters(clusters).slice(0, limit);
+  if (top.length === 0) return "";
   const rows = top.map((c, i) => `
       <tr>
         <td>${i + 1}</td>
@@ -156,6 +186,32 @@ export function renderTopFixesHtml(clusters: Cluster[], limit = TOP_FIXES_LIMIT,
       </table>
       ${top.some((c) => !c.pages_complete) ? `<p class="topfix-note">* Includes pages known only by count (scan recorded before page lists were kept).</p>` : ""}
       ${details}
+    </section>`;
+}
+
+export function renderPageLevelHtml(clusters: Cluster[], hoursFor?: HoursFor): string {
+  const rows = pageLevelRows(clusters);
+  if (rows.length === 0) return "";
+  const body = rows.map((c) => {
+    const others = c.page_urls.filter((u) => u !== c.representative.page_url);
+    return `
+      <tr>
+        <td><code>${htmlEsc(pathOf(c.representative.page_url))}</code></td>
+        <td>${htmlEsc(c.failure_type.replace(/[_-]/g, " "))}</td>
+        <td>${htmlEsc(c.wcag_criterion)}</td>
+        <td>${htmlEsc(c.severity)}</td>
+        ${hoursFor ? `<td>${htmlEsc(hoursFor(c))}</td>` : ""}
+        <td>${others.length > 0 ? htmlEsc(others.map(pathOf).join(", ")) : "—"}</td>
+      </tr>`;
+  }).join("");
+  return `
+    <section class="top-fixes page-level-fixes" id="page-level-fixes">
+      <h2>Per-page fixes</h2>
+      <p class="section-intro">Problems specific to each page (for example the order in which focus moves through it). Each page needs its own change, so these are not in Top fixes.</p>
+      <table class="topfix-table">
+        <thead><tr><th>Page</th><th>Problem</th><th>WCAG</th><th>Severity</th>${hoursFor ? "<th>Est. hours</th>" : ""}<th>Also on</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
     </section>`;
 }
 

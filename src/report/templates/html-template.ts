@@ -10,8 +10,8 @@ import type { ReportData, FindingGroup, ScanDiff } from "../generator.js";
 import type { ScanCoverage } from "../../core/coverage.js";
 import { renderCoverageHtml, COVERAGE_CSS } from "../coverage-report.js";
 import { findingPageUrls, isDeduplicated, occurrenceTotals } from "../occurrences.js";
-import { clusterFindings } from "../clustering.js";
-import { renderTopFixesHtml, renderExcludedHtml, TOP_FIXES_CSS } from "../top-fixes-report.js";
+import { clusterFindings, type Cluster } from "../clustering.js";
+import { renderTopFixesHtml, renderPageLevelHtml, renderExcludedHtml, TOP_FIXES_CSS } from "../top-fixes-report.js";
 import { renderVerifyHtml } from "../verify-report.js";
 import { estimateRemediation, fixUnits, formatHours, unitHoursFor, type RemediationEstimate, type FixKind } from "../effort.js";
 import type { VerifyResult } from "../../core/verify.js";
@@ -1476,13 +1476,16 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
     pageUrlOf,
   );
 
+  const clusterHours = (c: Cluster) => {
+    const unit = unitHoursFor(estimate, c.findings[0], pageUrlOf);
+    return unit ? formatHours(unit.low, unit.high) : "";
+  };
+
   const sections = [
     renderCover(data, executiveSummaryHtml),
     verification ? renderVerifyHtml(verification) : "",
-    renderTopFixesHtml(clusters, undefined, (c) => {
-      const unit = unitHoursFor(estimate, c.findings[0], pageUrlOf);
-      return unit ? formatHours(unit.low, unit.high) : "";
-    }),
+    renderTopFixesHtml(clusters, undefined, clusterHours),
+    renderPageLevelHtml(clusters, clusterHours),
     renderDisclaimer(),
     renderExecutiveSummary(data, executiveSummaryHtml),
     data.diff ? renderDiffSummary(data.diff) : "",

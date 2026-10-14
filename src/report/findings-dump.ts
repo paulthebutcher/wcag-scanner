@@ -6,8 +6,8 @@ import { listFindingsByScan, getScanSession, getPageSnapshot } from "../store/db
 import { loadCoverage, type ScanCoverage } from "../core/coverage.js";
 import { renderCoverageMarkdown } from "./coverage-report.js";
 import { isDeduplicated, pageOccurrences, findingPageUrls } from "./occurrences.js";
-import { clusterFindings, partitionExclusions, type ExcludedFinding } from "./clustering.js";
-import { renderTopFixesMarkdown, renderExcludedMarkdown } from "./top-fixes-report.js";
+import { clusterFindings, partitionExclusions, type Cluster, type ExcludedFinding } from "./clustering.js";
+import { renderTopFixesMarkdown, renderPageLevelMarkdown, renderExcludedMarkdown } from "./top-fixes-report.js";
 import { estimateRemediation, formatEstimate, formatHours, unitHoursFor, type RemediationEstimate } from "./effort.js";
 
 // ---------------------------------------------------------------------------
@@ -366,10 +366,13 @@ function renderAggregateMarkdown(
     lines.push(`| ${BUCKET_LABELS[bucket]} | ${buckets.get(bucket)?.length ?? 0} |`);
   }
   lines.push("");
-  lines.push(renderTopFixesMarkdown(clusters, undefined, (c) => {
+  const hoursFor = (c: Cluster) => {
     const unit = unitHoursFor(estimate, c.findings[0], pageUrlOf);
     return unit ? formatHours(unit.low, unit.high) : "";
-  }));
+  };
+  lines.push(renderTopFixesMarkdown(clusters, undefined, hoursFor));
+  const perPage = renderPageLevelMarkdown(clusters, hoursFor);
+  if (perPage) lines.push(perPage);
   lines.push(renderEffortMarkdown(estimate));
   lines.push(renderCoverageMarkdown(coverage));
   lines.push(...renderOccurrenceTable(triaged));
