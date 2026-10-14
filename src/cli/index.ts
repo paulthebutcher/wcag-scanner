@@ -19,7 +19,10 @@ const program = new Command();
 program
   .name("wcag")
   .description("AI-powered WCAG AA accessibility scanner")
-  .version("0.1.0");
+  .version("0.1.0")
+  // Program options only before the subcommand, so subcommand options such
+  // as `eval capture --version <id>` are not taken as the program version
+  .enablePositionalOptions();
 
 program.addCommand(createScanCommand());
 program.addCommand(createReportCommand());
