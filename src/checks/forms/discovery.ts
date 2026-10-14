@@ -1,4 +1,5 @@
 import type { PageSnapshot } from "../../types.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -442,7 +443,8 @@ export function formFingerprint(form: FormInfo): string {
  * Detects form purpose from context (login, registration, contact, etc.)
  */
 export function discoverForms(snapshot: PageSnapshot): FormInfo[] {
-  const dom = snapshot.full_dom;
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(snapshot.full_dom);
   const forms: FormInfo[] = [];
 
   // --- 1. Native <form> elements ---

@@ -5,6 +5,7 @@ import {
   buildHeadingStructureUserPrompt,
 } from "../../prompts/element-evaluation.js";
 import { buildLlmCapture } from "./llm-capture.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -148,7 +149,7 @@ export function getAxeHeadingCorroboration(
  * 4. Notes heading hierarchy violations already caught by axe-core.
  */
 export async function runHeadingChecks(
-  dom: string,
+  fullDom: string,
   pageTitle: string,
   runner: PromptRunner,
   options: {
@@ -156,6 +157,8 @@ export async function runHeadingChecks(
   } = {},
 ): Promise<CheckResult[]> {
   const { axeResults = [] } = options;
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(fullDom);
 
   // 1. Extract all headings
   const headings = extractHeadings(dom);

@@ -4,6 +4,7 @@ import {
   consistentNavigation,
   buildConsistentNavUserPrompt,
 } from "../../prompts/element-evaluation.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -219,7 +220,8 @@ export async function runConsistentNavChecks(
   // 1. Extract nav data from each page
   const allNavs: PageNavData[] = [];
   for (const snapshot of snapshots) {
-    const pageNavs = extractNavData(snapshot.full_dom, snapshot.url);
+    // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+    const pageNavs = extractNavData(withoutRawTextContent(snapshot.full_dom), snapshot.url);
     allNavs.push(...pageNavs);
   }
 

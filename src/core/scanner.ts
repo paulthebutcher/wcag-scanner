@@ -32,6 +32,7 @@ import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
 import { CoverageRecorder, writeCoverage, type ScanCoverage } from "./coverage.js";
 import { CHECK_TIERS } from "./check-registry.js";
+import { withoutRawTextContent } from "./markup.js";
 import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
@@ -1851,8 +1852,9 @@ export async function scan(
     // Check if any page has audio/video elements. If not, mark 1.2.1-1.2.5 as not_applicable.
     {
       const hasMedia = pageSnapshots.some((snap) => {
-        const dom = snap.full_dom.toLowerCase();
-        return /<(audio|video)\b/.test(dom) || /<source\b[^>]+type\s*=\s*["'](audio|video)\//i.test(snap.full_dom);
+        // Rendered markup only (P2-012)
+        const markup = withoutRawTextContent(snap.full_dom);
+        return /<(audio|video)\b/i.test(markup) || /<source\b[^>]+type\s*=\s*["'](audio|video)\//i.test(markup);
       });
       if (!hasMedia) {
         const mediaCriteria: Array<[string, string]> = [

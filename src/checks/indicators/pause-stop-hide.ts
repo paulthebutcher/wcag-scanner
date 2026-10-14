@@ -1,5 +1,6 @@
 import type { CheckResult } from "../../types.js";
 import type { PageSnapshot } from "../../types.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,11 +61,12 @@ function parseDuration(raw: string): number | null {
 export function detectCSSAnimations(dom: string): AnimatedElement[] {
   const results: AnimatedElement[] = [];
 
-  // 1) Find elements with inline animation styles
+  // 1) Find elements with inline animation styles (rendered markup only, P2-012)
   const inlinePattern = /<([a-z][a-z0-9]*)\b[^>]*style\s*=\s*"([^"]*animation[^"]*)"/gi;
+  const markup = withoutRawTextContent(dom);
   let match: RegExpExecArray | null;
 
-  while ((match = inlinePattern.exec(dom)) !== null) {
+  while ((match = inlinePattern.exec(markup)) !== null) {
     const fullTag = match[0];
     const styleValue = match[2];
     const infinite = INFINITE_PATTERN.test(styleValue);
@@ -82,7 +84,7 @@ export function detectCSSAnimations(dom: string): AnimatedElement[] {
     });
   }
 
-  // 2) Find @keyframes in <style> blocks and animation rules
+  // 2) Find @keyframes in <style> blocks and animation rules (CSS text, read by design)
   const styleBlocks = dom.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) ?? [];
   for (const block of styleBlocks) {
     const content = block.replace(/<\/?style[^>]*>/gi, "");
@@ -231,12 +233,16 @@ const PAUSE_MECHANISM_PATTERNS = [
 /**
  * Search for pause/stop/hide mechanisms in the DOM near animated content.
  */
-export function findPauseMechanisms(dom: string): PauseMechanism[] {
+export function findPauseMechanisms(fullDom: string): PauseMechanism[] {
   const results: PauseMechanism[] = [];
   const seen = new Set<string>();
+  // Controls are found in rendered markup only (P2-012); prefers-reduced-motion
+  // is CSS or script text, read by design
+  const markup = withoutRawTextContent(fullDom);
 
   for (const pattern of PAUSE_MECHANISM_PATTERNS) {
     pattern.lastIndex = 0;
+    const dom = pattern.source.includes("prefers-reduced-motion") ? fullDom : markup;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(dom)) !== null) {
       const ctx = extractContext(dom, match.index, 300);
@@ -273,10 +279,10 @@ export function checkPauseStopHide(snapshot: PageSnapshot): CheckResult[] {
   const dom = snapshot.full_dom;
   const results: CheckResult[] = [];
 
-  // Gather all animated elements
+  // Gather all animated elements (carousels from rendered markup only, P2-012)
   const animated = [
     ...detectCSSAnimations(dom),
-    ...detectCarousels(dom),
+    ...detectCarousels(withoutRawTextContent(dom)),
   ];
 
   // Auto-pass: no animated content found
@@ -336,8 +342,10 @@ export function checkThreeFlashes(snapshot: PageSnapshot): CheckResult[] {
   const results: CheckResult[] = [];
 
   // Detect potentially flashing content
-  const gifs = detectGIFs(dom);
-  const videos = detectVideos(dom);
+  // Rendered markup only (P2-012)
+  const markup = withoutRawTextContent(dom);
+  const gifs = detectGIFs(markup);
+  const videos = detectVideos(markup);
 
   // Also flag very short CSS animations (< 350ms) that could flash
   const shortAnimations = detectCSSAnimations(dom).filter(

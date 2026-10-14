@@ -1,4 +1,5 @@
 import type { CheckResult, PageSnapshot } from "../../types.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -215,7 +216,8 @@ export function detectNavigationMethods(dom: string): NavigationMethod[] {
  * Flag: If fewer than 2 types found, flags for human review.
  */
 export function checkMultipleWays(snapshot: PageSnapshot): CheckResult[] {
-  const dom = snapshot.full_dom;
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(snapshot.full_dom);
   const methods = detectNavigationMethods(dom);
 
   // Count distinct navigation types

@@ -12,6 +12,7 @@
  */
 
 import type { CheckResult } from "../../types.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,7 +152,9 @@ export function extractTables(dom: string): TableInfo[] {
  * - Tables with >3 columns but no headers -> table_missing_headers
  * - Layout tables (no <th>, no <caption>) -> layout_table (advisory)
  */
-export function runTableStructureChecks(dom: string): CheckResult[] {
+export function runTableStructureChecks(fullDom: string): CheckResult[] {
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(fullDom);
   const tables = extractTables(dom);
   const results: CheckResult[] = [];
 

@@ -1,4 +1,5 @@
 import type { CheckResult } from "../../types.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,14 +176,15 @@ export function collectLinksForDuplication(dom: string): LinkInfo[] {
  * Identical link text pointing to different destinations is confusing for all users,
  * especially screen reader users who navigate by link list.
  *
- * @param dom     Serialized page DOM string.
+ * @param fullDom Serialized page DOM string.
  * @param pageUrl The URL of the page being scanned.  When supplied, relative
  *                hrefs are resolved to absolute form before comparison, so
  *                "/court-forms" and "https://example.com/court-forms" are
  *                treated as the same destination and do not produce a finding.
  */
-export function runDuplicateLinkChecks(dom: string, pageUrl?: string): CheckResult[] {
-  const links = collectLinksForDuplication(dom);
+export function runDuplicateLinkChecks(fullDom: string, pageUrl?: string): CheckResult[] {
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const links = collectLinksForDuplication(withoutRawTextContent(fullDom));
 
   // Group by accessible name (case-insensitive, trimmed)
   const groups = new Map<string, LinkInfo[]>();
