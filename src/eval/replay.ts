@@ -4,7 +4,7 @@ import {
   loadImageIndex, loadNodeFetchRecords, loadSiteCapture, siteDir, imageIndexHash,
   type SiteCapture, type SiteRef,
 } from "./corpus.js";
-import { launchControlledBrowser, type ControlledBrowser, type TransportCounters } from "./transport/browser.js";
+import { isDeclaredConnect, launchControlledBrowser, type ControlledBrowser, type TransportCounters } from "./transport/browser.js";
 import { EgressLog, installNodeEgressDenial } from "./transport/egress.js";
 import { createReplayFetch, fetchKey, installFetch, type FetchEvent, type SyntheticResponse } from "./transport/node-fetch.js";
 import { FuzzyIndex, mergeHars, readHar, writeHar, type MergeStats } from "./transport/har.js";
@@ -46,6 +46,8 @@ export interface ReplaySiteOptions {
   runId: string;
   runDir: string;
   declaredExclusions: string[];
+  /** Resource types whose misses are declared (e.g. media) */
+  declaredResourceTypes?: string[];
   /** Restrict to these page ids (pilot trap tests); default: every captured page */
   pages?: string[];
   /** Distinguishes several replays of one site and engine in a run */
@@ -59,7 +61,10 @@ export interface SiteReplayTotals {
   pages: number;
   har_misses: number;
   node_fetch_misses: number;
+  /** Includes declared_connects */
   declared_exclusion_hits: number;
+  /** Denied CONNECTs to declared hosts (requests that bypassed page routing) */
+  declared_connects: number;
   fuzzy_matches: number;
   contained_submissions: number;
   websockets_refused: number;
@@ -174,6 +179,7 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
       harPath,
       fuzzy,
       declaredExclusions: options.declaredExclusions,
+      declaredResourceTypes: options.declaredResourceTypes ?? [],
     });
 
     const client = new EvalAnthropicClient({
@@ -223,15 +229,18 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
 
     const failedChecks = (result.coverage?.entries ?? []).filter((e) => e.status === "failed").length;
     const by = controlled.counters.by_decision;
+    // Denied CONNECTs to declared hosts (requests that bypassed routing) are declared, not egress
+    const declaredConnects = controlled.egress.attempts.filter((a) => a.source === "browser" && a.kind === "connect" && isDeclaredConnect(a.target, options.declaredExclusions)).length;
     const totals: SiteReplayTotals = {
       pages: pages.length,
       har_misses: by.miss,
       node_fetch_misses: fetchMisses.length,
-      declared_exclusion_hits: by["declared-exclusion"],
+      declared_exclusion_hits: by["declared-exclusion"] + declaredConnects,
+      declared_connects: declaredConnects,
       fuzzy_matches: by.fuzzy,
       contained_submissions: by["contained-submission"],
       websockets_refused: by["websocket-blocked"],
-      attempted_egress: controlled.egress.count() + nodeEgress.count(),
+      attempted_egress: controlled.egress.count() - declaredConnects + nodeEgress.count(),
       image_misses: client.stats.image_misses + subs.misses,
       submission_images_substituted: subs.substituted,
       submission_images_absent: subs.absent,

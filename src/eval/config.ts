@@ -47,7 +47,13 @@ export interface EvalConfig {
     service_workers: "block";
     tiers: number[];
   };
-  declared_exclusions: { version: number; note: string; host_suffixes: string[] };
+  declared_exclusions: {
+    version: number;
+    note: string;
+    host_suffixes: string[];
+    /** Resource types whose misses are declared (media streams are range-requested and cannot be served from a HAR) */
+    resource_types?: string[];
+  };
   check_classification: { note: string; behavioral: string[]; non_behavioral: string[] };
   criteria: CriterionCoverage[];
 }
@@ -80,7 +86,7 @@ const CONFIG_SCHEMA: Schema = obj({
     service_workers: oneOf(["block"]),
     tiers: arr(int({ min: 1, max: 5 })),
   }),
-  declared_exclusions: obj({ version: int({ min: 1 }), note: str(), host_suffixes: arr(str()) }),
+  declared_exclusions: obj({ version: int({ min: 1 }), note: str(), host_suffixes: arr(str()), resource_types: arr(str(), { optional: true }) }),
   check_classification: obj({ note: str(), behavioral: arr(str()), non_behavioral: arr(str()) }),
   criteria: arr(obj({
     id: str({ pattern: /^\d\.\d\.\d{1,2}$/ }),

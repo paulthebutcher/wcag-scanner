@@ -40,8 +40,8 @@
     "tiers": [1, 2, 3, 4, 5]
   },
   "declared_exclusions": {
-    "version": 1,
-    "note": "Applied only to requests that miss the HAR. A request that matches is counted as a declared exclusion instead of invalidating the run. Requests found in the HAR are always served.",
+    "version": 2,
+    "note": "Applied only to requests that miss the HAR. A request that matches is counted as a declared exclusion instead of invalidating the run. Requests found in the HAR are always served. Version 2 (2026-10-14, first real-site replay, tuning-v1): adds Google Ads beacons (google.com/ccm, google.com/rmkt) and the OpenAI pixel, whose URLs carry per-load random parameters; Instagram and YouTube embed internals (third-party iframes whose requests vary per load); and media resources (audio and video are range-requested and cannot be served from a HAR). A CONNECT that bypasses page routing reaches the deny proxy showing only its host; it is still refused and counts as a declared hit when that host matches a declared pattern's host.",
     "host_suffixes": [
       "google-analytics.com",
       "analytics.google.com",
@@ -71,8 +71,17 @@
       "newrelic.com",
       "bat.bing.com",
       "ct.pinterest.com",
-      "stats.wp.com"
-    ]
+      "stats.wp.com",
+      "google.com/ccm",
+      "google.com/rmkt",
+      "bzr.openai.com",
+      "instagram.com",
+      "cdninstagram.com",
+      "youtube.com",
+      "youtube-nocookie.com",
+      "ytimg.com"
+    ],
+    "resource_types": ["media"]
   },
   "check_classification": {
     "note": "Behavioral checks interact with the live page or build prompts from interaction state; their repeatability is reported as a flake rate. Non-behavioral checks must replay identically.",

@@ -10,7 +10,9 @@ import { decideRobots, isAllowed, parseRobots } from "../../src/eval/robots.js";
 import { FuzzyIndex, mergeHars, normalizeCacheBusters, type Har, type HarEntry } from "../../src/eval/transport/har.js";
 import { createCaptureFetch, createReplayFetch, installFetch, fetchKey, type NodeFetchRecord } from "../../src/eval/transport/node-fetch.js";
 import { EgressLog, installNodeEgressDenial } from "../../src/eval/transport/egress.js";
-import { launchControlledBrowser, matchesDeclaredExclusion } from "../../src/eval/transport/browser.js";
+import { isDeclaredConnect, launchControlledBrowser, matchesDeclaredExclusion } from "../../src/eval/transport/browser.js";
+import { loadEvalConfig } from "../../src/eval/config.js";
+import { evalPaths } from "../../src/eval/paths.js";
 import { setupRequestInterception } from "../../src/checks/forms/submission.js";
 import { sha256 } from "../../src/eval/util.js";
 
@@ -267,5 +269,30 @@ describe("fixture files exist for the pilot", () => {
     for (const f of ["home.html", "contact.html", "about.html", "trap.html", "site.js", "site.css"]) {
       expect(readFileSync(join(fx, f), "utf8").length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("declared exclusions v2 (first real-site replay)", () => {
+  const config = loadEvalConfig(evalPaths(join(import.meta.dirname, "..", "..")).config);
+  const patterns = config.declared_exclusions.host_suffixes;
+
+  it("declares the per-load beacons and embed internals seen on tuning-v1, and media streams", () => {
+    expect(config.declared_exclusions.version).toBe(2);
+    expect(matchesDeclaredExclusion("https://www.google.com/ccm/collect?rnd=1", patterns)).toBe(true);
+    expect(matchesDeclaredExclusion("https://www.google.com/rmkt/collect/1/?random=2", patterns)).toBe(true);
+    expect(matchesDeclaredExclusion("https://www.instagram.com/ajax/bootloader-endpoint/", patterns)).toBe(true);
+    expect(matchesDeclaredExclusion("https://scontent-phx1-1.cdninstagram.com/v/x.jpg", patterns)).toBe(true);
+    expect(matchesDeclaredExclusion("https://www.google.com/recaptcha/api.js", patterns)).toBe(false);
+    expect(matchesDeclaredExclusion("https://cdn.prod.website-files.com/site/css/site.css", patterns)).toBe(false);
+    expect(config.declared_exclusions.resource_types).toEqual(["media"]);
+  });
+
+  it("a CONNECT counts as declared only when its host matches a declared pattern's host", () => {
+    expect(isDeclaredConnect("www.instagram.com:443", patterns)).toBe(true);
+    expect(isDeclaredConnect("analytics.google.com:443", patterns)).toBe(true);
+    expect(isDeclaredConnect("www.google.com:443", patterns)).toBe(true);
+    expect(isDeclaredConnect("cdn.prod.website-files.com:443", patterns)).toBe(false);
+    expect(isDeclaredConnect("evil.example:443", patterns)).toBe(false);
+    expect(isDeclaredConnect("notinstagram.com:443", patterns)).toBe(false);
   });
 });

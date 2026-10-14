@@ -110,7 +110,7 @@ export async function executeReplayRun(options: ReplayRunOptions): Promise<Repla
       log(`[run] repeat ${r}/${options.repeat}: ${siteId}`);
       rep.push(await replaySite({
         paths, config, corpus: { version: options.corpusVersion, split: options.split, siteId }, engine,
-        client: options.client, runId: m.run_id, runDir: run.dir, declaredExclusions: config.declared_exclusions.host_suffixes,
+        client: options.client, runId: m.run_id, runDir: run.dir, declaredExclusions: config.declared_exclusions.host_suffixes, declaredResourceTypes: config.declared_exclusions.resource_types ?? [],
         tag: options.repeat > 1 ? `${engine.label}-r${r}` : engine.label, allowEgress: options.allowEgress, pages: options.pages, log,
       }));
     }

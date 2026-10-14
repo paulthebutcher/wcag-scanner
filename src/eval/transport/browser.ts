@@ -67,6 +67,8 @@ export interface ControlledBrowserOptions {
   fuzzy?: FuzzyIndex;
   /** Replay: host suffixes (optionally with a path prefix) whose misses are declared */
   declaredExclusions?: string[];
+  /** Replay: resource types whose misses are declared */
+  declaredResourceTypes?: string[];
   /** Capture: pacing for main-frame navigations */
   pacer?: Pacer;
   /** Capture: robots check; a disallowed request is aborted */
@@ -131,6 +133,19 @@ export function matchesDeclaredExclusion(url: string, patterns: string[]): boole
     const pathPart = slash === -1 ? "" : p.slice(slash);
     const hostOk = host === hostPart || host.endsWith(`.${hostPart}`);
     return hostOk && (pathPart === "" || path.startsWith(pathPart));
+  });
+}
+
+/**
+ * A CONNECT that reached the deny proxy shows only host:port. It counts as a
+ * declared exclusion (still refused) when the host matches the host part of
+ * a declared pattern; anything else is attempted egress.
+ */
+export function isDeclaredConnect(target: string, patterns: string[]): boolean {
+  const host = target.replace(/:\d+$/, "").toLowerCase();
+  return patterns.some((p) => {
+    const hostPart = (p.includes("/") ? p.slice(0, p.indexOf("/")) : p).toLowerCase();
+    return host === hostPart || host.endsWith(`.${hostPart}`);
   });
 }
 
@@ -260,7 +275,8 @@ export async function launchControlledBrowser(options: ControlledBrowserOptions)
           }).catch(() => {});
           return;
         }
-        const declared = matchesDeclaredExclusion(request.url(), options.declaredExclusions ?? []);
+        const declared = matchesDeclaredExclusion(request.url(), options.declaredExclusions ?? [])
+          || (options.declaredResourceTypes ?? []).includes(request.resourceType());
         emit({ ...facts, decision: declared ? "declared-exclusion" : "miss" });
         await route.abort("blockedbyclient").catch(() => {});
       });
