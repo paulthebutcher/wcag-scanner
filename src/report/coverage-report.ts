@@ -76,6 +76,12 @@ export function renderCoverageMarkdown(coverage: ScanCoverage | null): string {
   const rows = summarizeCoverage(coverage);
   const withFailures = rows.filter((r) => r.failed > 0);
   const withPartials = rows.filter((r) => r.partial > 0);
+  const renderFailed = coverage.render_failed ?? [];
+  if (renderFailed.length > 0) {
+    lines.push(`> **ALERT: ${renderFailed.length} of ${coverage.page_urls.length} page(s) rendered broken or blank and were not checked.** Findings and passes in this report cover the other pages only, and no criterion is reported as passed. Fewer findings here is not progress: fix the site (often an unclosed \`<style>\` in custom code) and rescan.`, "");
+    for (const f of renderFailed) lines.push(`> - ${f.url}: ${mdEsc(f.reasons.join("; "))}`);
+    lines.push("");
+  }
   lines.push(`Pages crawled: ${coverage.page_urls.length}. Each row shows how many of those pages the check ran on, ran on only partly, failed on, or skipped.`);
   if (coverage.crawl_failures.length > 0) {
     lines.push("", `**Warning:** ${coverage.crawl_failures.length} page(s) could not be loaded by the crawl and were not checked at all:`);
@@ -139,6 +145,10 @@ export function renderCoverageHtml(coverage: ScanCoverage | null): string {
   const withPartials = rows.filter((r) => r.partial > 0);
 
   const warnings: string[] = [];
+  const renderFailed = coverage.render_failed ?? [];
+  if (renderFailed.length > 0) {
+    warnings.push(`<div class="coverage-warning coverage-alert"><strong>ALERT: ${renderFailed.length} of ${coverage.page_urls.length} page(s) rendered broken or blank and were not checked.</strong> Findings and passes cover the other pages only, and no criterion is reported as passed. Fewer findings is not progress: fix the site (often an unclosed &lt;style&gt; in custom code) and rescan. <span class="coverage-pages">(${htmlEsc(pageList(renderFailed.map((f) => f.url)))})</span></div>`);
+  }
   if (coverage.crawl_failures.length > 0) {
     warnings.push(`<div class="coverage-warning"><strong>${coverage.crawl_failures.length} page(s) could not be loaded</strong> and were not checked: ${htmlEsc(pageList(coverage.crawl_failures.map((f) => f.url)))}.</div>`);
   }

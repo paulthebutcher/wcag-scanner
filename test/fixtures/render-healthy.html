@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Brands (healthy render fixture)</title>
+<style>body { margin: 0; font-family: sans-serif; background: #17191e; color: #efefef; } section { padding: 48px 24px; min-height: 240px; } .header { padding: 16px; } a { color: #419e69; }</style>
+<style>
+.skip-link { position: absolute; left: -9999px; }
+.skip-link:focus { left: 16px; top: 16px; }
+</style>
+<!-- END Skip links -->
+<!-- Blog rich text links sit on white: use the light-background green -->
+<style>
+.article-detail-rtf.blog a { color: #286140; }
+</style>
+</head>
+<body class="body">
+<div class="header-wrapper"><header class="header"><nav class="nav-menu" aria-label="Main"><a href="/" class="header-logo-link w-nav-brand"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="96" height="32"></a><a href="/brands" class="nav-link">Brands</a><a href="/creators" class="nav-link">Creators</a></nav></header></div>
+<section class="section-1"><div class="container"><h2>Section 1 heading</h2>
+<p>Popfly connects adventure brands with vetted creators. Section 1 describes how brands discover creators, manage collaborations end to end and track the content that results.</p></div></section>
+<section class="section-2"><div class="container"><h2>Section 2 heading</h2>
+<p>Popfly connects adventure brands with vetted creators. Section 2 describes how brands discover creators, manage collaborations end to end and track the content that results.</p></div></section>
+<section class="section-3"><div class="container"><h2>Section 3 heading</h2>
+<p>Popfly connects adventure brands with vetted creators. Section 3 describes how brands discover creators, manage collaborations end to end and track the content that results.</p><div class="w-embed"><style>.c-subtitle strong { letter-spacing: 0.1em; }</style></div></div></section>
+<section class="section-4"><div class="container"><h2>Section 4 heading</h2>
+<p>Popfly connects adventure brands with vetted creators. Section 4 describes how brands discover creators, manage collaborations end to end and track the content that results.</p></div></section>
+<section class="section-5"><div class="container"><h2>Section 5 heading</h2>
+<p>Popfly connects adventure brands with vetted creators. Section 5 describes how brands discover creators, manage collaborations end to end and track the content that results.</p></div></section>
+<section class="section-6"><div class="container"><h2>Section 6 heading</h2>
+<p>Popfly connects adventure brands with vetted creators. Section 6 describes how brands discover creators, manage collaborations end to end and track the content that results.</p></div></section>
+<footer class="footer"><div class="footer-cr-center"><div>© Popfly. All rights reserved.</div></div></footer>
+<script>
+(function () {
+  function initializeSkipLink() {
+    if (document.querySelector(".skip-link")) return;
+    const header = document.querySelector(".header-wrapper");
+    const target = document.getElementById("main-content") || (header && header.nextElementSibling) || document.querySelector("section");
+    if (!target) return;
+    if (!target.id) target.id = "main-content";
+    target.setAttribute("tabindex", "-1");
+    const link = document.createElement("a");
+    link.className = "skip-link";
+    link.href = "#" + target.id;
+    link.textContent = "Skip to main content";
+    document.body.insertBefore(link, document.body.firstChild);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initializeSkipLink);
+  else initializeSkipLink();
+})();
+</script>
+</body></html>
