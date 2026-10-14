@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
 import axe from "axe-core";
-import { AXE_STATIC_WHITELIST, STATIC_PLAN, sanitizeFixture, staticRunsMatch, type StaticRunResult } from "../../src/eval/static.js";
+import { AXE_STATIC_WHITELIST, STATIC_PLAN, sanitizeFixture, staticEgressAllowList, staticRunsMatch, type StaticRunResult } from "../../src/eval/static.js";
 import { runAxeChecks } from "../../src/checks/automated/index.js";
 import { readJsonl } from "../../src/eval/util.js";
 
@@ -85,5 +85,12 @@ describe("static replays", () => {
     const b = { outcomes: [{ ...outcome, outcome: "fail" as const }], predictions: { f: [] } } as unknown as StaticRunResult;
     expect(staticRunsMatch(a, a).identical).toBe(true);
     expect(staticRunsMatch(a, b).differences).toEqual(["LS-001"]);
+  });
+});
+
+describe("static run egress", () => {
+  it("lets a record run reach the model API and nothing else; replays reach nothing", () => {
+    expect(staticEgressAllowList("record")).toEqual(["api.anthropic.com:443"]);
+    expect(staticEgressAllowList("replay")).toEqual([]);
   });
 });

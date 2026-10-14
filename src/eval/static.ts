@@ -36,6 +36,14 @@ import { CHECK_TIERS } from "../core/check-registry.js";
 // every request refused), with model calls from a separate cache namespace.
 // ---------------------------------------------------------------------------
 
+/** The only egress a record run allows: the model API. */
+export const MODEL_API_EGRESS = "api.anthropic.com:443";
+
+/** Node egress a static run allows: the model API when recording, nothing otherwise. */
+export function staticEgressAllowList(mode: StaticClientOptions["mode"]): string[] {
+  return mode === "record" ? [MODEL_API_EGRESS] : [];
+}
+
 export type Expected = "detected" | "not_detected";
 export type Adjudication = "settled" | "pending" | "disputed";
 export type CaseStatus = "runnable" | "requires_rendering" | "unresolved_fixture" | "scan_level";
@@ -459,7 +467,8 @@ export async function runStatic(options: {
   const fixtureMisses = new Map<string, Set<string>>(); // fixture → checks with cache misses
   const work = mkdtempSync(join(tmpdir(), "eval-static-"));
   const egress = new EgressLog();
-  const releaseNode = installNodeEgressDenial(egress);
+  // A record run reaches the model API (as corpus `record` does); nothing else
+  const releaseNode = installNodeEgressDenial(egress, staticEgressAllowList(options.client.mode));
   const releaseFetch = installFetch(createDenyFetch((m, u) => egress.record("node", `fetch-${m.toLowerCase()}`, u)));
   const proxy = await startDenyProxy(egress);
   let browser: Browser | null = null;

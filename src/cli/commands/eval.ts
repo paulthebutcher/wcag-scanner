@@ -21,7 +21,7 @@ import { paceReport, formatPace } from "../../eval/pace.js";
 import { computeMetrics, loadRunInputs, loadLabelInputs, aggregateExport } from "../../eval/metrics.js";
 import { loadManifest, inputHash } from "../../eval/manifest.js";
 import { readJson, writeJson } from "../../eval/util.js";
-import { resolveStatic, writeResolution, runStatic, staticRunsMatch, type StaticRunResult } from "../../eval/static.js";
+import { resolveStatic, writeResolution, runStatic, staticRunsMatch, MODEL_API_EGRESS, type StaticRunResult } from "../../eval/static.js";
 import { CHECK_TIERS } from "../../core/check-registry.js";
 import { compareRuns, labelSnapshotSha } from "../../eval/compare.js";
 import { capabilityMap, historicalContext, referenceExport } from "../../eval/reference.js";
@@ -235,7 +235,7 @@ export function createEvalCommand(): Command {
           pages: opts.pages ? String(opts.pages).split(",") : undefined,
           client, repeat: name === "replay" ? Math.max(1, parseInt(String(opts.repeat ?? "1"), 10)) : 1,
           logDefects: name === "replay" && opts.defects !== false,
-          allowEgress: name === "record" ? ["api.anthropic.com:443"] : [], log,
+          allowEgress: name === "record" ? [MODEL_API_EGRESS] : [], log,
         });
         const m = run.finish("completed");
         const rep = result.repeatability;
