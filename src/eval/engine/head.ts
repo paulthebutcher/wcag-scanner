@@ -24,7 +24,7 @@ export function headEngine(sha: string, label = "head"): EngineHandle {
     // Relative ".js" specifiers resolve to the .ts sources under tsx/vitest
     importModule: async <T>(rel: string) => import(new URL(`../../${rel}.js`, import.meta.url).href) as Promise<T>,
     run: async (options) => {
-      const reporter = new CollectingReporter();
+      const reporter = new CollectingReporter(options.progress);
       const result = await scan({
         url: options.rootUrl,
         dataDir: options.dataDir,

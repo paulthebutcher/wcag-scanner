@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   loadImageIndex, loadNodeFetchRecords, loadSiteCapture, siteDir, imageIndexHash, SUPPLEMENT_HAR,
@@ -12,7 +12,7 @@ import { EvalAnthropicClient, type ClientMode, type ClientStats, type Injector, 
 import { buildEvalRunner } from "./model/runner.js";
 import type { ResponseCache } from "./model/cache.js";
 import { parseRobots } from "./robots.js";
-import type { EngineHandle, EngineRunResult, SubmissionStatesHook } from "./engine/types.js";
+import type { EngineHandle, EngineRunResult, ProgressSink, SubmissionStatesHook } from "./engine/types.js";
 import type { EvalConfig } from "./config.js";
 import type { EvalPaths } from "./paths.js";
 import { coverageRows, criterionStatuses, findingKeys, fullFindings, type CoverageRow, type CriterionStatusRow, type FindingKey, type FullFinding } from "./normalize.js";
@@ -120,6 +120,22 @@ function loadImages(dir: string, capture: SiteCapture): { allowed: Set<string>; 
   return { allowed, submissions };
 }
 
+/**
+ * Appends the engine's progress lines to <runDir>/progress.log (gitignored,
+ * one JSON object per line, tagged with the repeat) so a running replay's
+ * phase and page can be read (wcag-data/tools/eval-status.py).
+ */
+export function progressSink(runDir: string, tag: string): ProgressSink {
+  const path = join(runDir, "progress.log");
+  return (kind, phase, message) => {
+    try {
+      appendFileSync(path, JSON.stringify({ at: new Date().toISOString(), tag, kind, phase, message: message.split("\n")[0].slice(0, 300) }) + "\n");
+    } catch {
+      // progress is a convenience; never fail a replay over it
+    }
+  };
+}
+
 export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay> {
   const log = options.log ?? (() => {});
   const dir = siteDir(options.paths, options.corpus);
@@ -220,6 +236,7 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
     const rootUrl = options.engine.supportsUrlList ? capture.root_url : pageUrls[0];
     log(`[replay] ${capture.site_id} with ${options.engine.label}: ${pages.length} page(s)`);
     const result = await options.engine.run({
+      progress: progressSink(options.runDir, tag),
       rootUrl,
       pageUrls,
       dataDir: engineData,

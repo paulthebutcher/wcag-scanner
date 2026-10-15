@@ -173,7 +173,7 @@ export async function legacyEngine(options: LegacyEngineOptions): Promise<Engine
       return map;
     },
     run: async (run: EngineRunOptions) => {
-      const reporter = new CollectingReporter();
+      const reporter = new CollectingReporter(run.progress);
       const scanOptions: Record<string, unknown> = {
         url: run.rootUrl,
         dataDir: run.dataDir,

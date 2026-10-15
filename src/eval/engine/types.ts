@@ -30,7 +30,11 @@ export interface EngineRunOptions {
   viewport: Viewport;
   /** Only with eval hooks; undefined keeps the default path */
   submissionStates?: SubmissionStatesHook;
+  /** Receives the engine's progress lines (replay writes them to <run>/progress.log) */
+  progress?: ProgressSink;
 }
+
+export type ProgressSink = (kind: "update" | "complete" | "warn", phase: string, message: string) => void;
 
 export interface EngineRunResult {
   scanId: string;
@@ -59,12 +63,21 @@ export interface EngineHandle {
   importModule<T = Record<string, unknown>>(relPath: string): Promise<T>;
 }
 
-/** Collects engine warnings (tooling errors surface here and in coverage). */
+/**
+ * Collects engine warnings (tooling errors surface here and in coverage) and
+ * forwards every progress line to an optional sink.
+ */
 export class CollectingReporter {
   readonly warnings: string[] = [];
-  update(): void { /* progress is not recorded */ }
-  complete(): void { /* progress is not recorded */ }
+  constructor(private readonly sink?: ProgressSink) {}
+  update(phase: string, message: string): void {
+    this.sink?.("update", phase, message);
+  }
+  complete(phase: string, message: string): void {
+    this.sink?.("complete", phase, message);
+  }
   warn(phase: string, message: string): void {
     this.warnings.push(`[${phase}] ${message.split("\n")[0].slice(0, 400)}`);
+    this.sink?.("warn", phase, message);
   }
 }
