@@ -26,6 +26,21 @@ Chat index:
 
 ---
 
+## 2026-10-15
+
+### Fixed
+
+- axe "incomplete" results (axe could not decide, e.g. text over an image) are needs-review findings, not confirmed failures: counted separately from confirmed findings everywhere (CLI, summary, report, findings.md), and undetermined-background contrast checks are grouped per page and reason in the report. A criterion with only needs-review findings gets the new status needs_review and is never passed or failed on them; a truncated tab sweep no longer fails 2.1.1. Frozen gate passed (1.4.3 and 1.2.2 failed → needs_review; 493 predictions definitive → needs_review; no finding added or removed); live scan pending. P2-030, P2-019. [repo:951a4a0] [run:replay-20261015T230944Z-7f0f3b] [run:compare-20261015T232120Z-572b81] [cc:e8a46994] `prompted`
+
+### Results
+
+- Lakewood delivered-report scan 1a6e3c3e (2026-05-20) has no axe findings, so no incomplete result was stored as a failure; 1.4.3 passed with 122 elements tested. The delivered report is not affected by P2-030. (observed)
+
+### Known issues
+
+- The report's criterion list has 51 entries (the 50 WCAG 2.1 A/AA criteria plus 1.3.6, which is AAA). P2-032, not fixed. (observed) [repo:72fe14b]
+- False pass: when every finding for a criterion is filtered from the client report as possibly noisy, the report turns a failed criterion into a pass (since f0e97b9). needs_review criteria are protected from this since P2-030. P2-033 (related P2-010), not fixed. (observed) [repo:f0e97b9]
+
 ## 2026-10-14
 
 ### Observations

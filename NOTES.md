@@ -286,8 +286,40 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 - Tests: `test/unit/page-level-clusters.test.ts` (4). Suite 1,463 → 1,467.
 - Assumptions: a deduplicated summary row keeps its "also found on" pages in its own per-page row (identical summaries on one template are one change).
 
+## Scanner fixes (2026-10-15)
+
+P2-030 (axe incomplete results stored as failures) with P2-019 (needs-review findings fail their criterion). Branch `fix/p2-030` from main 8eaf7c5. Reference: `replay-20261015T032725Z-bd7aa1` (tuning-v4, 3 repeats, at 56f7550; detection unchanged since). Fix run: `replay-20261015T230944Z-7f0f3b` at 951a4a0. Gate: `compare-20261015T232120Z-572b81`, exit 0. Static: `static-20261015T032729Z-e52b7a` → `static-20261015T230948Z-ce7e49`. Tests before: 1,470.
+
+### Fix: axe incomplete results become needs-review findings; needs-review criterion status (P2-030, P2-019)
+
+- Observed: in scan cd0f789b all 528 color-contrast findings were axe incomplete results (axe could not decide) stored definitive, major, triage fix_now; 527 say "background color could not be determined", 1 is a 1:1 ratio on `/local`. `video-caption` (1.2.2, critical) and `form-field-multiple-labels` (3.3.2, minor) were stored the same way. 1.4.3 was recorded failed with no axe violation behind it. A `truncated_tab_sweep` (needs review) failed 2.1.1 the same way (P2-019).
+- Cause (observed): `nodeToCheckResult` built incomplete CheckResults identical to violations; the scanner's `axe_incomplete` label only fed `finding_type_hash`; `confidence.ts` `isIncompleteResult` looked for a marker that was never set, so every incomplete result was scored definitive. Criterion reconciliation failed a criterion on any finding, including needs-review findings.
+- Change:
+  - `src/checks/automated/index.ts`: `nodeToCheckResult(…, { incomplete: true })` sets `measured_values.axe_incomplete` for incomplete nodes (violations unchanged). `analyzer.ts` says axe could not decide and keeps axe's message. `confidence.ts` then takes its existing path: tier needs_review, score 0.5, `requires_human`; triage `verify_manually`; severity keeps axe's impact.
+  - Criterion status: new `needs_review` status (`types.ts`). `criterionStatusFromFindings` (scanner.ts) is used by both reconcilers: failed when at least one finding is confirmed (tier above needs_review), needs_review when every finding needs review. A criterion with needs-review findings is never passed. `reconcileInMemory` (client report) never turns a stored needs_review into a pass; its separate failed → passed flip when every finding is filtered as possibly noisy is unchanged and registered as P2-033 (false pass, related to P2-010), so needs_review is protected from it but failed is not.
+  - Counts: `ScanSummary.by_severity` counts confirmed findings only; `needs_review_findings`, `needs_review_by_severity` and `wcag_criteria_needs_review` are new (scan_summaries columns migrated). Shown in the CLI table, the report cover, the scorecard and executive summary (both counted from criterion results over the same criterion list, so the statuses add up) and findings.md.
+  - Report: undetermined-background contrast findings are grouped into one "Needs manual contrast check" entry per page and reason (image node, gradient, overlap, background image, partial overlap) with the element list behind it (`groupManualContrastChecks`). They stay out of Top fixes and add no fix hours. findings.md and findings.jsonl keep every finding with its new tier and bucket.
+
+| Tuning-v4 (47 pages) | Reference `bd7aa1` (repeat 1) | Fix `7f0f3b` | Live |
+|---|---|---|---|
+| Predictions (findings) | 867 | 867 (none removed) | LIVE_TOTAL |
+| Confirmed, by severity | 867: critical 34, major 543, minor 44, advisory 246 | 374: critical 33, major 51, minor 44, advisory 246 | LIVE_CONFIRMED |
+| Needs review | 0 | 493: 492 color-contrast (major), 1 video-caption (critical) | LIVE_NR |
+| Criteria | 15 failed, 7 passed, 6 N/A, 16 not tested | 13 failed, 2 needs_review, 7 passed, 6 N/A, 16 not tested | LIVE_CRIT |
+| 1.4.3 | failed | needs_review | LIVE_143 |
+| Fix-1 elements (`.c-green-h`, `.c-subtitle`, `.c-p-gray` on / and /for-agencies) | 8 rows definitive/major | 8 rows needs_review/major | LIVE_FIX1 |
+
+- Gate transitions (expected from this fix): 1.4.3 failed → needs_review; 1.2.2 failed → needs_review; 493 predictions definitive → needs_review. No finding added or removed, no case change, no new pass, no coverage change; the 11 existing blockers are unchanged; static set unchanged (30 pass, 7 fail).
+- The 37 provisional no_violation contrast cases on the fix-1 elements were TN before and after: their selectors come from the broken 8e03985c render and match no tuning-v4 prediction (observed), so they do not exercise this fix; the same elements are shown directly in the table.
+- Tests: `test/unit/needs-review.test.ts` (12, including a scan of a page with text over a background image: needs-review contrast, 1.4.3 needs_review, 1.1.1 still failed) and one report-arithmetic test in `html-template.test.ts`. Suite 1,470 → 1,483.
+- Assumptions:
+  - Lakewood delivered-report scan 1a6e3c3e (2026-05-20, `wcag-data/wcag-old.db`): 31 findings (12 Claude, 19 Playwright) and no axe findings at all, so no incomplete result was stored as a failure; 1.4.3 passed ("Passed 1 axe-core rule(s): color-contrast (122 elements tested)") (observed). The delivered report is not affected by P2-030.
+  - The manual-review line of the effort estimate still counts undetermined contrast elements (2–4 minutes each, capped); they add no fix hours (assumed to be the intended "out of effort estimates").
+  - Older scans stored before this fix show needs_review_findings 0 until they are reprocessed (assumed acceptable; their stored tiers are unchanged).
+
 ## Out of scope
 
+- Resolving axe incomplete contrast results by sampling screenshot pixels (P2-030 follow-up).
 - Popfly review items 5–8 and P2-015 (registered as P2-016..P2-019 and P2-015; see KNOWN_ISSUES.md), and the residual per-load variation sources P2-020..P2-023 beyond the eval-harness side.
 - The animation-settle pass proposed for review fix 1: not reproduced (0 definitive contrast failures live before and after settling), so not built.
 - Stripping HTML comments in `withoutRawTextContent` (not requested; comments were not checked for phantoms).

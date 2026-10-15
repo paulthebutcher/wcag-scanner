@@ -30,12 +30,6 @@ A finding marked as a false positive in `wcag review` is not remembered by the n
 
 **Possible improvement:** store review verdicts by cluster signature and apply them to later scans, so a reviewed false positive stays resolved until the element changes.
 
-## A needs-review truncated tab sweep still fails 2.1.1 (P2-019)
-
-When the keyboard sweep of a page is cut short, the scanner records one `truncated_tab_sweep` finding at needs-review confidence instead of guessing which controls are unreachable. During criterion reconciliation any finding fails its criterion, so 2.1.1 is reported as failed although nothing was shown to fail.
-
-**Possible improvement:** a needs-review finding should leave its criterion `not_tested` rather than `failed`.
-
 ## Skip link reported broken on some pages whose skip link works (P2-015)
 
 Scans 6d4e82fe and 0705da2d report `broken_skip_navigation` with "focus did not move" on two blog posts and `/brands/collaborate`, although the link and its `#main-content` target exist. Loaded offline without the site's scripts, the same snapshots pass. The likely cause is site script timing: Webflow's smooth scroll moving focus later than the check's 1.5 s wait (inferred, not investigated).
@@ -47,12 +41,6 @@ Scans 6d4e82fe and 0705da2d report `broken_skip_navigation` with "focus did not 
 Some prompts include page content that changes on every load, so the same element can be sent to the model with slightly different text each scan and get a different verdict. Seen on popfly.com: a hidden `visitor_id` and `landing_timestamp` in a form (form checks), and the order of web-font classes on the page's `html` element in the error-message prompt. Style and script text (GrowSurf's random class) no longer reaches link-text and alt-text prompts since P2-012.
 
 **Possible improvement:** leave hidden-input values out of form prompts, and build the error-message prompt from the form and its error region instead of the start of the page (P2-001).
-
-## "Could not be determined" contrast results are counted as failures (P2-030)
-
-When axe cannot measure a colour contrast (text over an image, a gradient or an overlapping element) it reports the element as "incomplete". The scanner stores these as confirmed Major failures, counts them in the summary and fails 1.4.3 on them. On popfly.com that is 527 of 528 contrast findings. The report already lists them under "Needs manual check" and leaves them out of Top fixes, but the stored severity, the totals and the 1.4.3 status still treat them as failures. Other incomplete axe results (`video-caption`, `form-field-multiple-labels`) are affected the same way.
-
-**Possible improvement:** mark axe incomplete results when they are converted, so they are scored `needs_review` and do not fail their criterion.
 
 ## The crawler follows links users cannot see (P2-031)
 
