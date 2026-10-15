@@ -288,7 +288,7 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 
 ## Scanner fixes (2026-10-15)
 
-P2-030 (axe incomplete results stored as failures) with P2-019 (needs-review findings fail their criterion). Branch `fix/p2-030` from main 8eaf7c5. Reference: `replay-20261015T032725Z-bd7aa1` (tuning-v4, 3 repeats, at 56f7550; detection unchanged since). Fix run: `replay-20261015T230944Z-7f0f3b` at 951a4a0. Gate: `compare-20261015T232120Z-572b81`, exit 0. Static: `static-20261015T032729Z-e52b7a` → `static-20261015T230948Z-ce7e49`. Tests before: 1,470.
+P2-030 (axe incomplete results stored as failures) with P2-019 (needs-review findings fail their criterion). Branch `fix/p2-030` from main 8eaf7c5. Reference: `replay-20261015T032725Z-bd7aa1` (tuning-v4, 3 repeats, at 56f7550; detection unchanged since). Fix run: `replay-20261015T230944Z-7f0f3b` at 951a4a0. Gate: `compare-20261015T232120Z-572b81`, exit 0. Live: scan `782f7078` (pinned 50 pages, 2026-10-15). Static: `static-20261015T032729Z-e52b7a` → `static-20261015T230948Z-ce7e49`. Tests before: 1,470.
 
 ### Fix: axe incomplete results become needs-review findings; needs-review criterion status (P2-030, P2-019)
 
@@ -302,12 +302,12 @@ P2-030 (axe incomplete results stored as failures) with P2-019 (needs-review fin
 
 | Tuning-v4 (47 pages) | Reference `bd7aa1` (repeat 1) | Fix `7f0f3b` | Live |
 |---|---|---|---|
-| Predictions (findings) | 867 | 867 (none removed) | LIVE_TOTAL |
-| Confirmed, by severity | 867: critical 34, major 543, minor 44, advisory 246 | 374: critical 33, major 51, minor 44, advisory 246 | LIVE_CONFIRMED |
-| Needs review | 0 | 493: 492 color-contrast (major), 1 video-caption (critical) | LIVE_NR |
-| Criteria | 15 failed, 7 passed, 6 N/A, 16 not tested | 13 failed, 2 needs_review, 7 passed, 6 N/A, 16 not tested | LIVE_CRIT |
-| 1.4.3 | failed | needs_review | LIVE_143 |
-| Fix-1 elements (`.c-green-h`, `.c-subtitle`, `.c-p-gray` on / and /for-agencies) | 8 rows definitive/major | 8 rows needs_review/major | LIVE_FIX1 |
+| Predictions (findings) | 867 | 867 (none removed) | 1,025 (782f7078; cd0f789b 997): +30 `unreachable_interactive_element` on one page from a keyboard sweep stuck in an Instagram embed (P2-034, unrelated); without them 995; no contrast finding removed (528 = 528) |
+| Confirmed, by severity | 867: critical 34, major 543, minor 44, advisory 246 | 374: critical 33, major 51, minor 44, advisory 246 | 494: critical 83, major 93, minor 57, advisory 261 |
+| Needs review | 0 | 493: 492 color-contrast (major), 1 video-caption (critical) | 531: 528 color-contrast (major), video-caption (critical), truncated_tab_sweep (critical), form-field-multiple-labels (minor) |
+| Criteria | 15 failed, 7 passed, 6 N/A, 16 not tested | 13 failed, 2 needs_review, 7 passed, 6 N/A, 16 not tested | 17 failed, 3 needs_review (1.2.2, 1.4.3, 3.3.2), 6 passed, 5 N/A, 13 not tested |
+| 1.4.3 | failed | needs_review | needs_review (528 need a manual check; none confirmed) |
+| Fix-1 elements (`.c-green-h`, `.c-subtitle`, `.c-p-gray` on / and /for-agencies) | 8 rows definitive/major | 8 rows needs_review/major | 8 rows needs_review/major |
 
 - Gate transitions (expected from this fix): 1.4.3 failed → needs_review; 1.2.2 failed → needs_review; 493 predictions definitive → needs_review. No finding added or removed, no case change, no new pass, no coverage change; the 11 existing blockers are unchanged; static set unchanged (30 pass, 7 fail).
 - The 37 provisional no_violation contrast cases on the fix-1 elements were TN before and after: their selectors come from the broken 8e03985c render and match no tuning-v4 prediction (observed), so they do not exercise this fix; the same elements are shown directly in the table.

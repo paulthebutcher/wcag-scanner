@@ -47,3 +47,9 @@ Some prompts include page content that changes on every load, so the same elemen
 The crawl collects every link in a page's HTML, including links inside hidden elements (a menu item hidden with a `hide` class, `hidden` or `aria-hidden` containers). A scan can therefore check pages that visitors cannot reach from the pages scanned. On popfly.com a hidden mobile-menu link leads to `/archive/pricing` from 73 of 75 pages; that page is noindex, so it only appears in scans run with `--include-noindex`.
 
 **Possible improvement:** discover links from the rendered page, skip links whose element is not rendered, and log the skipped targets.
+
+## Keyboard sweeps stuck in an embed report unreachable controls (P2-034)
+
+When the keyboard check's Tab sweep enters a third-party embed (an Instagram post, for example) and cycles inside it, the sweep is treated as complete. Every control after the embed is then reported as unreachable, as a critical failure of 2.1.1. On popfly.com this produced 30 such findings on one blog post in one scan and none in the scans before it.
+
+**Possible improvement:** treat a sweep that ends by cycling inside an iframe like a truncated sweep: retry, and if it still cycles, record one needs-review note instead of per-control failures.

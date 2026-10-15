@@ -30,7 +30,7 @@ Chat index:
 
 ### Fixed
 
-- axe "incomplete" results (axe could not decide, e.g. text over an image) are needs-review findings, not confirmed failures: counted separately from confirmed findings everywhere (CLI, summary, report, findings.md), and undetermined-background contrast checks are grouped per page and reason in the report. A criterion with only needs-review findings gets the new status needs_review and is never passed or failed on them; a truncated tab sweep no longer fails 2.1.1. Frozen gate passed (1.4.3 and 1.2.2 failed → needs_review; 493 predictions definitive → needs_review; no finding added or removed); live scan pending. P2-030, P2-019. [repo:951a4a0] [run:replay-20261015T230944Z-7f0f3b] [run:compare-20261015T232120Z-572b81] [cc:e8a46994] `prompted`
+- axe "incomplete" results (axe could not decide, e.g. text over an image) are needs-review findings, not confirmed failures: counted separately from confirmed findings everywhere (CLI, summary, report, findings.md), and undetermined-background contrast checks are grouped per page and reason in the report. A criterion with only needs-review findings gets the new status needs_review and is never passed or failed on them; a truncated tab sweep no longer fails 2.1.1. Frozen gate passed (1.4.3 and 1.2.2 failed → needs_review; 493 predictions definitive → needs_review; no finding added or removed). Live: all 528 contrast findings needs_review, 1.4.3 needs_review, 494 confirmed / 531 needs review; the scan's total (1,025 vs 997) is outside the ±10 acceptance only because of 30 unrelated unreachable findings (P2-034). P2-030, P2-019. [repo:951a4a0] [run:replay-20261015T230944Z-7f0f3b] [run:compare-20261015T232120Z-572b81] [scan:782f7078] [cc:e8a46994] `shipped`
 
 ### Results
 
@@ -39,6 +39,7 @@ Chat index:
 ### Known issues
 
 - The report's criterion list has 51 entries (the 50 WCAG 2.1 A/AA criteria plus 1.3.6, which is AAA). P2-032, not fixed. (observed) [repo:72fe14b]
+- A keyboard sweep that ends in a focus cycle inside a third-party iframe is not treated as truncated, so the controls after the embed are reported unreachable (definitive, critical) and 2.1.1 fails: 30 such findings on one blog post with Instagram embeds. P2-034, not fixed. (observed) [scan:782f7078]
 - False pass: when every finding for a criterion is filtered from the client report as possibly noisy, the report turns a failed criterion into a pass (since f0e97b9). needs_review criteria are protected from this since P2-030. P2-033 (related P2-010), not fixed. (observed) [repo:f0e97b9]
 
 ## 2026-10-14
