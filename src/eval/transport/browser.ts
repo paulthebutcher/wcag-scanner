@@ -23,23 +23,58 @@ import type { Pacer } from "./pacer.js";
 // route.continue() is turned into route.fallback() so it reaches the eval
 // routes instead of the network. WebSockets are refused in both modes.
 // In replay Chromium also runs through a deny-and-log proxy, so anything
-// that slips past routing is still caught and counted, and Math.random is
-// seeded per document so script-generated ids are the same every replay.
+// that slips past routing is still caught and counted, and page randomness
+// is seeded per calling script so script-generated ids are the same every replay.
 // ---------------------------------------------------------------------------
 
 export type TransportMode = "capture" | "replay";
 
-/** Fixed seed for Math.random in replay documents (mulberry32). */
+/** Fixed seed for page randomness in replay documents. */
 export const REPLAY_RANDOM_SEED = 0x5eed1234;
+/**
+ * Replay documents get deterministic randomness with one stream per calling
+ * script (the first script URL on the call stack). A single shared stream
+ * is not enough: scripts that load asynchronously interleave their calls in
+ * a different order on each load, so GrowSurf's grsf-unique-<random> class
+ * still changed. Covers Math.random, crypto.getRandomValues and
+ * crypto.randomUUID (a form's hidden visitor_id).
+ */
 export const SEEDED_RANDOM_SCRIPT = `(() => {
-  let a = ${REPLAY_RANDOM_SEED} >>> 0;
-  Math.random = function random() {
+  const SEED = ${REPLAY_RANDOM_SEED} >>> 0;
+  const streams = new Map();
+  const hash = (s) => { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; };
+  const caller = () => {
+    const lines = (new Error().stack || "").split("\\n").slice(3);
+    for (const line of lines) { const m = line.match(/((?:https?|file):\\/\\/[^\\s)]+?):\\d+:\\d+/); if (m) return m[1]; }
+    return location.href;
+  };
+  const next = (key) => {
+    let a = streams.has(key) ? streams.get(key) : (hash(key) ^ SEED) >>> 0;
     a = (a + 0x6d2b79f5) >>> 0;
+    streams.set(key, a);
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  Math.random = function random() { return next(caller()); };
+  const c = globalThis.crypto;
+  if (c) {
+    const fill = (arr, key) => {
+      const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(next(key) * 256);
+      return arr;
+    };
+    try { Object.defineProperty(c, "getRandomValues", { configurable: true, value: function getRandomValues(arr) { return fill(arr, caller()); } }); } catch (e) {}
+    try {
+      Object.defineProperty(c, "randomUUID", { configurable: true, value: function randomUUID() {
+        const b = fill(new Uint8Array(16), caller());
+        b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+        const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+        return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
+      } });
+    } catch (e) {}
+  }
 })();`;
 
 export type Decision =
@@ -376,8 +411,8 @@ export async function launchControlledBrowser(options: ControlledBrowserOptions)
       userAgent: options.contract.userAgent,
       serviceWorkers: "block",
     });
-    // Replays seed Math.random per document, so scripts that generate ids
-    // (GrowSurf's grsf-unique-<random> class) build the same DOM every time
+    // Replays seed page randomness per calling script, so scripts that
+    // generate ids build the same DOM every time
     if (options.mode === "replay") await ctx.addInitScript({ content: SEEDED_RANDOM_SCRIPT });
     await setUpContext(ctx, ctxId);
     return wrapContext(ctx);

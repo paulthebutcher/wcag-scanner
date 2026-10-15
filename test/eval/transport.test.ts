@@ -10,7 +10,7 @@ import { decideRobots, isAllowed, parseRobots } from "../../src/eval/robots.js";
 import { FuzzyIndex, mergeHars, normalizeCacheBusters, type Har, type HarEntry } from "../../src/eval/transport/har.js";
 import { createCaptureFetch, createReplayFetch, installFetch, fetchKey, type NodeFetchRecord } from "../../src/eval/transport/node-fetch.js";
 import { EgressLog, installNodeEgressDenial, startDenyProxy } from "../../src/eval/transport/egress.js";
-import { isDeclaredConnect, launchControlledBrowser, matchesDeclaredExclusion } from "../../src/eval/transport/browser.js";
+import { isDeclaredConnect, launchControlledBrowser, matchesDeclaredExclusion, SEEDED_RANDOM_SCRIPT } from "../../src/eval/transport/browser.js";
 import { loadEvalConfig } from "../../src/eval/config.js";
 import { evalPaths } from "../../src/eval/paths.js";
 import { setupRequestInterception } from "../../src/checks/forms/submission.js";
@@ -323,4 +323,38 @@ describe("deny proxy resilience", () => {
     expect(status).toBe(403);
     await proxy.close();
   });
+});
+
+describe("replay randomness is seeded per calling script", () => {
+  it("gives each script the same draws whatever order the scripts run in", async () => {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch();
+    try {
+      const run = async (order: string[]) => {
+        const ctx = await browser.newContext();
+        await ctx.addInitScript({ content: SEEDED_RANDOM_SCRIPT });
+        await ctx.route("https://seed.test/**", (route) => {
+          const url = route.request().url();
+          if (url.endsWith(".js")) {
+            const name = url.split("/").pop()!.replace(".js", "");
+            return route.fulfill({ contentType: "text/javascript", body: `window.r = window.r || {}; window.r.${name} = [Math.random(), Math.random(), crypto.randomUUID(), Array.from(crypto.getRandomValues(new Uint8Array(4)))];` });
+          }
+          return route.fulfill({ contentType: "text/html", body: `<html><body>${order.map((n) => `<script src="https://seed.test/${n}.js"></script>`).join("")}</body></html>` });
+        });
+        const page = await ctx.newPage();
+        await page.goto("https://seed.test/");
+        const r = await page.evaluate(() => (window as unknown as { r: Record<string, unknown[]> }).r);
+        await ctx.close();
+        return r;
+      };
+      const ab = await run(["growsurf", "other"]);
+      const ba = await run(["other", "growsurf"]);
+      expect(ba.growsurf).toEqual(ab.growsurf);
+      expect(ba.other).toEqual(ab.other);
+      expect(ab.growsurf).not.toEqual(ab.other);
+      expect(String(ab.growsurf[2])).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    } finally {
+      await browser.close();
+    }
+  }, 30_000);
 });
