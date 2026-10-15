@@ -22,9 +22,40 @@ Chat index:
 | 607b026a | WCAG compliance for Lakewood Court file conversion | 2026-05-05  | [chat:607b026a] |
 | 1d0bb3c3 | Prioritizing between Plinth, WCAG tool, and freelance work | 2026-05-06  | [chat:1d0bb3c3] |
 | dc864a9a | Job search exploration | 2026-08-05  | [chat:dc864a9a] |
-| 5dd53c0b | WCAG accessibility fixes (Popfly Project) | 2026-10-04 to 2026-10-11  | [chat:5dd53c0b] |
+| 5dd53c0b | WCAG accessibility fixes (Popfly Project) | 2026-10-04 to 2026-10-13  | [chat:5dd53c0b] |
 
 ---
+
+## 2026-10-13
+
+### Observations
+
+- Site-side changes verified live 2026-10-11 to 2026-10-13: skip link injected by script as the first body element (target the first element after `.header-wrapper`, `tabindex="-1"`); `.btn.modal` divs get `role="button"` and `tabindex="0"`; FAQ items get `role="button"`, `aria-expanded` and `inert` closed answers; the demo modal is a dialog with focus moved in, trapped, Escape and return; cookie link text "Opt out here."; `.p-gray-large` colour `#aeafb0` replaces opacity 0.7; blog rich-text links `#286140`; "Learn more" `c-btn` links removed after 6d4e82fe. (observed) [chat:5dd53c0b] [scan:6d4e82fe]
+- The crawl page set rotates under the 50-page cap: about 54 static pages plus CMS samples against 168 sitemap URLs; 11 pages differed between ee56b381 and 6d4e82fe. (observed) [chat:5dd53c0b] [scan:ee56b381] [scan:6d4e82fe]
+- Blank-site incident: a `/style>` typo (missing `<`) in head custom code left a `<style>` unclosed and every page rendered blank or broken in browsers. The break was live during scan 8e03985c, 21:06–21:13 MDT (all 50 snapshots contain the broken `/style>`; 47 screenshots blank), and fixed by about 21:33, when 0705da2d started clean (observed). The chat timeline placed it after 21:13; the stored snapshots win. Its start was probably one of the 20:14–21:04 blog-CSS publishes (inferred). [chat:5dd53c0b] [scan:8e03985c] [scan:0705da2d]
+- Contrast review: the 37 definitive contrast failures in 8e03985c were accurate measurements of the broken render, not scanner false positives; none fails on the healthy render (0705da2d) or live after settling. (observed) [chat:5dd53c0b] [scan:8e03985c] [scan:0705da2d]
+
+### Fixed
+
+- Pages that render broken or blank are detected on the crawl's own load and not checked; every check is recorded failed on them, no criterion can pass, and the scan and report raise an ALERT with the page list. Replaces review fix 1 (animation settle), whose cause was disproved. Frozen acceptance passed; live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-011. [repo:264d43f] [run:replay-20261015T021053Z-225cfc] [cc:e8a46994] `prompted`
+- Checks that read the serialized DOM no longer treat markup inside `<style>`, `<script>`, `<noscript>` or `<template>` as elements (one helper used by every such check). Replaces review fix 4 (names read before scripts), whose cause was disproved. Frozen acceptance passed; live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-012. [repo:95e1b44] [run:replay-20261015T030044Z-477ab3] [cc:e8a46994] `prompted`
+- The skip-link check accepts a target placed where main content starts (after every header and nav focus stop, at or before the first h1 or content section), e.g. `section#win`. Frozen acceptance passed (fixtures and stored ee56b381 snapshots); live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-013. [repo:6190de2] [run:replay-20261015T031355Z-1eb75b] [cc:e8a46994] `prompted`
+- Page-level summary findings (focus order on `<html>`) cluster per page and are listed under "Per-page fixes" instead of one Top fix; site-level findings stay grouped. Report layer only. Frozen acceptance passed (regenerated reports); live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-014. [repo:56f7550] [cc:e8a46994] `prompted`
+- `wcag scan --urls <file>` scans a pinned page list (before/after scans of the same pages). [repo:8913736] [cc:e8a46994] `prompted`
+- Eval harness, first real-site corpus: capture scroll pass and per-site page cap; provisional labels; `static --record` reaches the model API; declared exclusions v2 (beacons, embed internals, media); deny-proxy socket errors; replay randomness seeded per calling script (Math.random and crypto); `derive-corpus` and `supplement-corpus`; variation logged per run instead of appended to the defect file; pre-commit privacy check of staged exports. (observed) [repo:36f420a] [repo:8e07099] [repo:4054e19] [repo:bf43f80] [repo:e49f11f] [repo:6981638] [repo:51e5605] [repo:c3df176] [repo:12bd16b] [repo:9796c41] [cc:e8a46994] `shipped`
+
+### Results
+
+- Frozen corpus tuning-v4: 47 popfly.com pages from the tuning-v1 capture (51 pages, 21.3 min, 3 s pacing), 4 pages excluded for per-load variation (P2-021, P2-022, P2-023), one supplemented asset (one live request). Pre-fix reference and final run each 3 repeats with 0 HAR, image and cache misses, 0 egress and identical non-behavioral results. Final gate exit 0: one focus-order flake swapped, no other change; static set unchanged (30 pass, 7 fail as before). (observed) [run:capture-20261014T223021Z-db47cc] [run:replay-20261015T013504Z-5b7a06] [run:replay-20261015T032725Z-bd7aa1] [run:compare-20261015T040242Z-1816bd]
+- Frozen deltas are zero for P2-011, P2-012 and P2-013 by design (no tuning page renders broken, no rendered phantom on healthy pages, the `#win` pages are excluded or noindex); their acceptance is shown on stored scans: 8e03985c 49 of 50 pages flagged render-failed and 240 phantom finding occurrences removed; 0705da2d 0 and 0; both ee56b381 `#win` pages pass offline. P2-014: 0705da2d Top fixes lose the `html: focus order mismatch` row; 24 per-page fixes (2.8–6.1 h); headline unchanged. (observed) [scan:8e03985c] [scan:0705da2d] [scan:ee56b381]
+- Reconciliation 8e03985c vs 0705da2d: every difference is the site break and its repair, not engine nondeterminism (bypass 47 → 0, contrast 85 on 3 pages → 528 on 45 pages, image-alt, frame-title and link-in-text-block present only once pages rendered). (observed) [scan:8e03985c] [scan:0705da2d]
+- Model spend for this work: $4.76 of the $10.00 cap (HEAD records $1.36, baseline records $2.93, static cache $0.47). The baseline cache predates per-script seeding and is stale; D6 is deferred. (observed) [run:record-20261014T233843Z-b10cba]
+
+### Known issues
+
+- Rotating page set (P2-016), Instagram embeds not third-party (P2-017, with P2-023), review verdicts not carried forward (P2-018), needs-review `truncated_tab_sweep` failing 2.1.1 (P2-019) and skip links reported broken when focus moves late (P2-015) remain open; see KNOWN_ISSUES.md. [chat:5dd53c0b] [cc:e8a46994]
+- The watch item (skip link missing on 48 pages in 8e03985c) is resolved: not a publish mid-scan but the same break (P2-011). [scan:8e03985c]
+- Prompts can differ per load (P2-020 volatile page text, P2-021 hidden-input values, P2-022 error-message prompt from the page head), so AI verdicts can vary between scans; with /insights, /jobs/head-of-gtm and /start/new excluded, the tuning corpus has no form-submission or error-message coverage (3.3.1, 3.3.3, 3.2.2) until P2-021 and P2-022 are fixed. [cc:e8a46994]
 
 ## 2026-10-12
 
