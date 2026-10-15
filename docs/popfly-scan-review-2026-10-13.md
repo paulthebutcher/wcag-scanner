@@ -82,20 +82,40 @@ These are good real-world patterns for fixtures: delayed focus after skip link, 
 
 ## Resolution log (2026-10-14)
 
-Work on branch `eval/phase1`, gated on the frozen corpus tuning-v4 (47 popfly.com pages). Pre-fix reference `replay-20261015T013504Z-5b7a06`; final run `replay-20261015T032725Z-bd7aa1`. "Verifying scan" stays pending until the post-merge scan.
+Work on branch `eval/phase1`, gated on the frozen corpus tuning-v4 (47 popfly.com pages). Pre-fix reference `replay-20261015T013504Z-5b7a06`; final run `replay-20261015T032725Z-bd7aa1`. Verifying scans (2026-10-14): `cd0f789b` and `3193607f` (pinned 50 pages) and `667305ae` (75 pages, `--include-noindex`).
 
 | Item | Status | P2 id | Commit | Eval run | Verifying scan | Result |
 |---|---|---|---|---|---|---|
-| 1. Contrast before animations settle | Replaced (cause disproved) | P2-011 | 264d43f | replay-20261015T021053Z-225cfc | pending | The 37 failures were a broken render, not animations; pages that render broken are now not checked, no criterion passes, and the scan raises an ALERT. Offline on 8e03985c: 49 of 50 pages flagged; 0705da2d 0 of 50. |
-| 2. Skip-link target rule | Fixed | P2-013 | 6190de2 | replay-20261015T031355Z-1eb75b | pending | A target after the header and navigation, at or before the first h1 or content section, passes (`#win`). Not exercised by tuning-v4 (`/start/new` excluded, `/overland` noindex); fixtures and the ee56b381 snapshots pass. P2-015 unchanged. |
-| 3. Page-level findings as one fix | Fixed | P2-014 | 56f7550 | unit tests + regenerated reports (report layer only) | pending | No Top fixes row from `<html>` summaries; 0705da2d lists 24 per-page fixes (2.8–6.1 h). |
-| 4. Names read before scripts | Replaced (cause disproved) | P2-012 | 95e1b44 | replay-20261015T030044Z-477ab3 | pending | webflow.js labels the logo before the snapshot; the 49 findings came from regex extraction of markup inside the unclosed style. Raw-text contents are no longer read as elements (8e03985c: 240 phantom occurrences; 0705da2d: 0). |
+| 1. Contrast before animations settle | Replaced (cause disproved) | P2-011 | 264d43f | replay-20261015T021053Z-225cfc | cd0f789b, 3193607f, 667305ae | The 37 failures were a broken render, not animations; pages that render broken are now not checked, no criterion passes, and the scan raises an ALERT. Offline on 8e03985c: 49 of 50 pages flagged; 0705da2d 0 of 50. Live: no render alert. The fix-1 contrast acceptance is blocked by P2-030 (the table's elements appear as axe incomplete results stored as definitive). |
+| 2. Skip-link target rule | Fixed | P2-013 | 6190de2 | replay-20261015T031355Z-1eb75b | cd0f789b, 3193607f, 667305ae (partial) | A target after the header and navigation, at or before the first h1 or content section, passes (`#win`). Not exercised by tuning-v4 (`/start/new` excluded, `/overland` noindex); fixtures and the ee56b381 snapshots pass. P2-015 unchanged. Live: no `broken_skip_navigation` on `/start/new` (now `#main-content`); `/overland` not reached by any scan, so the `#win` rule is not exercised live. |
+| 3. Page-level findings as one fix | Fixed | P2-014 | 56f7550 | unit tests + regenerated reports (report layer only) | report for cd0f789b | No Top fixes row from `<html>` summaries; 0705da2d lists 24 per-page fixes (2.8–6.1 h). |
+| 4. Names read before scripts | Replaced (cause disproved) | P2-012 | 95e1b44 | replay-20261015T030044Z-477ab3 | cd0f789b, 3193607f, 667305ae | webflow.js labels the logo before the snapshot; the 49 findings came from regex extraction of markup inside the unclosed style. Raw-text contents are no longer read as elements (8e03985c: 240 phantom occurrences; 0705da2d: 0). |
 | 5. Rotating page set | Open | P2-016 | — | — | — | Recorded in KNOWN_ISSUES.md. |
 | 6. Instagram embeds not third-party | Open | P2-017 (with P2-023) | — | — | — | Recorded; the Instagram blog post is excluded from tuning-v4 until fixed. |
 | 7. Verdicts not carried forward | Open | P2-018 | — | — | — | Recorded in KNOWN_ISSUES.md. |
 | 8. `truncated_tab_sweep` fails 2.1.1 | Open | P2-019 | — | — | — | Recorded in KNOWN_ISSUES.md. |
-| 9. Empty-render guard | Fixed | P2-011 | 264d43f | replay-20261015T021053Z-225cfc | pending | Delivered as fix 1's replacement. |
-| Watch: skip link missing on 48 pages | Resolved (not a publish) | P2-011 | — | — | pending | The skip-link script found no target in the swallowed markup; same root cause as item 9. |
+| 9. Empty-render guard | Fixed | P2-011 | 264d43f | replay-20261015T021053Z-225cfc | cd0f789b, 3193607f, 667305ae | Delivered as fix 1's replacement. |
+| Watch: skip link missing on 48 pages | Resolved (not a publish) | P2-011 | — | — | cd0f789b, 3193607f | The skip-link script found no target in the swallowed markup; same root cause as item 9. Live: skip link present on all 50 pinned pages; on the 75-page scan only `/fit-assessment` lacks one (see observations). |
+
+### Post-merge scans (2026-10-14)
+
+| Acceptance bullet | Result |
+|---|---|
+| 0 contrast failures on the fix-1 table elements | Blocked by P2-030: no element is measured failing, but `.c-green-h`, `.c-p-gray` and `.c-subtitle` on `/` and `/for-agencies` appear as axe incomplete results ("element contains an image node") stored as definitive/major. All 528 color-contrast findings in cd0f789b come from axe incomplete. |
+| No `broken_skip_navigation` on `/start/new` or `/overland` | Pass for `/start/new`; `/overland` was not reached by any scan. The remaining rows are the P2-015 pattern on `/post/*`. |
+| No Top fixes row built from `<html>` summaries | Pass (report for cd0f789b: 24 per-page fixes; the `html: insufficient navigation methods` row is the site-level allowlist). |
+| No `image_link_no_alt` on `a.header-logo-link` | Pass in all three scans. |
+| 1.4.3 difference between the pinned scans | 0 (definitive 1/1, undetermined 527/527). |
+| Skip link on every page (watch item) | Pass on the 50 pinned pages (`bypass` 0, `missing_skip_navigation` 0); see `/fit-assessment` below. |
+| No render alert | Pass (render_failed 0 in all three). |
+
+Observations (registered, not fixed):
+
+- `/local` `.footer-cr-center > div` ("© Popfly 2026 All Rights Reserved") has a 1:1 contrast ratio on `/local` only. It is not a visually-hidden pattern (no hiding class; identical markup on other pages); the text is invisible in the screenshot, i.e. the same colour as its background on that page (observed). The same screenshot shows a large empty area between the hero and the footer (observed; cause not checked).
+- `/fit-assessment` has no skip link (`missing_skip_navigation` in 667305ae; observed). Site-side: the skip-link script did not add one on that page (cause not checked).
+- Real contrast failures (observed, 667305ae): `/archive/pricing` list items `#9fb6a9` on `#286140`, 3.38:1 (3); `/fit-assessment` `.phase-label` `#6b7078` on `#0c0e10`, 3.88:1 (3) and white on `#2ea15a`, 3.3:1 (1); `/post/athletes-who-win-in-sport-and-storytelling-fishers` `#8b8c91` on white, 3.35:1 (3).
+- Embed findings (observed, 667305ae): 22 `link-in-text-block` inside Instagram embeds on two posts and 41 `color-contrast` inside Instagram/TikTok embeds on two posts. Third-party (P2-017, P2-023).
+- Pinned-scan differences: 29 rows only in cd0f789b and 24 only in 3193607f; 19 are the same element stored against a different canonical page (P2-005, observed); the rest are behavioral flakes (focus order, truncated tab sweep), model verdict variation on Tier 3 checks and 2 `image-alt` rows (inferred; not investigated).
 
 ### Corrections
 

@@ -217,6 +217,8 @@ Tests after all five fixes: 1,305 (1,288 before).
 
 Review: `docs/popfly-scan-review-2026-10-13.md`. Frozen corpus tuning-v4: 47 popfly.com pages from the tuning-v1 capture (`capture-20261014T223021Z-db47cc`), with 4 pages excluded for per-load variation and one supplemented asset. Pre-fix reference: `replay-20261015T013504Z-5b7a06` (3 repeats, valid, non-behavioral identical; focus-order flake 2/46). Static pre-fix reference: `static-20261015T013516Z-072ff9` (30 pass, 7 fail). Tests before these fixes: 1,427.
 
+Post-merge scans 2026-10-14 (observed): `cd0f789b` and `3193607f` (the 50 pinned pages of 8e03985c, back to back) and `667305ae` (75 pages, `--include-noindex`). No render alert, `bypass` and `missing_skip_navigation` 0 on the pinned pages, no logo-link `image_link_no_alt`, no Top fixes row from page-level summaries, 0 differing 1.4.3 findings between the pinned scans (definitive 1/1, undetermined 527/527). The review's fix-1 contrast acceptance is blocked by P2-030 (axe incomplete results stored as definitive), not by these fixes.
+
 Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-style break on all 50 pages, so review fixes 1 (animation settle) and 4 (names read before scripts) targeted the wrong causes; see the Corrections in the review's resolution log. With Paul's approval they were replaced by P2-011 (render health) and P2-012 (raw-text elements). Fixes 2 and 3 are P2-013 and P2-014.
 
 ### Fix 1: pages that render broken or blank (P2-011)
@@ -228,9 +230,9 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 
 | Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `225cfc` | Live |
 |---|---|---|---|
-| Pages render_failed | — | 0 | pending |
-| Findings (predictions, repeat 1) | 867 | 867 | pending |
-| Coverage ran / skipped | 926 / 270 | 926 / 270 | pending |
+| Pages render_failed | — | 0 | 0 in cd0f789b, 3193607f, 667305ae |
+| Findings (predictions, repeat 1) | 867 | 867 | 997 / 992 (pinned 50 pages), 1,306 (75 pages): stored rows, different pages and engine path from the eval predictions |
+| Coverage ran / skipped | 926 / 270 | 926 / 270 | 1,068 / 231, 1 partial (cd0f789b and 3193607f); 667305ae 1,593 / 356, 1 partial |
 | Gate `compare-20261015T024600Z-492054` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
 
 - Tests: `test/unit/render-health.test.ts` (17) with fixtures `render-broken-blank`, `render-broken-partial`, `render-near-normal`, `render-healthy` (hand-built on the 8e03985c structure; provenance in `test/fixtures/metadata.json`). Suite 1,427 → 1,444.
@@ -245,7 +247,7 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 
 | Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `477ab3` | Live |
 |---|---|---|---|
-| Findings (predictions) | 867 | 867 | pending |
+| Findings (predictions) | 867 | 867 | 997 / 992 / 1,306; 0 logo-link `image_link_no_alt` in all three |
 | Model requests changed | — | 3 (re-record `646e00`, $0.01); static 1 ($0.013) | |
 | Gate `compare-20261015T031239Z-44c3ba` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
 
@@ -261,8 +263,8 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 
 | Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `1eb75b` | Live |
 |---|---|---|---|
-| `broken_skip_navigation` | 1 (/post/5-fall-reel-trend-you-need-to-try-right-now, focus not moved, P2-015) | 1 (same, unchanged) | pending |
-| Findings (predictions) | 867 | 867 | pending |
+| `broken_skip_navigation` | 1 (/post/5-fall-reel-trend-you-need-to-try-right-now, focus not moved, P2-015) | 1 (same, unchanged) | 1 row per pinned scan, 1 row on 5 `/post/*` pages in 667305ae, all the P2-015 pattern; none on `/start/new` (now `#main-content`); `/overland` not reached, so the `#win` rule is not exercised live |
+| Findings (predictions) | 867 | 867 | 997 / 992 / 1,306 |
 | Gate `compare-20261015T032556Z-dec27e` | | exit 0: 1 `focus_order_mismatch` swapped (the known focus-order flake); 0 criterion or case changes; static unchanged | |
 
 - Tests: `test/unit/skip-nav.test.ts` +7 with fixture `skip-link-targets.html` (shape of `/overland`): `#win` passes by position, `#main-content` by name; a target inside the header, in the footer, missing, without `tabindex` (focus does not move) or wrapping the header fails. Suite 1,456 → 1,463.
@@ -277,8 +279,8 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 
 | Stored scan | Top fixes before | Top fixes after | Per-page fixes after | Headline estimate | Live |
 |---|---|---|---|---|---|
-| 0705da2d | 9 estimated rows, 4.7–9.4 h, incl. `html: focus order mismatch` | 9 rows, 5.1–10.2 h, no html row | 24 pages (23 focus order, 1 truncated tab sweep), 2.8–6.1 h | 27–46 h (unchanged) | pending |
-| 8e03985c | 9 rows, 3.95–7.9 h (no html row: 2 pages) | unchanged | 2 pages, 0.2–0.4 h | 16–29 h (unchanged) | pending |
+| 0705da2d | 9 estimated rows, 4.7–9.4 h, incl. `html: focus order mismatch` | 9 rows, 5.1–10.2 h, no html row | 24 pages (23 focus order, 1 truncated tab sweep), 2.8–6.1 h | 27–46 h (unchanged) | cd0f789b (same pages, healthy): no html summary row; 24 per-page fixes |
+| 8e03985c | 9 rows, 3.95–7.9 h (no html row: 2 pages) | unchanged | 2 pages, 0.2–0.4 h | 16–29 h (unchanged) | — |
 
 - The headline estimate does not move because the effort model already counted focus order per page (`KIND_BY_FAILURE_TYPE`); only Top fixes understated it.
 - Tests: `test/unit/page-level-clusters.test.ts` (4). Suite 1,463 → 1,467.

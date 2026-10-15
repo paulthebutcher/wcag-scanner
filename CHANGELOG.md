@@ -26,6 +26,24 @@ Chat index:
 
 ---
 
+## 2026-10-14
+
+### Observations
+
+- `/local`: the footer copyright line has a 1:1 contrast ratio (same colour as its background on that page only; not a visually-hidden pattern), and the page shows a large empty area between the hero and the footer (cause not checked). (observed) [scan:cd0f789b]
+- `/fit-assessment` has no skip link. (observed) [scan:667305ae]
+- Real contrast failures: `/archive/pricing` list items 3.38:1; `/fit-assessment` `.phase-label` 3.88:1 and a white-on-green label 3.3:1; `/post/athletes-who-win-in-sport-and-storytelling-fishers` text 3.35:1. (observed) [scan:667305ae]
+- Instagram and TikTok embeds produce 22 `link-in-text-block` and 41 `color-contrast` findings on blog posts (third-party; P2-017, P2-023). (observed) [scan:667305ae]
+- The two pinned scans differ in 29 and 24 finding rows; 19 are the same element stored against a different canonical page (P2-005); the rest are behavioral flakes and model verdict variation (inferred). (observed) [scan:cd0f789b] [scan:3193607f]
+
+### Results
+
+- Post-merge acceptance: no render alert; `bypass` and `missing_skip_navigation` 0 on the pinned pages; no logo-link `image_link_no_alt`; no Top fixes row from page-level summaries; 0 differing 1.4.3 findings between the pinned scans (definitive 1/1, undetermined 527/527). The fix-1 contrast bullet is blocked by P2-030; `/overland` was not reached, so P2-013's `#win` rule is not verified live. (observed) [scan:cd0f789b] [scan:3193607f] [scan:667305ae]
+
+### Known issues
+
+- axe incomplete results are stored as confirmed failures (definitive, severity from axe impact, triage fix_now) and fail their criterion: all 528 color-contrast findings in cd0f789b, plus `video-caption` and `form-field-multiple-labels`. Same as seed SL-008 (Lakewood, March); Lakewood scans from 2026-03-25 to 2026-04-03 store 2 such findings each as Major (inferred report impact). P2-030, not fixed. [scan:cd0f789b] [chat:a3d5e773]
+
 ## 2026-10-13
 
 ### Observations
@@ -37,11 +55,11 @@ Chat index:
 
 ### Fixed
 
-- Pages that render broken or blank are detected on the crawl's own load and not checked; every check is recorded failed on them, no criterion can pass, and the scan and report raise an ALERT with the page list. Replaces review fix 1 (animation settle), whose cause was disproved. Frozen acceptance passed; live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-011. [repo:264d43f] [run:replay-20261015T021053Z-225cfc] [cc:e8a46994] `prompted`
-- Checks that read the serialized DOM no longer treat markup inside `<style>`, `<script>`, `<noscript>` or `<template>` as elements (one helper used by every such check). Replaces review fix 4 (names read before scripts), whose cause was disproved. Frozen acceptance passed; live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-012. [repo:95e1b44] [run:replay-20261015T030044Z-477ab3] [cc:e8a46994] `prompted`
-- The skip-link check accepts a target placed where main content starts (after every header and nav focus stop, at or before the first h1 or content section), e.g. `section#win`. Frozen acceptance passed (fixtures and stored ee56b381 snapshots); live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-013. [repo:6190de2] [run:replay-20261015T031355Z-1eb75b] [cc:e8a46994] `prompted`
-- Page-level summary findings (focus order on `<html>`) cluster per page and are listed under "Per-page fixes" instead of one Top fix; site-level findings stay grouped. Report layer only. Frozen acceptance passed (regenerated reports); live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-014. [repo:56f7550] [cc:e8a46994] `prompted`
-- `wcag scan --urls <file>` scans a pinned page list (before/after scans of the same pages). [repo:8913736] [cc:e8a46994] `prompted`
+- Pages that render broken or blank are detected on the crawl's own load and not checked; every check is recorded failed on them, no criterion can pass, and the scan and report raise an ALERT with the page list. Replaces review fix 1 (animation settle), whose cause was disproved. Frozen acceptance passed; post-merge scans show no render alert. The review's fix-1 contrast acceptance is blocked by P2-030, not by this fix. docs/popfly-scan-review-2026-10-13.md, P2-011. [repo:264d43f] [run:replay-20261015T021053Z-225cfc] [scan:cd0f789b] [scan:3193607f] [scan:667305ae] [cc:e8a46994] `shipped`
+- Checks that read the serialized DOM no longer treat markup inside `<style>`, `<script>`, `<noscript>` or `<template>` as elements (one helper used by every such check). Replaces review fix 4 (names read before scripts), whose cause was disproved. Frozen acceptance passed; post-merge scans have no logo-link `image_link_no_alt`. docs/popfly-scan-review-2026-10-13.md, P2-012. [repo:95e1b44] [run:replay-20261015T030044Z-477ab3] [scan:cd0f789b] [scan:3193607f] [scan:667305ae] [cc:e8a46994] `shipped`
+- The skip-link check accepts a target placed where main content starts (after every header and nav focus stop, at or before the first h1 or content section), e.g. `section#win`. Frozen acceptance passed (fixtures and stored ee56b381 snapshots). Post-merge: no `broken_skip_navigation` on `/start/new`, but it now targets `#main-content` and `/overland` was not reached, so the new rule is not yet exercised live. docs/popfly-scan-review-2026-10-13.md, P2-013. [repo:6190de2] [run:replay-20261015T031355Z-1eb75b] [scan:cd0f789b] [scan:3193607f] [scan:667305ae] [cc:e8a46994] `prompted`
+- Page-level summary findings (focus order on `<html>`) cluster per page and are listed under "Per-page fixes" instead of one Top fix; site-level findings stay grouped. Report layer only. Frozen acceptance passed (regenerated reports); the report for cd0f789b has no Top fixes row from page-level summaries and 24 per-page fixes. docs/popfly-scan-review-2026-10-13.md, P2-014. [repo:56f7550] [scan:cd0f789b] [cc:e8a46994] `shipped`
+- `wcag scan --urls <file>` scans a pinned page list (before/after scans of the same pages); used for the post-merge pinned scans. [repo:8913736] [scan:cd0f789b] [scan:3193607f] [cc:e8a46994] `shipped`
 - Eval harness, first real-site corpus: capture scroll pass and per-site page cap; provisional labels; `static --record` reaches the model API; declared exclusions v2 (beacons, embed internals, media); deny-proxy socket errors; replay randomness seeded per calling script (Math.random and crypto); `derive-corpus` and `supplement-corpus`; variation logged per run instead of appended to the defect file; pre-commit privacy check of staged exports. (observed) [repo:36f420a] [repo:8e07099] [repo:4054e19] [repo:bf43f80] [repo:e49f11f] [repo:6981638] [repo:51e5605] [repo:c3df176] [repo:12bd16b] [repo:9796c41] [cc:e8a46994] `shipped`
 
 ### Results
