@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyzeRepeatability } from "../../src/eval/runs.js";
+import { analyzeRepeatability, variationLog } from "../../src/eval/runs.js";
 import { loadEvalConfig } from "../../src/eval/config.js";
 import { evalPaths } from "../../src/eval/paths.js";
 import { guardSplit, HoldoutSealed } from "../../src/eval/holdout.js";
@@ -53,6 +53,15 @@ describe("repeatability (D3)", () => {
     const r2 = analyzeRepeatability(config, [[replay(base, cov())], [replay(nb, cov())]], []);
     expect(r2.non_behavioral_identical).toBe(false);
     expect(r2.differing_pairs).toEqual([{ site: "t01", page: "p001", check: "axe-core", behavioral: false }]);
+  });
+
+  it("variation goes to a per-run log line per varying check, never to the committed defect file", () => {
+    const base = [key("p001", "axe-core", "img.a"), key("p002", "keyboard", "a.b")];
+    const varied = [key("p001", "axe-core", "img.a", "minor"), key("p002", "keyboard", "a.c")];
+    const r = analyzeRepeatability(config, [[replay(base, cov())], [replay(varied, cov())]], []);
+    const lines = variationLog(r, "replay-x", "tuning-v3/tuning").map((l) => JSON.parse(l));
+    expect(lines.map((l) => [l.check, l.behavioral, l.pages]).sort()).toEqual([["axe-core", false, ["t01/p001"]], ["keyboard", true, ["t01/p002"]]]);
+    expect(lines.every((l) => l.run_id === "replay-x" && l.corpus === "tuning-v3/tuning" && !("id" in l))).toBe(true);
   });
 
   it("a coverage change counts as variation and a cache miss invalidates that repeat", () => {

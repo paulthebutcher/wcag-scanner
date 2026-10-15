@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, hashJson, sha256, writeJson } from "./util.js";
 import { listSites, loadSiteCapture, pageSetHash, type Split } from "./corpus.js";
@@ -7,7 +8,6 @@ import type { EvalPaths } from "./paths.js";
 import type { EngineHandle } from "./engine/types.js";
 import type { RunHandle } from "./manifest.js";
 import type { FindingKey, CoverageRow, CriterionStatusRow } from "./normalize.js";
-import { appendDefect } from "./defects.js";
 
 // ---------------------------------------------------------------------------
 // D2/D3 run orchestration: replay (or record) every site of a corpus split
@@ -168,17 +168,12 @@ export async function executeReplayRun(options: ReplayRunOptions): Promise<Repla
     if (repeatability.invalid_repeats.length > 0) run.invalidate(`${repeatability.invalid_repeats.length} repeat(s) invalid (cache, HAR or image misses)`);
     if (!repeatability.non_behavioral_identical) run.invalidate("non-behavioral checks did not replay identically");
     if (options.logDefects && options.split !== "pilot") {
-      for (const c of repeatability.checks.filter((x) => x.varying_pairs > 0)) {
-        appendDefect(paths, {
-          found_in: m.run_id,
-          component: `check:${c.check}`,
-          summary: c.behavioral
-            ? `Behavioral check ${c.check} varied on ${c.varying_pairs} of ${c.tested_pairs} (page, check) pairs across ${repeatability.repeats} identical replays (flake rate ${(c.flake_rate ?? 0).toFixed(3)}).`
-            : `Non-behavioral check ${c.check} varied on ${c.varying_pairs} of ${c.tested_pairs} pairs across ${repeatability.repeats} identical replays; harness causes ruled out first.`,
-          affects: [],
-          evidence: `run ${m.run_id}, corpus ${options.corpusVersion}/${options.split}`,
-        });
-      }
+      // Auto-detected variation goes to the run's own gitignored log, never
+      // to eval/phase2-defects.jsonl: an official run must not dirty the
+      // tree, and generated ids collided with manual ones. Entries are
+      // promoted to defects by hand (wcag eval defects promotion is manual).
+      const lines = variationLog(repeatability, m.run_id, `${options.corpusVersion}/${options.split}`);
+      if (lines.length > 0) writeFileSync(join(run.dir, "variation.jsonl"), lines.join("\n") + "\n");
     }
   }
   m.extra = {
@@ -196,6 +191,23 @@ export async function executeReplayRun(options: ReplayRunOptions): Promise<Repla
 // plus criterion statuses and coverage. Only ids, timestamps and paths are
 // normalised away.
 // ---------------------------------------------------------------------------
+
+/** One JSON line per check that varied across repeats (written to <run>/variation.jsonl). */
+export function variationLog(repeatability: RepeatabilityReport, runId: string, corpus: string): string[] {
+  return repeatability.checks.filter((x) => x.varying_pairs > 0).map((c) => JSON.stringify({
+    run_id: runId,
+    corpus,
+    check: c.check,
+    behavioral: c.behavioral,
+    varying_pairs: c.varying_pairs,
+    tested_pairs: c.tested_pairs,
+    flake_rate: c.flake_rate,
+    pages: repeatability.differing_pairs.filter((d) => d.check === c.check).map((d) => `${d.site}/${d.page}`),
+    summary: c.behavioral
+      ? `Behavioral check ${c.check} varied on ${c.varying_pairs} of ${c.tested_pairs} (page, check) pairs across ${repeatability.repeats} identical replays (flake rate ${(c.flake_rate ?? 0).toFixed(3)}).`
+      : `Non-behavioral check ${c.check} varied on ${c.varying_pairs} of ${c.tested_pairs} pairs across ${repeatability.repeats} identical replays.`,
+  }));
+}
 
 export function analyzeRepeatability(config: EvalConfig, replays: SiteReplay[][], engineChecks: string[]): RepeatabilityReport {
   const invalid: RepeatabilityReport["invalid_repeats"] = [];
