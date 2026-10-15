@@ -252,6 +252,22 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 - Tests: `test/unit/markup.test.ts` (12): the helper, and each converted check on swallowed vs rendered markup, including a nameless logo link that is still evaluated. Suite 1,444 → 1,456.
 - Assumptions: HTML comments are not stripped (not requested; no phantom found in them); nested `<template>` is cut at the first closing tag.
 
+### Fix 3: skip-link targets not named like "main" (P2-013)
+
+- Observed: scan ee56b381 reports `broken_skip_navigation` on `/start/new` and `/overland` with `focus_moved: true`, `target_is_main_content: false`; the target is `section#win` (`tabindex="-1"`), the first section after `.header-wrapper`, and focus moves there live (review).
+- Cause (observed): `isMainContent` accepted only `main`, `role="main"`, ids main/content/main-content/maincontent/primary or class main-content. The review's cause is confirmed.
+- Change: `src/checks/behavioral/skip-nav.ts`, the target evaluation in `activateAndVerifySkipLink`: a target also counts when it is not inside header, nav or footer, comes after every header and nav focus stop in DOM order, and is at or before the first `h1` or first content section. Name matches still pass on their own; the focus checks and the late-focus wait (7494e90) are unchanged. The rule used is recorded as `targetRule` in the raw result.
+- Corpus: the `#win` pages are not exercised on tuning-v4 (`/start/new` is excluded for P2-021; `/overland` is noindex and not scanned), so acceptance rests on the fixtures and the stored ee56b381 snapshots. Offline (scripts stripped, network blocked) both ee56b381 pages go from `broken_skip_navigation` (`focus_moved=true main=false`) to pass (observed).
+
+| Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `1eb75b` | Live |
+|---|---|---|---|
+| `broken_skip_navigation` | 1 (/post/5-fall-reel-trend-you-need-to-try-right-now, focus not moved, P2-015) | 1 (same, unchanged) | pending |
+| Findings (predictions) | 867 | 867 | pending |
+| Gate `compare-20261015T032556Z-dec27e` | | exit 0: 1 `focus_order_mismatch` swapped (the known focus-order flake); 0 criterion or case changes; static unchanged | |
+
+- Tests: `test/unit/skip-nav.test.ts` +7 with fixture `skip-link-targets.html` (shape of `/overland`): `#win` passes by position, `#main-content` by name; a target inside the header, in the footer, missing, without `tabindex` (focus does not move) or wrapping the header fails. Suite 1,456 → 1,463.
+- Assumptions: header and nav stops are focusables inside `header`, `nav`, `[role=banner]` or `[role=navigation]`; content sections are `main`, `section` and `article` outside header, nav and footer.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
