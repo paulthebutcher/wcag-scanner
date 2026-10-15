@@ -250,7 +250,7 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 | Gate `compare-20261015T031239Z-44c3ba` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
 
 - Tests: `test/unit/markup.test.ts` (12): the helper, and each converted check on swallowed vs rendered markup, including a nameless logo link that is still evaluated. Suite 1,444 → 1,456.
-- Assumptions: HTML comments are not stripped (not requested; no phantom found in them); nested `<template>` is cut at the first closing tag.
+- Assumptions: HTML comments are not stripped (not requested; not checked for phantoms); nested `<template>` is cut at the first closing tag.
 
 ### Fix 3: skip-link targets not named like "main" (P2-013)
 
@@ -268,8 +268,28 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 - Tests: `test/unit/skip-nav.test.ts` +7 with fixture `skip-link-targets.html` (shape of `/overland`): `#win` passes by position, `#main-content` by name; a target inside the header, in the footer, missing, without `tabindex` (focus does not move) or wrapping the header fails. Suite 1,456 → 1,463.
 - Assumptions: header and nav stops are focusables inside `header`, `nav`, `[role=banner]` or `[role=navigation]`; content sections are `main`, `section` and `article` outside header, nav and footer.
 
+### Fix 4: page-level findings clustered as one Top fix (P2-014)
+
+- Observed: Top fixes row 5 "html: focus order mismatch" (cluster `79dc811ae6ad`, 0.1–0.2 h) spans 17 pages in ee56b381 and 20 in 6d4e82fe and 0705da2d: every page's own focus-order summary is reported on `<html>` and shares one signature.
+- Cause (observed): the cluster signature has no page component for page-level summary findings. The review's cause is confirmed.
+- Change: `src/report/clustering.ts`: `isPageLevelSummary` (selector `html` or a `<…-summary>` node, unless the failure type is on the explicit `SITE_LEVEL_FAILURE_TYPES` allowlist: `insufficient_navigation_methods`, `missing_skip_navigation`, `bypass`, `html-has-lang`, `html-lang-valid`, `html-xml-lang-mismatch`); such findings cluster per page (signature plus the stored page URL) and carry `page_level`. `src/report/top-fixes-report.ts`: `topFixClusters` leaves them out of Top fixes; new "Per-page fixes" section (`renderPageLevelMarkdown`, `renderPageLevelHtml`) with each page's estimate, in findings.md and the HTML report. `finding_type_hash` (P2-003) is unchanged.
+- Detection is unchanged: this is the report layer only, so it was gated by unit tests and by regenerating Top fixes from stored data instead of a replay (approved).
+
+| Stored scan | Top fixes before | Top fixes after | Per-page fixes after | Headline estimate | Live |
+|---|---|---|---|---|---|
+| 0705da2d | 9 estimated rows, 4.7–9.4 h, incl. `html: focus order mismatch` | 9 rows, 5.1–10.2 h, no html row | 24 pages (23 focus order, 1 truncated tab sweep), 2.8–6.1 h | 27–46 h (unchanged) | pending |
+| 8e03985c | 9 rows, 3.95–7.9 h (no html row: 2 pages) | unchanged | 2 pages, 0.2–0.4 h | 16–29 h (unchanged) | pending |
+
+- The headline estimate does not move because the effort model already counted focus order per page (`KIND_BY_FAILURE_TYPE`); only Top fixes understated it.
+- Tests: `test/unit/page-level-clusters.test.ts` (4). Suite 1,463 → 1,467.
+- Assumptions: a deduplicated summary row keeps its "also found on" pages in its own per-page row (identical summaries on one template are one change).
+
 ## Out of scope
 
+- Popfly review items 5–8 and P2-015 (registered as P2-016..P2-019 and P2-015; see KNOWN_ISSUES.md), and the residual per-load variation sources P2-020..P2-023 beyond the eval-harness side.
+- The animation-settle pass proposed for review fix 1: not reproduced (0 definitive contrast failures live before and after settling), so not built.
+- Stripping HTML comments in `withoutRawTextContent` (not requested; comments were not checked for phantoms).
+- Re-recording the baseline engine on tuning-v4 (stale cache; D6 deferred).
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
 - Recognising GrowSurf by `data-grsf-*` attributes or `growsurf-prod` image URLs, which would move the three GrowSurf images (Top fixes 5 to 7) to Third-party.
 - The report's "Findings by Type" cards merge different axe rules that share a `finding_type_hash` (for example `aria-prohibited-attr` inside the "aria allowed attr" card), and a card shows one remediation for the whole group. Top fixes keeps them apart. Fixing the card grouping changes report structure beyond these phases.
