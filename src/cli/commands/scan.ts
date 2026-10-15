@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { scan } from "../../core/scanner.js";
 import { ScanProgressReporter, QuietProgressReporter } from "../../core/progress.js";
@@ -60,6 +61,7 @@ export function createScanCommand(): Command {
       "--include-noindex",
       "Also scan pages marked noindex (meta robots / X-Robots-Tag). Default: exclude them from the scan.",
     )
+    .option("--urls <file>", "Scan exactly these pages (one URL per line, # comments allowed) instead of crawling; for before/after scans of the same page set")
     .option("--quiet", "Suppress progress output, only print results")
     .action(async (url: string, opts: Record<string, string>) => {
       const maxPages = parseInt(opts["maxPages"], 10);
@@ -91,6 +93,16 @@ export function createScanCommand(): Command {
         return;
       }
 
+      let urls: string[] | undefined;
+      if (opts["urls"]) {
+        urls = readFileSync(opts["urls"], "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+        if (urls.length === 0) {
+          console.error("Error: --urls file lists no URLs");
+          process.exitCode = 1;
+          return;
+        }
+      }
+
       const reporter = quiet
         ? new QuietProgressReporter()
         : new ScanProgressReporter();
@@ -99,8 +111,10 @@ export function createScanCommand(): Command {
         const result = await scan({
           url,
           dataDir,
-          maxPages,
+          // A pinned list is its own page budget
+          maxPages: urls ? urls.length : maxPages,
           cmsSamples,
+          urls,
           pageConcurrency,
           tiers,
           reporter,
