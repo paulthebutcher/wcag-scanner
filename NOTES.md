@@ -236,6 +236,22 @@ Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-st
 - Tests: `test/unit/render-health.test.ts` (17) with fixtures `render-broken-blank`, `render-broken-partial`, `render-near-normal`, `render-healthy` (hand-built on the 8e03985c structure; provenance in `test/fixtures/metadata.json`). Suite 1,427 → 1,444.
 - Assumptions: a failed page produces no findings (its checks are skipped) rather than quarantined findings; "counted separately" is the alert's page count (assumed reading of the request). No tuning page renders broken, so the frozen delta is zero by design; the effect is shown on the 8e03985c snapshots.
 
+### Fix 2: markup inside style, script, noscript and template (P2-012)
+
+- Observed: 8e03985c reports `image_link_no_alt` on the header logo link on 49 pages (2 rows), although the header sat inside the unclosed `<style>` and never rendered. Checks that read `snapshot.full_dom` with regular expressions treat raw-text element contents as elements.
+- Cause (observed): regex extraction does not respect raw-text elements. The review inferred that names were read before webflow.js ran; disproved: webflow.js sets `aria-label="home"` 5–12 ms after DOMContentLoaded (live, 2026-10-14) and the label is in all 50 healthy snapshots of 0705da2d.
+- Real-world effect before the fix, by element location in the stored snapshots (observed): 8e03985c has 240 phantom finding occurrences (elements only inside raw-text elements), among them `image_link_no_alt` 49, `semantic` 49, `animated_content_no_pause` 47, `style_not_structure` 40, `generic_link_text` 23, `missing_autocomplete` 11; the healthy scan 0705da2d has 0 (its 161 `missing_autocomplete` occurrences are rendered inputs). The one `image_link_no_alt` left in 0705da2d is the footer Instagram link on `/case-studies`, the only page whose copy has no `aria-label` (inferred true positive). On 0705da2d the helper removes 100 alt-text candidates (LinkedIn and Facebook tracking pixels inside `<noscript>`) and changes the surrounding context of 1,608 images (CSS and script text no longer included).
+- Change: `src/core/markup.ts` (new, `withoutRawTextContent`) used by alt-text, link-text, headings, landmark-labels, widget-aria, table-structure, duplicate-links, consistent-nav, form discovery, multiple-ways, the GIF/video/carousel/pause-control/inline-animation parts of pause-stop-hide and three-flashes, and the scanner's media check. CSS animation rules, `prefers-reduced-motion` and motion listeners are still read from style and script text by design. Platform detection and the error-message prompt (P2-001) are unchanged.
+
+| Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `477ab3` | Live |
+|---|---|---|---|
+| Findings (predictions) | 867 | 867 | pending |
+| Model requests changed | — | 3 (re-record `646e00`, $0.01); static 1 ($0.013) | |
+| Gate `compare-20261015T031239Z-44c3ba` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
+
+- Tests: `test/unit/markup.test.ts` (12): the helper, and each converted check on swallowed vs rendered markup, including a nameless logo link that is still evaluated. Suite 1,444 → 1,456.
+- Assumptions: HTML comments are not stripped (not requested; no phantom found in them); nested `<template>` is cut at the first closing tag.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
