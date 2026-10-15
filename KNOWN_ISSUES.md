@@ -53,3 +53,9 @@ Some prompts include page content that changes on every load, so the same elemen
 When axe cannot measure a colour contrast (text over an image, a gradient or an overlapping element) it reports the element as "incomplete". The scanner stores these as confirmed Major failures, counts them in the summary and fails 1.4.3 on them. On popfly.com that is 527 of 528 contrast findings. The report already lists them under "Needs manual check" and leaves them out of Top fixes, but the stored severity, the totals and the 1.4.3 status still treat them as failures. Other incomplete axe results (`video-caption`, `form-field-multiple-labels`) are affected the same way.
 
 **Possible improvement:** mark axe incomplete results when they are converted, so they are scored `needs_review` and do not fail their criterion.
+
+## The crawler follows links users cannot see (P2-031)
+
+The crawl collects every link in a page's HTML, including links inside hidden elements (a menu item hidden with a `hide` class, `hidden` or `aria-hidden` containers). A scan can therefore check pages that visitors cannot reach from the pages scanned. On popfly.com a hidden mobile-menu link leads to `/archive/pricing` from 73 of 75 pages; that page is noindex, so it only appears in scans run with `--include-noindex`.
+
+**Possible improvement:** discover links from the rendered page, skip links whose element is not rendered, and log the skipped targets.
