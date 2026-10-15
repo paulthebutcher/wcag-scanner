@@ -243,6 +243,7 @@ describe("CRITERION_NAMES", () => {
 
 describe("ALL_CRITERIA", () => {
   it("contains all WCAG 2.1 AA criteria", () => {
+    // 50 WCAG 2.1 A/AA criteria plus 1.3.6 (AAA): criterion-map defect P2-032
     expect(ALL_CRITERIA.length).toBe(51);
   });
 
