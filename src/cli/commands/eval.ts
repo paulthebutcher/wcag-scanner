@@ -610,7 +610,20 @@ export function createEvalCommand(): Command {
       return readJson<Array<{ outcomes: StaticCaseOutcome[] }>>(join(paths.runsDir, id, "static-results.json"))[0].outcomes;
     };
     const settled = existsSync(paths.lakewoodStatic) ? new Set(readJson<StaticFile>(paths.lakewoodStatic).cases.filter((c) => c.adjudication === "settled").map((c) => c.case_id)) : undefined;
+    // Anchoring check: judged cases must point at an element of the head run's corpus
+    const pageDom = (site: string, page: string): string | null => {
+      if (!headM.corpus) return null;
+      try {
+        const ref = { version: headM.corpus.version, split: headM.corpus.split as CorpusSplit, siteId: site };
+        if (!loadSiteCapture(paths, ref).pages.some((p) => p.page_id === page && p.status === "captured")) return null;
+        const path = join(paths.corpusDir, ref.version, ref.split, site, page, "dom.html");
+        return existsSync(path) ? readFileSync(path, "utf8") : null;
+      } catch {
+        return null;
+      }
+    };
     const result = compareRuns({
+      pageDom,
       config, base: loadRunInputs(paths, baseM), head: loadRunInputs(paths, headM), labels, labelSnapshotSha: snapshot,
       expectedLabelSnapshotSha: opts.labelsSha, staticBase: staticOutcomes(opts.staticBase), staticHead: staticOutcomes(opts.staticHead), staticSettled: settled, corpusProblems,
     });
@@ -620,7 +633,7 @@ export function createEvalCommand(): Command {
       labels: inputHash(paths.labels, { through_sequence: labels.labelsThrough }), cases: inputHash(paths.cases, { count: labels.cases.length }),
       overrides: inputHash(paths.labelOverrides), static_expectations: inputHash(paths.lakewoodStatic), config: inputHash(paths.config),
     };
-    run.manifest.extra = { exit: result.exit, label_snapshot_sha256: snapshot, regressions: result.regressions.length, existing_blockers: result.existing_blockers.length, invalid: result.invalid };
+    run.manifest.extra = { exit: result.exit, label_snapshot_sha256: snapshot, regressions: result.regressions.length, existing_blockers: result.existing_blockers.length, invalid: result.invalid, unanchored_cases: result.report.unanchored?.length ?? null };
     for (const reason of result.invalid) run.invalidate(`comparison: ${reason}`);
     writeJson(join(run.dir, "compare.json"), result);
     const m = run.finish("completed");
@@ -635,6 +648,7 @@ export function createEvalCommand(): Command {
     for (const r of result.invalid) process.stdout.write(`INVALID ${r}\n`);
     for (const r of result.regressions) process.stdout.write(`REGRESSION ${r.kind}: ${r.detail}\n`);
     for (const r of result.existing_blockers) process.stdout.write(`existing blocker ${r.kind}: ${r.detail}\n`);
+    for (const u of result.report.unanchored ?? []) process.stdout.write(`UNANCHORED ${u.case_id} (${u.site}/${u.page}): ${u.reason}\n`);
     process.stdout.write(`shared pages ${result.report.shared_pages}; added ${JSON.stringify(result.report.findings_added)}; removed ${JSON.stringify(result.report.findings_removed)}\n`);
     process.stdout.write(`criterion transitions ${result.report.criterion_transitions.length}; case changes ${result.report.case_changes.length}; coverage changes ${result.report.coverage_changes.length} (${result.report.coverage_comparison}); unlabeled ${result.report.unlabeled.base} → ${result.report.unlabeled.head}; tooling errors ${result.report.tooling_errors.base} → ${result.report.tooling_errors.head}\n`);
     process.exitCode = result.exit;

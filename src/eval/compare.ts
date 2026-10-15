@@ -35,6 +35,39 @@ export interface CompareInputs {
   staticSettled?: Set<string>;
   /** Corpus verification problems (artifact corruption) */
   corpusProblems?: string[];
+  /** Corpus page DOM (dom.html) for the anchoring check; null when the page is not in the corpus */
+  pageDom?: (site: string, page: string) => string | null;
+}
+
+export interface UnanchoredCase {
+  case_id: string;
+  site: string;
+  page: string;
+  reason: "page not in corpus" | "element HTML not found on the page" | "no element HTML to verify";
+}
+
+/**
+ * Cases with a settled or provisional judgment whose target cannot be found
+ * in the corpus: a dead case would otherwise count as TN or FN without
+ * testing anything. Page-level cases (no selector, no HTML) are anchored by
+ * their page; a selector-only case cannot be verified from the DOM string.
+ */
+export function unanchoredCases(cases: LabelInputs["cases"], judgments: LabelInputs["judgments"], pageDom: (site: string, page: string) => string | null): UnanchoredCase[] {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const out: UnanchoredCase[] = [];
+  for (const c of cases) {
+    if (c.page === "scan") continue;
+    if (!c.assertions.some((a) => judgments.has(`${c.case_id}|${a.assertion_id}`))) continue;
+    const dom = pageDom(c.site, c.page);
+    const base = { case_id: c.case_id, site: c.site, page: c.page };
+    if (dom === null) { out.push({ ...base, reason: "page not in corpus" }); continue; }
+    if (c.target.html) {
+      if (!norm(dom).includes(norm(c.target.html))) out.push({ ...base, reason: "element HTML not found on the page" });
+    } else if (c.target.selector) {
+      out.push({ ...base, reason: "no element HTML to verify" });
+    }
+  }
+  return out.sort((a, b) => a.case_id.localeCompare(b.case_id));
 }
 
 export interface Regression {
@@ -61,6 +94,8 @@ export interface CompareResult {
     ambiguities: { base: number; head: number };
     flake_rates: { base: Array<{ check: string; flake_rate: number | null }>; head: Array<{ check: string; flake_rate: number | null }> };
     shared_pages: number;
+    /** Judged cases whose target is not in the corpus (see unanchoredCases); null when no page DOM was given */
+    unanchored: UnanchoredCase[] | null;
   };
 }
 
@@ -249,6 +284,7 @@ export function compareRuns(i: CompareInputs): CompareResult {
       ambiguities: { base: base.outcomes.filter((o) => o.class === "ambiguous").length, head: head.outcomes.filter((o) => o.class === "ambiguous").length },
       flake_rates: { base: flake(i.base.manifest), head: flake(i.head.manifest) },
       shared_pages: sharedPages.size,
+      unanchored: i.pageDom ? unanchoredCases(i.labels.cases.filter((c) => i.head.sites.some((s) => s.site === c.site)), i.labels.judgments, i.pageDom) : null,
     },
   };
 }

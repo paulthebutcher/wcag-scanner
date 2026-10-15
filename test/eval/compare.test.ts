@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { compareRuns, labelSnapshotSha, type CompareInputs } from "../../src/eval/compare.js";
+import { compareRuns, labelSnapshotSha, unanchoredCases, type CompareInputs } from "../../src/eval/compare.js";
 import { loadEvalConfig } from "../../src/eval/config.js";
 import { evalPaths } from "../../src/eval/paths.js";
 import { foldLabels, officialJudgments, LABEL_SCHEMA, type CaseRecord, type LabelEvent } from "../../src/eval/labels.js";
@@ -229,5 +229,31 @@ describe("provisional labels", () => {
     const m = computeMetrics(config, run("head", [...basePreds, p("p002", "a.logo", "1.1.1")]), labels);
     const outcome = m.outcomes.confirmed.find((o) => o.case_id === "C-000004");
     expect(outcome?.class).toBe("unreviewed");
+  });
+});
+
+describe("anchoring check: judged cases must point at an element in the corpus", () => {
+  const dom = (site: string, page: string) => (page === "p001" ? `<html><body><x   class="img.a"><x class="img.b"></body></html>` : page === "p002" ? "<html><body></body></html>" : null);
+  const pageLevel: CaseRecord = { ...c(5, "p001", "x", "1.1.1"), target: { selector: null, html: null, html_sha256: null, context_sha256: null, state: null } };
+  const selectorOnly: CaseRecord = { ...c(6, "p001", "div.y", "1.1.1"), target: { selector: "div.y", html: null, html_sha256: null, context_sha256: null, state: null } };
+  const offCorpus = c(7, "p047", "a.logo", "1.1.1");
+  const unjudged = c(8, "p002", "nav.z", "1.3.1");
+  const ev = [...events, l(4, pageLevel, "no_violation"), l(5, selectorOnly, "no_violation"), l(6, offCorpus, "no_violation", { provisional: true })];
+  const judgments = foldLabels(ev);
+
+  it("lists judged cases whose page or element is missing, and only those", () => {
+    const out = unanchoredCases([tp, tn, fn, pageLevel, selectorOnly, offCorpus, unjudged], judgments, dom);
+    expect(out.map((u) => [u.case_id, u.reason])).toEqual([
+      ["C-000003", "element HTML not found on the page"],
+      ["C-000006", "no element HTML to verify"],
+      ["C-000007", "page not in corpus"],
+    ]);
+  });
+
+  it("is reported by compare when the corpus DOM is given, without changing the exit", () => {
+    const r = compareRuns({ ...inputs(run("base", basePreds), run("head", basePreds)), labels: { cases: [tp, tn, fn, offCorpus], judgments, overrides: [], unresolvedSeeds: new Set(), labelsThrough: 6 }, labelSnapshotSha: labelSnapshotSha(ev, 6), pageDom: dom });
+    expect(r.exit).toBe(0);
+    expect(r.report.unanchored?.map((u) => u.case_id)).toEqual(["C-000003", "C-000007"]);
+    expect(compareRuns(inputs(run("base", basePreds), run("head", basePreds))).report.unanchored).toBeNull();
   });
 });
