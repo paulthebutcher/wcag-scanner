@@ -85,7 +85,7 @@ export async function executeReplayRun(options: ReplayRunOptions): Promise<Repla
   for (const c of captures) {
     for (const p of c.pages.filter((x) => keep(x.page_id))) {
       if (p.status !== "captured") {
-        exclusions.push({ page: `${c.site_id}/${p.page_id}`, reason: `capture failed: ${p.error ?? "unknown"}` });
+        exclusions.push({ page: `${c.site_id}/${p.page_id}`, reason: p.status === "excluded" ? `excluded: ${p.error ?? "no reason"}` : `capture failed: ${p.error ?? "unknown"}` });
         continue;
       }
       const files = Object.entries(c.file_hashes).filter(([rel]) => rel.startsWith(`${p.page_id}/`));

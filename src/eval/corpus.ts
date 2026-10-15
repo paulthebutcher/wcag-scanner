@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { canonicalJson, hashJson, readJson, sha256, sha256File, writeJson } from "./util.js";
 import type { BrowserContract } from "./transport/browser.js";
 import type { NodeFetchRecord } from "./transport/node-fetch.js";
@@ -71,7 +71,8 @@ export interface CorpusPage {
   url: string;
   final_url: string;
   title: string;
-  status: "captured" | "failed";
+  /** excluded: captured, then left out of a derived corpus version (reason in `error`) */
+  status: "captured" | "failed" | "excluded";
   error: string | null;
 }
 
@@ -99,6 +100,8 @@ export interface SiteCapture {
   containment: { contained_requests: number; by_detail: Record<string, number> };
   /** Every file under the site directory except this one → sha256 */
   file_hashes: Record<string, string>;
+  /** Set on a corpus version derived from another (deriveCorpus) */
+  derived_from?: { version: string; capture_run_id: string; derived_at: string; excluded: Array<{ page_id: string; reason: string }> };
 }
 
 export interface SiteRef {
@@ -216,6 +219,55 @@ export function registerSite(paths: EvalPaths, input: { siteId: string; rootUrl:
   data.sites.sort((a, b) => a.site_id.localeCompare(b.site_id));
   saveSitesPrivate(paths, data);
   return site;
+}
+
+// ---------------------------------------------------------------------------
+// Derived versions
+// ---------------------------------------------------------------------------
+
+function linkTree(src: string, dst: string): void {
+  for (const name of readdirSync(src)) {
+    const from = join(src, name);
+    const to = join(dst, name);
+    if (statSync(from).isDirectory()) {
+      mkdirSync(to, { recursive: true });
+      linkTree(from, to);
+    } else {
+      linkSync(from, to);
+    }
+  }
+}
+
+/**
+ * A new corpus version that leaves pages out of an existing one, with a
+ * reason for each. Artifacts are hard links to the source version (both are
+ * immutable); only site.private.json is new. The source is never modified.
+ */
+export function deriveCorpus(paths: EvalPaths, input: { from: string; to: string; split: Split; siteId: string; exclude: Array<{ page_id: string; reason: string }> }): SiteCapture {
+  const src = siteDir(paths, { version: input.from, split: input.split, siteId: input.siteId });
+  const dst = siteDir(paths, { version: input.to, split: input.split, siteId: input.siteId });
+  if (existsSync(dst)) throw new Error(`Corpus ${input.to}/${input.split}/${input.siteId} already exists; versions are immutable`);
+  const capture = loadSiteCapture(paths, { version: input.from, split: input.split, siteId: input.siteId });
+  for (const e of input.exclude) {
+    const page = capture.pages.find((p) => p.page_id === e.page_id);
+    if (!page) throw new Error(`No page ${e.page_id} in ${input.from}/${input.siteId}`);
+    if (page.status !== "captured") throw new Error(`${e.page_id} is not a captured page (${page.status})`);
+    if (!e.reason.trim()) throw new Error(`An exclusion needs a reason (${e.page_id})`);
+  }
+  mkdirSync(dst, { recursive: true });
+  linkTree(src, dst);
+  // Replace the link, never write through it into the source version
+  unlinkSync(join(dst, "site.private.json"));
+  const reasons = new Map(input.exclude.map((e) => [e.page_id, e.reason]));
+  const derived: SiteCapture = {
+    ...capture,
+    corpus_version: input.to,
+    pages: capture.pages.map((p) => (reasons.has(p.page_id) ? { ...p, status: "excluded", error: reasons.get(p.page_id)! } : p)),
+    derived_from: { version: input.from, capture_run_id: capture.capture_run_id, derived_at: new Date().toISOString(), excluded: input.exclude.map((e) => ({ ...e })) },
+  };
+  mkdirSync(dirname(join(dst, "site.private.json")), { recursive: true });
+  writeJson(join(dst, "site.private.json"), derived);
+  return derived;
 }
 
 // ---------------------------------------------------------------------------

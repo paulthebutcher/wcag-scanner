@@ -7,7 +7,7 @@ import { startRun, OfficialRunRefused, PURPOSES, type Purpose, type RunHandle } 
 import { repoRoot } from "../../eval/util.js";
 import { runPilot } from "../../eval/pilot.js";
 import { captureSite } from "../../eval/capture.js";
-import { verifyCorpus, type Split } from "../../eval/corpus.js";
+import { deriveCorpus, verifyCorpus, type Split } from "../../eval/corpus.js";
 import { knownPrivateHosts, writeExport } from "../../eval/privacy.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveEngine } from "../../eval/engine/resolve.js";
@@ -153,6 +153,37 @@ export function createEvalCommand(): Command {
         process.stdout.write(result.skipped ? `skipped: ${result.skipped}\n` : `captured ${run.manifest.totals.pages} page(s)\n`);
       } catch (err) {
         run.invalidate(`capture error: ${err instanceof Error ? err.message : String(err)}`);
+        run.finish("failed");
+        console.error(err instanceof Error ? err.message : err);
+        process.exitCode = 2;
+      }
+    });
+
+  cmd.command("derive-corpus")
+    .description("New corpus version that leaves pages out of an existing one, each with a reason (artifacts are hard links)")
+    .requiredOption("--from <version>", "Source corpus version")
+    .requiredOption("--to <version>", "New corpus version")
+    .requiredOption("--split <split>", "tuning | dev | holdout")
+    .requiredOption("--site <id>", "Site id")
+    .requiredOption("--exclude <page=reason...>", "Pages to leave out, e.g. p047=\"Instagram embed render varies (P2-017)\"")
+    .action((opts: { from: string; to: string; split: string; site: string; exclude: string[] }) => {
+      const { paths } = context();
+      const exclude = opts.exclude.map((e) => {
+        const i = e.indexOf("=");
+        if (i < 1) { console.error(`--exclude needs page=reason, got "${e}"`); process.exit(2); }
+        return { page_id: e.slice(0, i), reason: e.slice(i + 1) };
+      });
+      const run = begin("derive-corpus", ["derive-corpus", "--from", opts.from, "--to", opts.to, "--split", opts.split, "--site", opts.site], "diagnostic");
+      try {
+        const derived = deriveCorpus(paths, { from: opts.from, to: opts.to, split: opts.split as Split, siteId: opts.site, exclude });
+        const problems = verifySite(paths, { version: opts.to, split: opts.split as CorpusSplit, siteId: opts.site }).problems;
+        for (const p of problems) run.invalidate(`verify: ${p.site}${p.page ? `/${p.page}` : ""} ${p.problem}`);
+        const captured = derived.pages.filter((p) => p.status === "captured").length;
+        run.manifest.extra = { from: opts.from, to: opts.to, site: opts.site, excluded: exclude, captured, problems: problems.length };
+        run.finish("completed");
+        process.stdout.write(`${opts.to}/${opts.split}/${opts.site}: ${captured} page(s) kept, ${exclude.length} excluded; ${problems.length === 0 ? "verified" : `${problems.length} problem(s)`}\n`);
+      } catch (err) {
+        run.invalidate(`derive error: ${err instanceof Error ? err.message : String(err)}`);
         run.finish("failed");
         console.error(err instanceof Error ? err.message : err);
         process.exitCode = 2;
