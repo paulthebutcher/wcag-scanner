@@ -26,8 +26,50 @@ function pathOf(url: string): string {
   }
 }
 
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
 function pagesText(cluster: Cluster): string {
   return `${cluster.page_count}${cluster.pages_complete ? "" : "*"}`;
+}
+
+/** Short name for axe's "background color could not be determined" reason. */
+export function contrastReasonLabel(detail: string): string {
+  const d = detail.toLowerCase();
+  if (d.includes("image node")) return "image node";
+  if (d.includes("gradient")) return "gradient";
+  if (d.includes("partially overlaps")) return "partial overlap";
+  if (d.includes("overlapped")) return "overlap";
+  if (d.includes("background image")) return "background image";
+  return detail.replace(/^background colou?r could not be determined:\s*/i, "");
+}
+
+export interface ManualContrastCheck {
+  page_url: string;
+  reason: string;
+  occurrences: number;
+  elements: Array<{ selector: string; html: string }>;
+}
+
+/**
+ * Needs-manual-check contrast findings as one "Needs manual contrast check"
+ * entry per page and reason, with the elements behind it (P2-030): ordered
+ * by page, then most elements first.
+ */
+export function groupManualContrastChecks(excluded: ExcludedFinding[]): ManualContrastCheck[] {
+  const groups = new Map<string, ManualContrastCheck>();
+  for (const ex of excluded) {
+    if (ex.reason !== "needs_manual_check") continue;
+    const reason = contrastReasonLabel(ex.detail);
+    const key = `${ex.pageUrl}\u0000${reason}`;
+    const g = groups.get(key) ?? { page_url: ex.pageUrl, reason, occurrences: 0, elements: [] };
+    g.occurrences += pageOccurrences(ex.finding);
+    g.elements.push({ selector: ex.finding.evidence.element_selector, html: ex.finding.evidence.element_html });
+    groups.set(key, g);
+  }
+  return Array.from(groups.values()).sort((a, b) =>
+    pathOf(a.page_url).localeCompare(pathOf(b.page_url)) || b.elements.length - a.elements.length || a.reason.localeCompare(b.reason));
 }
 
 /** Excluded findings grouped by detail, most occurrences first. */
@@ -133,8 +175,21 @@ export function renderPageLevelMarkdown(clusters: Cluster[], hoursFor?: HoursFor
 export function renderExcludedMarkdown(excluded: ExcludedFinding[]): string {
   const groups = groupExcluded(excluded);
   const lines: string[] = [];
+  const checks = groupManualContrastChecks(excluded);
+  if (checks.length > 0) {
+    const elements = checks.reduce((n, c) => n + c.elements.length, 0);
+    const pages = new Set(checks.map((c) => c.page_url)).size;
+    lines.push(
+      `## Needs manual contrast check (${plural(elements, "element")}, ${plural(checks.length, "check")} on ${plural(pages, "page")})`, "",
+      "axe could not measure the colour behind this text (an image, gradient or overlapping element), so contrast has to be checked by eye. One entry per page and reason. These are not counted as failures.", "",
+      "| Page | Reason | Elements | Element list |", "|---|---|---|---|",
+    );
+    for (const c of checks) {
+      lines.push(`| ${pathOf(c.page_url)} | ${c.reason} | ${c.elements.length} | ${c.elements.map((e) => `\`${mdCell(e.selector)}\``).join("; ")} |`);
+    }
+    lines.push("");
+  }
   const sections: Array<[ExcludedFinding["reason"], string, string]> = [
-    ["needs_manual_check", "Needs manual check", "axe could not measure the colour behind this text, so contrast has to be checked by eye. These are not counted as failures."],
     ["third_party", "Third-party", "Elements inside third-party embeds. The site owner cannot change them directly; raise them with the provider. These are not counted as failures."],
   ];
   for (const [reason, title, intro] of sections) {
@@ -217,11 +272,22 @@ export function renderPageLevelHtml(clusters: Cluster[], hoursFor?: HoursFor): s
 
 export function renderExcludedHtml(excluded: ExcludedFinding[]): string {
   const groups = groupExcluded(excluded);
+  const checks = groupManualContrastChecks(excluded);
+  const manual = checks.length === 0 ? "" : `
+    <section class="excluded" id="needs-manual-check">
+      <h2>Needs Manual Contrast Check (${checks.reduce((n, c) => n + c.elements.length, 0)} elements)</h2>
+      <p class="section-intro">axe could not measure the colour behind this text (an image, gradient or overlapping element), so contrast has to be checked by eye. One entry per page and reason. Not counted as failures.</p>
+      <table class="topfix-table">
+        <thead><tr><th>Page</th><th>Reason</th><th>Elements</th></tr></thead>
+        <tbody>${checks.map((c) => `
+          <tr><td><code>${htmlEsc(pathOf(c.page_url))}</code></td><td>${htmlEsc(c.reason)}</td><td><details><summary>${c.elements.length} element${c.elements.length !== 1 ? "s" : ""}</summary><ul>${c.elements.map((e) => `<li><code>${htmlEsc(e.selector)}</code></li>`).join("")}</ul></details></td></tr>`).join("")}
+        </tbody>
+      </table>
+    </section>`;
   const sections: Array<[ExcludedFinding["reason"], string, string, string]> = [
-    ["needs_manual_check", "needs-manual-check", "Needs Manual Check", "axe could not measure the colour behind this text (an image, gradient or overlapping element), so contrast has to be checked by eye. Not counted as failures."],
     ["third_party", "third-party", "Third-Party Content", "Elements inside third-party embeds. The site owner cannot change them directly; raise them with the provider. Not counted as failures."],
   ];
-  return sections.map(([reason, id, title, intro]) => {
+  return manual + sections.map(([reason, id, title, intro]) => {
     const rows = groups.filter((g) => g.reason === reason);
     if (rows.length === 0) return "";
     const total = rows.reduce((n, r) => n + r.occurrences, 0);

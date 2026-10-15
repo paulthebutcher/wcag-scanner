@@ -93,6 +93,7 @@ export function nodeToCheckResult(
   node: NodeResult,
   rule: AxeResult,
   detectedBy: DetectedBy = "axe_core",
+  options: { incomplete?: boolean } = {},
 ): CheckResult {
   const criterion = getWcagCriterion(rule.tags);
 
@@ -124,6 +125,9 @@ export function nodeToCheckResult(
       tags: rule.tags,
     },
     aria_attributes: Object.keys(ariaAttrs).length > 0 ? ariaAttrs : undefined,
+    // axe could not decide (P2-030): the marker routes the finding to
+    // needs_review in confidence.ts and keeps it from failing its criterion
+    ...(options.incomplete ? { measured_values: { axe_incomplete: true } } : {}),
   };
 }
 
@@ -250,11 +254,12 @@ export async function runAxeChecks(
     }
   }
 
-  // Map incomplete: same structure as violations, but flagged for review
+  // Map incomplete: same structure as violations, marked axe_incomplete so
+  // they become needs_review findings (axe could not decide)
   const incomplete: CheckResult[] = [];
   for (const rule of axeResults.incomplete) {
     for (const node of rule.nodes) {
-      incomplete.push(nodeToCheckResult(node, rule, "axe_core"));
+      incomplete.push(nodeToCheckResult(node, rule, "axe_core", { incomplete: true }));
     }
   }
 

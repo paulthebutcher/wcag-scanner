@@ -140,6 +140,7 @@ function statusBadge(status: string): string {
   const colors: Record<string, string> = {
     passed: "#16a34a",
     failed: "#dc2626",
+    needs_review: "#d97706",
     not_applicable: "#6b7280",
     not_tested: "#9ca3af",
   };
@@ -147,6 +148,7 @@ function statusBadge(status: string): string {
   const labels: Record<string, string> = {
     passed: "no issues detected",
     failed: "failed",
+    needs_review: "needs review",
     not_applicable: "not applicable",
     not_tested: "not tested",
   };
@@ -448,6 +450,7 @@ function renderCover(data: ReportData, executiveSummaryHtml?: string): string {
       <div class="cover-stat"><span class="cover-stat-num" style="color:#ea580c">${summary.by_severity.major}</span><span class="cover-stat-label">Major</span></div>
       <div class="cover-stat"><span class="cover-stat-num" style="color:#ca8a04">${summary.by_severity.minor}</span><span class="cover-stat-label">Minor</span></div>
       <div class="cover-stat"><span class="cover-stat-num" style="color:#6b7280">${summary.by_severity.advisory}</span><span class="cover-stat-label">Advisory</span></div>
+      <div class="cover-stat"><span class="cover-stat-num" style="color:#d97706">${summary.needs_review_findings ?? 0}</span><span class="cover-stat-label">Needs Review</span></div>
     </div>` : "";
 
   return `
@@ -490,22 +493,25 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
   const criterionResults = data.criterionResults;
 
   const totalInstances = summary?.total_findings ?? groups.reduce((s, g) => s + g.instanceCount, 0);
-  const failedCriteria = summary?.wcag_criteria_failed ?? [...new Set(groups.map(g => g.criterion))];
-  const passedCriteria = summary?.wcag_criteria_passed ?? [];
-  const totalFailed = failedCriteria.length;
-  const totalPassed = passedCriteria.length;
-  // "Tested" = criteria with a definitive pass/fail result (not N/A or not-tested)
-  const totalTested = totalPassed + totalFailed;
-  // Count N/A and not-tested from ALL_CRITERIA, not just DB rows.
-  // Criteria missing from the DB entirely are also "not tested".
+  // Every criterion lands in exactly one status, counted from the criterion
+  // results over ALL_CRITERIA (the scorecard's source), so the cards add up.
+  // Criteria missing from the DB entirely are "not tested".
   const crResultMap = new Map(criterionResults.map(r => [r.wcag_criterion, r]));
+  let totalPassed = 0;
+  let totalFailed = 0;
+  let totalNeedsReview = 0;
   let totalNA = 0;
   let totalNotTested = 0;
   for (const c of ALL_CRITERIA) {
     const status = crResultMap.get(c)?.status;
-    if (status === "not_applicable") totalNA++;
-    else if (status === "not_tested" || status === undefined) totalNotTested++;
+    if (status === "passed") totalPassed++;
+    else if (status === "failed") totalFailed++;
+    else if (status === "needs_review") totalNeedsReview++;
+    else if (status === "not_applicable") totalNA++;
+    else totalNotTested++;
   }
+  // "Tested" = criteria with a result from the checks (passed, failed or needs review)
+  const totalTested = totalPassed + totalFailed + totalNeedsReview;
 
   // Determine posture
   const critical = summary?.by_severity.critical ?? groups.filter(g => g.severity === "critical").reduce((s, g) => s + g.instanceCount, 0);
@@ -520,6 +526,9 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
     posture = `This site has <strong>minor accessibility issues</strong>. ${totalFailed} criteria did not pass, though no critical or major barriers were identified.`;
   } else {
     posture = `<strong>No issues were detected</strong> across the tested criteria in the scanned sample. This does not constitute a certification of full WCAG 2.1 AA compliance.`;
+  }
+  if (totalNeedsReview > 0) {
+    posture += ` ${totalNeedsReview} further criteri${totalNeedsReview !== 1 ? "a need" : "on needs"} a manual check: the automated checks could not decide (for example, text over an image), so they are neither passed nor failed.`;
   }
 
   // Top 3 finding types by severity then count
@@ -541,7 +550,7 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
        </ol>`
     : "";
 
-  // Summary stats grid — "Criteria Tested" = passed + failed only
+  // Summary stats grid — "Criteria Tested" = passed + failed + needs review
   const notTestedCard = totalNotTested > 0
     ? `<div class="summary-card">
         <div class="summary-number" style="color:#9ca3af">${totalNotTested}</div>
@@ -563,6 +572,10 @@ function renderFallbackExecutiveSummary(data: ReportData): string {
         <div class="summary-number" style="color:#dc2626">${totalFailed}</div>
         <div class="summary-label">Failed</div>
       </div>
+      ${totalNeedsReview > 0 ? `<div class="summary-card" style="border-color:#d97706">
+        <div class="summary-number" style="color:#d97706">${totalNeedsReview}</div>
+        <div class="summary-label">Needs Review</div>
+      </div>` : ""}
       <div class="summary-card">
         <div class="summary-number" style="color:#6b7280">${totalNA}</div>
         <div class="summary-label">Not Applicable</div>
@@ -597,11 +610,12 @@ function renderComplianceScorecard(criterionResults: CriterionResult[]): string 
   const resultMap = new Map(criterionResults.map(r => [r.wcag_criterion, r]));
 
   // Count statuses for the header
-  let passed = 0, failed = 0, na = 0, nt = 0;
+  let passed = 0, failed = 0, review = 0, na = 0, nt = 0;
   for (const c of ALL_CRITERIA) {
     const status = resultMap.get(c)?.status ?? "not_tested";
     if (status === "passed") passed++;
     else if (status === "failed") failed++;
+    else if (status === "needs_review") review++;
     else if (status === "not_applicable") na++;
     else nt++;
   }
@@ -627,6 +641,7 @@ function renderComplianceScorecard(criterionResults: CriterionResult[]): string 
       <p class="scorecard-summary">
         <span class="scorecard-stat" style="color:#16a34a"><strong>${passed}</strong> no issues detected</span> &bull;
         <span class="scorecard-stat" style="color:#dc2626"><strong>${failed}</strong> failed</span> &bull;
+        <span class="scorecard-stat" style="color:#d97706"><strong>${review}</strong> need review</span> &bull;
         <span class="scorecard-stat" style="color:#6b7280"><strong>${na}</strong> not applicable</span> &bull;
         <span class="scorecard-stat" style="color:#9ca3af"><strong>${nt}</strong> not tested</span>
       </p>

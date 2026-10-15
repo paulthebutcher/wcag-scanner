@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type {
+  CriterionStatus,
   ScanSession,
   ScanSummary,
   Finding,
@@ -36,7 +37,8 @@ import { withoutRawTextContent } from "./markup.js";
 import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
-import { scoreConfidence } from "./confidence.js";
+import { isNeedsReview, scoreConfidence } from "./confidence.js";
+export { isNeedsReview } from "./confidence.js";
 import { WebflowAdapter, getRemediationTemplate, buildSpecificRemediation } from "../adapters/webflow.js";
 import type { ProgressReporter } from "./progress.js";
 import { ScanProgressReporter } from "./progress.js";
@@ -202,32 +204,46 @@ export function computeSummary(
   criterionResults: CriterionResult[],
   pageUrlOf?: PageUrlOf,
 ): ScanSummary {
+  // Confirmed findings and needs-review findings are counted separately
+  // (P2-030): needs-review findings never count as failures
   const bySeverity: SeverityCounts = { critical: 0, major: 0, minor: 0, advisory: 0 };
+  const needsReviewBySeverity: SeverityCounts = { critical: 0, major: 0, minor: 0, advisory: 0 };
   const byConfidence: ConfidenceCounts = { definitive: 0, high: 0, moderate: 0, needs_review: 0 };
   const byCategory: CategoryCounts = {
     contrast: 0, semantics: 0, keyboard: 0, forms: 0, images: 0, aria: 0, structure: 0,
   };
 
+  let needsReview = 0;
   for (const f of findings) {
-    bySeverity[f.severity]++;
+    if (isNeedsReview(f)) {
+      needsReviewBySeverity[f.severity]++;
+      needsReview++;
+    } else {
+      bySeverity[f.severity]++;
+    }
     byConfidence[f.confidence.tier]++;
     byCategory[f.category]++;
   }
 
   const criteriaFailed = [...new Set(
-    findings.map((f) => f.wcag_criterion),
+    findings.filter((f) => !isNeedsReview(f)).map((f) => f.wcag_criterion),
   )].sort();
+  const criteriaNeedsReview = [...new Set(
+    findings.filter(isNeedsReview).map((f) => f.wcag_criterion),
+  )].filter((c) => !criteriaFailed.includes(c)).sort();
 
   const criteriaPassed = criterionResults
     .filter((cr) => cr.status === "passed")
     .map((cr) => cr.wcag_criterion)
-    .filter((c) => !criteriaFailed.includes(c));
+    .filter((c) => !criteriaFailed.includes(c) && !criteriaNeedsReview.includes(c));
   const criteriaPassedUnique = [...new Set(criteriaPassed)].sort();
 
   return {
     scan_session_id: scanSessionId,
     total_findings: findings.length,
     by_severity: bySeverity,
+    needs_review_findings: needsReview,
+    needs_review_by_severity: needsReviewBySeverity,
     by_confidence: byConfidence,
     by_category: byCategory,
     human_reviewed_pct: 0,
@@ -236,6 +252,7 @@ export function computeSummary(
       estimateRemediation(findings.filter((f) => !shouldFilterFromClientReport(f)), pageUrlOf),
     ),
     wcag_criteria_failed: criteriaFailed,
+    wcag_criteria_needs_review: criteriaNeedsReview,
     wcag_criteria_passed: criteriaPassedUnique,
   };
 }
@@ -468,7 +485,7 @@ async function processCheckResults(
 function makeCriterionResult(
   scanId: string,
   criterion: string,
-  status: "passed" | "failed" | "not_applicable" | "not_tested",
+  status: CriterionStatus,
   testedBy: DetectedBy,
   summary: string,
   findingIds: string[] = [],
@@ -498,16 +515,31 @@ function makeCriterionResult(
  * "failed" but has no findings in the filtered set is flipped to "passed"
  * (since its only violations came from findings the caller removed).
  */
+/**
+ * Status of a criterion from its findings (P2-030): failed when at least
+ * one finding is confirmed (tier above needs_review), needs_review when
+ * every finding needs a manual check. A criterion with findings is never
+ * passed.
+ */
+export function criterionStatusFromFindings(findings: Finding[]): { status: "failed" | "needs_review"; summary: string } {
+  const confirmed = findings.filter((f) => !isNeedsReview(f)).length;
+  const review = findings.length - confirmed;
+  if (confirmed > 0) {
+    return { status: "failed", summary: `${confirmed} violation(s) found${review > 0 ? `, ${review} more need(s) review` : ""}` };
+  }
+  return { status: "needs_review", summary: `${review} finding(s) need a manual check; none confirmed` };
+}
+
 export function reconcileInMemory(
   scanId: string,
   findings: Finding[],
   criterionResults: CriterionResult[],
 ): CriterionResult[] {
-  // Build map of criterion → finding IDs from the filtered set
-  const findingsByCriterion = new Map<string, string[]>();
+  // Build map of criterion → findings from the filtered set
+  const findingsByCriterion = new Map<string, Finding[]>();
   for (const f of findings) {
     const existing = findingsByCriterion.get(f.wcag_criterion) ?? [];
-    existing.push(f.id);
+    existing.push(f);
     findingsByCriterion.set(f.wcag_criterion, existing);
   }
 
@@ -516,15 +548,15 @@ export function reconcileInMemory(
 
   for (const cr of results) {
     const criterion = cr.wcag_criterion;
-    const filteredFindingIds = findingsByCriterion.get(criterion);
+    const remaining = findingsByCriterion.get(criterion);
 
-    if (filteredFindingIds && filteredFindingIds.length > 0) {
-      // Criterion still has violations after filtering → must be "failed".
-      const firstFinding = findings.find((f) => f.wcag_criterion === criterion);
-      cr.status = "failed";
-      cr.tested_by = firstFinding?.evidence.detected_by ?? cr.tested_by;
-      cr.finding_ids = filteredFindingIds;
-      cr.evidence_summary = `${filteredFindingIds.length} violation(s) found`;
+    if (remaining && remaining.length > 0) {
+      // Findings remain after filtering: failed if any is confirmed, else needs_review
+      const { status, summary } = criterionStatusFromFindings(remaining);
+      cr.status = status;
+      cr.tested_by = remaining[0].evidence.detected_by ?? cr.tested_by;
+      cr.finding_ids = remaining.map((f) => f.id);
+      cr.evidence_summary = summary;
     } else if (cr.status === "failed") {
       // Criterion was failed but all its findings were filtered out.
       // Flip to "passed": no remaining violations. Keep tested_by.
@@ -532,7 +564,8 @@ export function reconcileInMemory(
       cr.finding_ids = [];
       cr.evidence_summary = "No issues detected";
     }
-    // else: already pass / not_applicable / not_tested — leave alone.
+    // else: already pass / needs_review / not_applicable / not_tested —
+    // leave alone. A needs_review criterion is never turned into a pass.
   }
 
   return results;
@@ -544,11 +577,11 @@ function reconcileCriterionResults(
   criterionResults: CriterionResult[],
   db: ReturnType<typeof openDatabase>,
 ): CriterionResult[] {
-  // Build map of criterion → finding IDs
-  const findingsByCriterion = new Map<string, string[]>();
+  // Build map of criterion → findings
+  const findingsByCriterion = new Map<string, Finding[]>();
   for (const f of findings) {
     const existing = findingsByCriterion.get(f.wcag_criterion) ?? [];
-    existing.push(f.id);
+    existing.push(f);
     findingsByCriterion.set(f.wcag_criterion, existing);
   }
 
@@ -561,35 +594,23 @@ function reconcileCriterionResults(
 
   const updatedResults: CriterionResult[] = [];
 
-  // For each criterion with findings, ensure it's marked as "failed"
-  for (const [criterion, findingIds] of findingsByCriterion) {
+  // For each criterion with findings: failed if any finding is confirmed,
+  // needs_review if every finding needs a manual check (P2-030). Either way
+  // it is no longer passed or not_applicable.
+  for (const [criterion, critFindings] of findingsByCriterion) {
     const existing = crByCriterion.get(criterion);
+    const { status, summary } = criterionStatusFromFindings(critFindings);
+    const findingIds = critFindings.map((f) => f.id);
+    // Infer tested_by from the actual finding that detected the issue
+    const testedBy = critFindings[0].evidence.detected_by ?? existing?.tested_by ?? "axe_core";
     if (existing) {
-      // Infer tested_by from the actual finding that detected the violation
-      const firstFinding = findings.find((f) => f.wcag_criterion === criterion);
-      const actualTestedBy = firstFinding?.evidence.detected_by ?? existing.tested_by;
-
-      if (existing.status !== "failed") {
-        // Overwrite: was passed/not_applicable but has violations
-        existing.status = "failed";
-        existing.tested_by = actualTestedBy;
-        existing.finding_ids = findingIds;
-        upsertCriterionResult(db, existing);
-      } else {
-        // Already failed — ensure finding IDs and tested_by are accurate
-        existing.tested_by = actualTestedBy;
-        existing.finding_ids = findingIds;
-        upsertCriterionResult(db, existing);
-      }
+      existing.status = status;
+      existing.tested_by = testedBy;
+      existing.finding_ids = findingIds;
+      existing.evidence_summary = summary;
+      upsertCriterionResult(db, existing);
     } else {
-      // No CriterionResult yet — create a "failed" one
-      // Infer tested_by from the first finding's evidence
-      const firstFinding = findings.find((f) => f.wcag_criterion === criterion);
-      const testedBy = firstFinding?.evidence.detected_by ?? "axe_core";
-      const cr = makeCriterionResult(
-        scanId, criterion, "failed", testedBy,
-        `${findingIds.length} violation(s) found`, findingIds,
-      );
+      const cr = makeCriterionResult(scanId, criterion, status, testedBy, summary, findingIds);
       upsertCriterionResult(db, cr);
       crByCriterion.set(criterion, cr);
     }

@@ -154,7 +154,12 @@ function generateRuleBasedReasoning(checkResult: CheckResult): string {
     const ruleId = raw.id as string | undefined;
 
     const parts: string[] = [];
-    if (ruleId) parts.push(`axe-core rule "${ruleId}" failed.`);
+    if (measured.axe_incomplete === true) {
+      // axe could not decide: say so, and keep axe's own message (P2-030)
+      parts.push(`axe-core could not decide this check (incomplete result${ruleId ? ` for rule "${ruleId}"` : ""}); it needs a manual check.`);
+    } else if (ruleId) {
+      parts.push(`axe-core rule "${ruleId}" failed.`);
+    }
     if (failureSummary) parts.push(failureSummary);
     if (parts.length === 0) parts.push("axe-core detected a violation.");
 

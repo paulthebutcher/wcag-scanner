@@ -187,6 +187,14 @@ function shouldRequireHuman(
 // ---------------------------------------------------------------------------
 
 /**
+ * A finding that asks for a manual check rather than confirming a failure
+ * (P2-030): it is counted separately and never fails its criterion.
+ */
+export function isNeedsReview(finding: Finding): boolean {
+  return finding.confidence.tier === "needs_review";
+}
+
+/**
  * Score a Finding and produce a Confidence sub-entity.
  *
  * Scoring rules:

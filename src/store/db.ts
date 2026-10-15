@@ -128,6 +128,11 @@ export function openDatabase(dbPath: string): Database.Database {
   if (!colNames.has("baseline_scan_id")) {
     db.exec("ALTER TABLE scan_sessions ADD COLUMN baseline_scan_id TEXT");
   }
+  // Needs-review findings counted separately (P2-030)
+  const summaryCols = new Set((db.pragma("table_info(scan_summaries)") as { name: string }[]).map((c) => c.name));
+  if (!summaryCols.has("needs_review_findings")) db.exec("ALTER TABLE scan_summaries ADD COLUMN needs_review_findings INTEGER");
+  if (!summaryCols.has("needs_review_by_severity")) db.exec("ALTER TABLE scan_summaries ADD COLUMN needs_review_by_severity TEXT");
+  if (!summaryCols.has("wcag_criteria_needs_review")) db.exec("ALTER TABLE scan_summaries ADD COLUMN wcag_criteria_needs_review TEXT");
 
   return db;
 }
@@ -411,11 +416,14 @@ function summaryToRow(summary: ScanSummary) {
     scan_session_id: summary.scan_session_id,
     total_findings: summary.total_findings,
     by_severity: JSON.stringify(summary.by_severity),
+    needs_review_findings: summary.needs_review_findings,
+    needs_review_by_severity: JSON.stringify(summary.needs_review_by_severity),
     by_confidence: JSON.stringify(summary.by_confidence),
     by_category: JSON.stringify(summary.by_category),
     human_reviewed_pct: summary.human_reviewed_pct,
     estimated_total_effort: summary.estimated_total_effort,
     wcag_criteria_failed: JSON.stringify(summary.wcag_criteria_failed),
+    wcag_criteria_needs_review: JSON.stringify(summary.wcag_criteria_needs_review),
     wcag_criteria_passed: JSON.stringify(summary.wcag_criteria_passed),
   };
 }
@@ -425,22 +433,31 @@ function rowToSummary(row: Record<string, unknown>): ScanSummary {
     scan_session_id: row.scan_session_id as string,
     total_findings: row.total_findings as number,
     by_severity: JSON.parse(row.by_severity as string) as ScanSummary["by_severity"],
+    // Scans before P2-030 did not separate needs-review findings
+    needs_review_findings: (row.needs_review_findings as number | null) ?? 0,
+    needs_review_by_severity: row.needs_review_by_severity
+      ? JSON.parse(row.needs_review_by_severity as string) as ScanSummary["needs_review_by_severity"]
+      : { critical: 0, major: 0, minor: 0, advisory: 0 },
     by_confidence: JSON.parse(row.by_confidence as string) as ScanSummary["by_confidence"],
     by_category: JSON.parse(row.by_category as string) as ScanSummary["by_category"],
     human_reviewed_pct: row.human_reviewed_pct as number,
     estimated_total_effort: row.estimated_total_effort as string,
     wcag_criteria_failed: JSON.parse(row.wcag_criteria_failed as string) as string[],
+    wcag_criteria_needs_review: row.wcag_criteria_needs_review ? JSON.parse(row.wcag_criteria_needs_review as string) as string[] : [],
     wcag_criteria_passed: JSON.parse(row.wcag_criteria_passed as string) as string[],
   };
 }
 
 export function upsertScanSummary(db: Database.Database, summary: ScanSummary): void {
   db.prepare(`
-    INSERT INTO scan_summaries (scan_session_id, total_findings, by_severity, by_confidence, by_category, human_reviewed_pct, estimated_total_effort, wcag_criteria_failed, wcag_criteria_passed)
-    VALUES (@scan_session_id, @total_findings, @by_severity, @by_confidence, @by_category, @human_reviewed_pct, @estimated_total_effort, @wcag_criteria_failed, @wcag_criteria_passed)
+    INSERT INTO scan_summaries (scan_session_id, total_findings, by_severity, needs_review_findings, needs_review_by_severity, by_confidence, by_category, human_reviewed_pct, estimated_total_effort, wcag_criteria_failed, wcag_criteria_needs_review, wcag_criteria_passed)
+    VALUES (@scan_session_id, @total_findings, @by_severity, @needs_review_findings, @needs_review_by_severity, @by_confidence, @by_category, @human_reviewed_pct, @estimated_total_effort, @wcag_criteria_failed, @wcag_criteria_needs_review, @wcag_criteria_passed)
     ON CONFLICT(scan_session_id) DO UPDATE SET
       total_findings = excluded.total_findings,
       by_severity = excluded.by_severity,
+      needs_review_findings = excluded.needs_review_findings,
+      needs_review_by_severity = excluded.needs_review_by_severity,
+      wcag_criteria_needs_review = excluded.wcag_criteria_needs_review,
       by_confidence = excluded.by_confidence,
       by_category = excluded.by_category,
       human_reviewed_pct = excluded.human_reviewed_pct,

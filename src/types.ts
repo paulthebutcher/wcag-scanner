@@ -8,7 +8,8 @@ export type DetectedBy = "axe_core" | "playwright" | "claude_api" | "manual";
 export type AnalysisMethod = "rule_based" | "llm_semantic" | "llm_visual" | "human";
 export type Verdict = "confirmed" | "false_positive" | "downgraded" | "escalated";
 export type ScanType = "initial" | "rescan" | "monitoring";
-export type CriterionStatus = "passed" | "failed" | "not_applicable" | "not_tested";
+/** needs_review: only needs-review findings exist for the criterion (P2-030); never a pass */
+export type CriterionStatus = "passed" | "failed" | "needs_review" | "not_applicable" | "not_tested";
 export type WcagLevel = "A" | "AA" | "AAA";
 export type Category = "contrast" | "semantics" | "keyboard" | "forms" | "images" | "aria" | "structure";
 export type Effort = "trivial" | "minor" | "moderate" | "significant";
@@ -245,13 +246,20 @@ export interface HumanReview {
 
 export interface ScanSummary {
   scan_session_id: string;
+  /** Every finding, confirmed and needs-review */
   total_findings: number;
+  /** Confirmed findings only (confidence tier above needs_review) */
   by_severity: SeverityCounts;
+  /** Needs-review findings, counted separately from the confirmed ones */
+  needs_review_findings: number;
+  needs_review_by_severity: SeverityCounts;
   by_confidence: ConfidenceCounts;
   by_category: CategoryCounts;
   human_reviewed_pct: number;
   estimated_total_effort: string;
   wcag_criteria_failed: string[];
+  /** Criteria with needs-review findings only */
+  wcag_criteria_needs_review: string[];
   wcag_criteria_passed: string[];
 }
 

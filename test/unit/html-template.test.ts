@@ -798,3 +798,30 @@ describe("deduplicated finding counts", () => {
     expect(renderHtmlReport(makeReportData())).not.toContain('id="coverage"');
   });
 });
+
+describe("needs-review criterion status in the report (P2-030)", () => {
+  it("every criterion lands in exactly one status and the counts add up", () => {
+    const data = makeReportData({
+      criterionResults: [
+        makeCriterionResult(),
+        makeCriterionResult({ wcag_criterion: "1.4.3", status: "needs_review", evidence_summary: "527 finding(s) need a manual check; none confirmed" }),
+        makeCriterionResult({ wcag_criterion: "2.4.1", status: "passed", finding_ids: [] }),
+        makeCriterionResult({ wcag_criterion: "1.2.1", status: "not_applicable", finding_ids: [] }),
+      ],
+      summary: makeSummary({ needs_review_findings: 527, needs_review_by_severity: { critical: 0, major: 527, minor: 0, advisory: 0 }, wcag_criteria_needs_review: ["1.4.3"] }),
+    });
+    const html = renderHtmlReport(data);
+    const m = html.match(/<strong>(\d+)<\/strong> no issues detected[\s\S]*?<strong>(\d+)<\/strong> failed[\s\S]*?<strong>(\d+)<\/strong> need review[\s\S]*?<strong>(\d+)<\/strong> not applicable[\s\S]*?<strong>(\d+)<\/strong> not tested/);
+    expect(m).not.toBeNull();
+    const [passed, failed, review, na, nt] = m!.slice(1).map(Number);
+    expect([passed, failed, review, na]).toEqual([1, 1, 1, 1]);
+    expect(passed + failed + review + na + nt).toBe(ALL_CRITERIA.length);
+    // Executive summary cards use the same counts
+    expect(html).toMatch(/<div class="summary-number">3<\/div>\s*<div class="summary-label">Criteria Tested<\/div>/);
+    expect(html).toMatch(/color:#d97706">1<\/div>\s*<div class="summary-label">Needs Review<\/div>/);
+    expect(html).toContain("1 further criterion needs a manual check: the automated checks could not decide");
+    expect(statusBadge("needs_review")).toContain("needs review");
+    // Cover shows the needs-review count beside the confirmed severities
+    expect(html).toMatch(/527<\/span><span class="cover-stat-label">Needs Review/);
+  });
+});

@@ -16,12 +16,24 @@ function formatTable(summary: ScanSummary, scanId: string): string {
   lines.push("├──────────────────────────────────────────────┤");
   lines.push(`│  Scan ID: ${scanId.slice(0, 8)}...                       │`);
   lines.push(`│  Total findings: ${String(summary.total_findings).padEnd(28)}│`);
+  const confirmed = summary.total_findings - (summary.needs_review_findings ?? 0);
+  lines.push(`│    Confirmed:    ${String(confirmed).padEnd(28)}│`);
+  lines.push(`│    Needs review: ${String(summary.needs_review_findings ?? 0).padEnd(28)}│`);
   lines.push("├──────────────────────────────────────────────┤");
-  lines.push("│  By Severity:                                │");
+  lines.push("│  Confirmed, by severity:                     │");
   lines.push(`│    Critical: ${String(summary.by_severity.critical).padEnd(32)}│`);
   lines.push(`│    Major:    ${String(summary.by_severity.major).padEnd(32)}│`);
   lines.push(`│    Minor:    ${String(summary.by_severity.minor).padEnd(32)}│`);
   lines.push(`│    Advisory: ${String(summary.by_severity.advisory).padEnd(32)}│`);
+  const nr = summary.needs_review_by_severity;
+  if (nr && summary.needs_review_findings > 0) {
+    lines.push("├──────────────────────────────────────────────┤");
+    lines.push("│  Needs review (not failures), by severity:   │");
+    lines.push(`│    Critical: ${String(nr.critical).padEnd(32)}│`);
+    lines.push(`│    Major:    ${String(nr.major).padEnd(32)}│`);
+    lines.push(`│    Minor:    ${String(nr.minor).padEnd(32)}│`);
+    lines.push(`│    Advisory: ${String(nr.advisory).padEnd(32)}│`);
+  }
   lines.push("├──────────────────────────────────────────────┤");
   lines.push("│  By Confidence:                              │");
   lines.push(`│    Definitive:  ${String(summary.by_confidence.definitive).padEnd(29)}│`);
@@ -32,6 +44,9 @@ function formatTable(summary: ScanSummary, scanId: string): string {
 
   if (summary.wcag_criteria_failed.length > 0) {
     lines.push(`│  Failed criteria: ${summary.wcag_criteria_failed.join(", ").slice(0, 26).padEnd(26)}│`);
+  }
+  if ((summary.wcag_criteria_needs_review ?? []).length > 0) {
+    lines.push(`│  Needs review:    ${summary.wcag_criteria_needs_review.join(", ").slice(0, 26).padEnd(26)}│`);
   }
   if (summary.wcag_criteria_passed.length > 0) {
     lines.push(`│  Passed criteria: ${summary.wcag_criteria_passed.join(", ").slice(0, 26).padEnd(26)}│`);

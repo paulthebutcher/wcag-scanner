@@ -1,3 +1,4 @@
+import { isNeedsReview } from "../core/confidence.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
@@ -356,6 +357,8 @@ function renderAggregateMarkdown(
   lines.push("");
   lines.push(`Scan ID: \`${scanId}\``);
   lines.push(`Total findings: ${triaged.length}`);
+  const needsReview = triaged.filter((tf) => isNeedsReview(tf.finding)).length;
+  lines.push(`Confirmed: ${triaged.length - needsReview} · Needs review (not failures): ${needsReview}`);
   if (excluded.length > 0) {
     lines.push(`Excluded from counts: ${excluded.length} (see Needs manual check and Third-party below)`);
   }

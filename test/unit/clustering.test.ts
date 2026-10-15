@@ -214,8 +214,9 @@ describe("exclusions", () => {
     const { kept: k, excluded } = partitionExclusions([kept, manual, third].map((finding) => ({ finding, pageUrl: "https://s.test/p" })));
     expect(k.map((p) => p.finding.id)).toEqual([kept.id]);
     const md = renderExcludedMarkdown(excluded);
-    expect(md).toContain("## Needs manual check (1)");
-    expect(md).toContain("background colour could not be determined: a background gradient");
+    // Grouped per page and reason (P2-030)
+    expect(md).toContain("## Needs manual contrast check (1 element, 1 check on 1 page)");
+    expect(md).toContain("| /p | gradient | 1 | `h1` |");
     expect(md).toContain("## Third-party (1)");
   });
 
