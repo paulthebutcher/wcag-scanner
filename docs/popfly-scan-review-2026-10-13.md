@@ -79,3 +79,30 @@ These are good real-world patterns for fixtures: delayed focus after skip link, 
 - No `broken_skip_navigation` on /start/new or /overland.
 - No Top fixes row built from `<html>` summary findings.
 - No `image_link_no_alt` on `a.header-logo-link` while the live link has a name.
+
+## Resolution log (2026-10-14)
+
+Work on branch `eval/phase1`, gated on the frozen corpus tuning-v4 (47 popfly.com pages). Pre-fix reference `replay-20261015T013504Z-5b7a06`; final run `replay-20261015T032725Z-bd7aa1`. "Verifying scan" stays pending until the post-merge scan.
+
+| Item | Status | P2 id | Commit | Eval run | Verifying scan | Result |
+|---|---|---|---|---|---|---|
+| 1. Contrast before animations settle | Replaced (cause disproved) | P2-011 | 264d43f | replay-20261015T021053Z-225cfc | pending | The 37 failures were a broken render, not animations; pages that render broken are now not checked, no criterion passes, and the scan raises an ALERT. Offline on 8e03985c: 49 of 50 pages flagged; 0705da2d 0 of 50. |
+| 2. Skip-link target rule | Fixed | P2-013 | 6190de2 | replay-20261015T031355Z-1eb75b | pending | A target after the header and navigation, at or before the first h1 or content section, passes (`#win`). Not exercised by tuning-v4 (`/start/new` excluded, `/overland` noindex); fixtures and the ee56b381 snapshots pass. P2-015 unchanged. |
+| 3. Page-level findings as one fix | Fixed | P2-014 | 56f7550 | unit tests + regenerated reports (report layer only) | pending | No Top fixes row from `<html>` summaries; 0705da2d lists 24 per-page fixes (2.8–6.1 h). |
+| 4. Names read before scripts | Replaced (cause disproved) | P2-012 | 95e1b44 | replay-20261015T030044Z-477ab3 | pending | webflow.js labels the logo before the snapshot; the 49 findings came from regex extraction of markup inside the unclosed style. Raw-text contents are no longer read as elements (8e03985c: 240 phantom occurrences; 0705da2d: 0). |
+| 5. Rotating page set | Open | P2-016 | — | — | — | Recorded in KNOWN_ISSUES.md. |
+| 6. Instagram embeds not third-party | Open | P2-017 (with P2-023) | — | — | — | Recorded; the Instagram blog post is excluded from tuning-v4 until fixed. |
+| 7. Verdicts not carried forward | Open | P2-018 | — | — | — | Recorded in KNOWN_ISSUES.md. |
+| 8. `truncated_tab_sweep` fails 2.1.1 | Open | P2-019 | — | — | — | Recorded in KNOWN_ISSUES.md. |
+| 9. Empty-render guard | Fixed | P2-011 | 264d43f | replay-20261015T021053Z-225cfc | pending | Delivered as fix 1's replacement. |
+| Watch: skip link missing on 48 pages | Resolved (not a publish) | P2-011 | — | — | pending | The skip-link script found no target in the swallowed markup; same root cause as item 9. |
+
+### Corrections
+
+1. **Item 9 timing: 8e03985c did not run before the break.** All 50 of its stored snapshots contain the broken `/style>` (observed). On 47 pages the swallowed text holds the `<body>` tag, the header and every section; their full-page screenshots are a blank 800 px viewport. `/` and `/for-agencies` lost the header and their top sections; `/start/new` lost only a `<style>` tag and rendered normally. The break was therefore live from at least 21:06 to 21:13 MDT and repaired by about 21:33, when 0705da2d started with no broken tag on any page. Its start is inferred to be one of the 20:14–21:04 blog-CSS publishes. [scan:8e03985c] [scan:0705da2d]
+2. **Item 1 cause: not animations.** The 37 definitive contrast failures in 8e03985c are all on `/` (20) and `/for-agencies` (17), the two pages that rendered partly. They are accurate measurements of that broken render (the screenshot shows the recorded colours), not scanner false positives. On the healthy render 27 minutes later (0705da2d, same engine) none of these elements is a definitive failure; the 0705da2d set has 1 definitive and 527 undetermined. Live on 2026-10-14, `/` and `/for-agencies` had 0 definitive contrast failures at the crawler's capture point and 0 after a full scroll and settle (observed). The animation-settle hypothesis was not reproduced and has no defect entry.
+3. **Item 4 cause: not snapshot timing.** webflow.js (`webflow.schunk` chunk, through jQuery `attr`) sets `aria-label="home"` on the logo link 5–12 ms after DOMContentLoaded on `/`, `/for-agencies` and a blog post, well before the crawler's snapshot (load plus network idle); the label is in all 50 snapshots of 0705da2d (observed). The 49 `image_link_no_alt` occurrences in 8e03985c came from the alt-text check reading the header markup inside the unclosed `<style>` with regular expressions (P2-012). The one `image_link_no_alt` in 0705da2d is the footer Instagram link on `/case-studies`, the only page whose copy of that link has no `aria-label` (inferred true positive).
+4. **Watch item: not a publish mid-scan.** The skip-link script ran on every page but found no target (the header, `#main-content` and every section were inside the style text), so it added no link. `bypass` 47 → 0 and `missing_skip_navigation` 47 → 0 are the break and its repair. The snapshot and axe agree in both scans (axe runs on the same page load, after `page.content()`). The prompt's "7 of 50" snapshot count matched only `class="skip-link"`; 43 more pages have `class="skip-link w--current"`.
+5. **Item 2 counts.** `broken_skip_navigation` on `/start/new` and `/overland` (target `#win`) is in ee56b381 only. In 6d4e82fe the two rows are on two `/post/*` pages with a different failure (focus not moved, target `#main-content`), registered as P2-015. By 6d4e82fe `/start/new` targets `#main-content`, and `/overland` was not crawled again until tuning-v1.
+6. **Item 3 counts.** Cluster `79dc811ae6ad` spans 17 pages in ee56b381 and 20 in 6d4e82fe and 0705da2d; in 8e03985c it has 2 pages and no Top fixes row.
+7. **Item 4 count.** 2 rows, 49 occurrences on 49 pages (48 pages plus `/` with `w--current`).
