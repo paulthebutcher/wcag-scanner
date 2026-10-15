@@ -213,6 +213,29 @@ The truncation did not reproduce in 9 keyboard-only sweeps, so the retry path ra
 
 Tests after all five fixes: 1,305 (1,288 before).
 
+## Scanner fixes (2026-10-13, Popfly review)
+
+Review: `docs/popfly-scan-review-2026-10-13.md`. Frozen corpus tuning-v4: 47 popfly.com pages from the tuning-v1 capture (`capture-20261014T223021Z-db47cc`), with 4 pages excluded for per-load variation and one supplemented asset. Pre-fix reference: `replay-20261015T013504Z-5b7a06` (3 repeats, valid, non-behavioral identical; focus-order flake 2/46). Static pre-fix reference: `static-20261015T013516Z-072ff9` (30 pass, 7 fail). Tests before these fixes: 1,427.
+
+Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-style break on all 50 pages, so review fixes 1 (animation settle) and 4 (names read before scripts) targeted the wrong causes; see the Corrections in the review's resolution log. With Paul's approval they were replaced by P2-011 (render health) and P2-012 (raw-text elements). Fixes 2 and 3 are P2-013 and P2-014.
+
+### Fix 1: pages that render broken or blank (P2-011)
+
+- Observed: all 50 snapshots of 8e03985c contain the broken `/style>`. 47 full-page screenshots are a blank 800 px viewport; `/` and `/for-agencies` lost the header and their top sections; `/start/new` lost only a `<style>` tag and rendered normally. Every check ran on what rendered, and the DOM-text checks also read the swallowed markup.
+- Cause (observed): an unclosed `<style>` in head custom code turns the following markup into CSS text. The review inferred animations; the 37 definitive contrast failures were accurate measurements of the broken render, and none recurs on the healthy render 27 minutes later (0705da2d) or live.
+- Change: `src/core/render-health.ts` (new: `assessRenderHealth`, `classifyRenderHealth`, `measureServedHtml`, `isUniformImage`). `crawler.ts` `visit()` measures each page on its own load: markup inside `<style>` text, rendered vs served section/landmark count, visible text, a flat screenshot. In `scanner.ts` a failed page is persisted but not checked: `CoverageRecorder.renderFailure` records every check that would have run as `failed` (`render_failed: …`), `blockPassesOnRenderFailure` turns `passed` and `not_applicable` criteria into `not_tested`, and an ALERT is printed after the crawl and at completion. `coverage.json` lists `render_failed` pages; findings.md and the HTML report open the coverage section with the ALERT.
+- Validation on stored data (offline, network blocked; observed): 8e03985c 49 of 50 pages fail (`/start/new` passes); 0705da2d 0 of 50.
+
+| Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `225cfc` | Live |
+|---|---|---|---|
+| Pages render_failed | — | 0 | pending |
+| Findings (predictions, repeat 1) | 867 | 867 | pending |
+| Coverage ran / skipped | 926 / 270 | 926 / 270 | pending |
+| Gate `compare-20261015T024600Z-492054` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
+
+- Tests: `test/unit/render-health.test.ts` (17) with fixtures `render-broken-blank`, `render-broken-partial`, `render-near-normal`, `render-healthy` (hand-built on the 8e03985c structure; provenance in `test/fixtures/metadata.json`). Suite 1,427 → 1,444.
+- Assumptions: a failed page produces no findings (its checks are skipped) rather than quarantined findings; "counted separately" is the alert's page count (assumed reading of the request). No tuning page renders broken, so the frozen delta is zero by design; the effect is shown on the 8e03985c snapshots.
+
 ## Out of scope
 
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
