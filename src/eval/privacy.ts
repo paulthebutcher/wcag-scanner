@@ -96,6 +96,24 @@ export function writeExport(path: string, value: unknown, privateHosts: string[]
   writeJson(path, value);
 }
 
+/** Whether a repo-relative path is a committed export the scan covers. */
+export function isExportPath(repoRelative: string): boolean {
+  const rel = repoRelative.replace(/\\/g, "/");
+  if (!rel.startsWith("eval/")) return false;
+  const inEval = rel.slice("eval/".length);
+  return EXPORT_GLOBS.some((g) => (g.endsWith("/") ? inEval.startsWith(g) : inEval === g));
+}
+
+/**
+ * Scan the staged (index) content of every export file in the next commit
+ * (the pre-commit check). `staged` lists repo-relative paths with their
+ * staged text.
+ */
+export function scanStagedExports(paths: EvalPaths, staged: Array<{ path: string; text: string }>): PrivacyFinding[] {
+  const hosts = knownPrivateHosts(paths);
+  return staged.filter((f) => isExportPath(f.path)).flatMap((f) => scanText(f.text, f.path, hosts));
+}
+
 /** Scan every committed export file under eval/. */
 export function scanCommittedExports(paths: EvalPaths): PrivacyFinding[] {
   const hosts = knownPrivateHosts(paths);

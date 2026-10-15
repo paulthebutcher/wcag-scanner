@@ -7,7 +7,7 @@ import { validate, obj, str, int, arr, oneOf } from "../../src/eval/schema.js";
 import { loadEvalConfig, configProblems } from "../../src/eval/config.js";
 import { canonicalJson, hashJson, writeOnce, newRunId, dirtyingPath } from "../../src/eval/util.js";
 import { evalPaths } from "../../src/eval/paths.js";
-import { scanText, assertExportSafe, scanCommittedExports, knownPrivateHosts } from "../../src/eval/privacy.js";
+import { scanText, assertExportSafe, scanCommittedExports, knownPrivateHosts, isExportPath, scanStagedExports } from "../../src/eval/privacy.js";
 
 const REPO = join(import.meta.dirname, "..", "..");
 const CLEAN = { sha: "a".repeat(40), dirty: false, changed_paths: [] };
@@ -173,5 +173,23 @@ describe("privacy (invariant 5)", () => {
     writeFileSync(join(fakeRepo, "eval", "runs", "r1", "metrics.json"), JSON.stringify({ page: "https://www.examplecityoh.gov/fees" }));
     const findings = scanCommittedExports(evalPaths(fakeRepo, join(tmp, "data")));
     expect(findings.map((f) => f.kind)).toEqual(expect.arrayContaining(["url", "hostname"]));
+  });
+});
+
+describe("pre-commit privacy check", () => {
+  it("scans only staged export files, and finds markup, URLs and private hosts in them", () => {
+    const paths = evalPaths(join(import.meta.dirname, "..", ".."));
+    expect(isExportPath("eval/phase2-defects.jsonl")).toBe(true);
+    expect(isExportPath("eval/runs/static-1/static.json")).toBe(true);
+    expect(isExportPath("eval/config.json")).toBe(false);
+    expect(isExportPath("docs/notes.md")).toBe(false);
+    const findings = scanStagedExports(paths, [
+      { path: "eval/phase2-defects.jsonl", text: '{"summary":"the <html> element"}' },
+      { path: "eval/runs/x/static.json", text: '{"u":"https://lakewoodcourtoh.gov/a"}' },
+      { path: "docs/free-text.md", text: "<div> https://example.org" },
+    ]);
+    expect(findings.map((f) => `${f.file}:${f.kind}`).sort()).toEqual([
+      "eval/phase2-defects.jsonl:html", "eval/runs/x/static.json:hostname", "eval/runs/x/static.json:hostname", "eval/runs/x/static.json:url",
+    ]);
   });
 });

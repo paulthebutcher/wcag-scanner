@@ -18,6 +18,8 @@
 | `static --resolve` / `static --engine [--record]` | none | static cache | D10 Lakewood static set |
 | `compare --base --head` / `reference --base --head` | none | none | D7 gate (exit 0/1/2), D6 export |
 
+Committed exports (under `eval/`: runs, baselines, `phase2-defects.jsonl`, overrides, the holdout log, the bridge) are privacy-checked on write, and a pre-commit hook re-checks their staged content: enable it once per clone with `git config core.hooksPath .githooks`. `wcag eval privacy` scans the working tree; `--staged` scans the next commit.
+
 Every producing command prints its run id and manifest path (`wcag-data/eval-runs/<run-id>/manifest.json`). Consumers take explicit run ids. Official purposes are refused on a dirty tree. The holdout split is sealed: any access needs `--unseal "<reason>"` and is logged to `eval/holdout-access.log`.
 
 ## Capture etiquette

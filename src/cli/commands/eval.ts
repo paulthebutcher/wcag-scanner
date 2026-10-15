@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { Command } from "commander";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -8,7 +9,7 @@ import { repoRoot } from "../../eval/util.js";
 import { runPilot } from "../../eval/pilot.js";
 import { captureSite } from "../../eval/capture.js";
 import { deriveCorpus, verifyCorpus, type Split } from "../../eval/corpus.js";
-import { knownPrivateHosts, writeExport } from "../../eval/privacy.js";
+import { isExportPath, knownPrivateHosts, scanCommittedExports, scanStagedExports, writeExport } from "../../eval/privacy.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveEngine } from "../../eval/engine/resolve.js";
 import { executeReplayRun } from "../../eval/runs.js";
@@ -156,6 +157,26 @@ export function createEvalCommand(): Command {
         run.finish("failed");
         console.error(err instanceof Error ? err.message : err);
         process.exitCode = 2;
+      }
+    });
+
+  cmd.command("privacy")
+    .description("Privacy scan of committed exports (no URLs, markup or private hostnames); --staged checks the next commit")
+    .option("--staged", "Scan the staged content of export files only (pre-commit hook)")
+    .action((opts: { staged?: boolean }) => {
+      const { paths } = context();
+      let findings;
+      if (opts.staged) {
+        const names = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], { cwd: paths.repo, encoding: "utf8" }).split("\0").filter(Boolean);
+        const staged = names.filter(isExportPath).map((path) => ({ path, text: execFileSync("git", ["show", `:${path}`], { cwd: paths.repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }) }));
+        findings = scanStagedExports(paths, staged);
+      } else {
+        findings = scanCommittedExports(paths);
+      }
+      for (const f of findings) process.stderr.write(`privacy: ${f.file}: ${f.kind} (${f.excerpt})\n`);
+      if (findings.length > 0) {
+        process.stderr.write(`privacy: ${findings.length} finding(s); committed exports must not contain URLs, markup or private hostnames\n`);
+        process.exitCode = 1;
       }
     });
 
