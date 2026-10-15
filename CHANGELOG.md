@@ -5,7 +5,7 @@ Unified from the supplied Claude chat reconstruction, all reachable repository h
 ## Conventions
 
 - **Date** is the local (America/Denver) date the source chat was last active. Work inside a long chat may have happened a few days earlier. Repo commit dates win on merge; scan times are initiated_at converted to Denver. [chat:14115d46] [repo:783f4b9]
-- **Source tags:** `[chat:<id8>]` = Claude chat; `[repo:<short-sha>]` = commit; `[scan:<id8>]` = stored scan or explicitly identified historical scan; `[cc:<session-id8>]` / `[codex:<session-id8>]` = local Claude Code / Codex transcript. A tag identifies evidence, not a guarantee that its artifact survives locally. [chat:5dd53c0b] [repo:86d750d]
+- **Source tags:** `[chat:<id8>]` = Claude chat; `[repo:<short-sha>]` = commit; `[scan:<id8>]` = stored scan or explicitly identified historical scan; `[cc:<session-id8>]` / `[codex:<session-id8>]` = local Claude Code / Codex transcript; `[run:<run-id>]` = eval harness run (manifest under wcag-data/eval-runs, aggregate export under eval/runs). A tag identifies evidence, not a guarantee that its artifact survives locally. [chat:5dd53c0b] [repo:86d750d]
 - **Status tags:** `shipped` = confirmed working in a later scan or test run (historical evidence, not a new test run here). `prompted` = fix prompt written and Paul reported running it, no later verification found. `planned` = proposed, no evidence it was built. Chat-only claims retain their reported status alongside any unresolved caveat; branch-only work is explicitly labelled. Observations/decisions/results may have no status. [chat:5dd53c0b] [repo:e78d715]
 - **Epistemic labels:** (observed) stated in chat, (inferred) reading of evidence, (assumed) filled gap. `(no commit found)` preserves a claim/proposal with no matching implementation; `(commit not found)` would mark an explicitly attributed but absent hash. All five hashes in the Popfly chat exist. [chat:5dd53c0b] [repo:d0421be] [repo:9e2321a] [repo:849ebe0] [repo:60d9b45] [repo:53f87d5]
 - **Merge rules:** one line per meaningful change, repo wording/date with all matched sources; independently meaningful parts of a bundled chat line are split. Numeric contradictions are retained as caveats, and plans are upgraded only where the repository proves the matching behavior. [chat:98edf333] [repo:f0e97b9]
@@ -22,19 +22,60 @@ Chat index:
 | 607b026a | WCAG compliance for Lakewood Court file conversion | 2026-05-05  | [chat:607b026a] |
 | 1d0bb3c3 | Prioritizing between Plinth, WCAG tool, and freelance work | 2026-05-06  | [chat:1d0bb3c3] |
 | dc864a9a | Job search exploration | 2026-08-05  | [chat:dc864a9a] |
-| 5dd53c0b | WCAG accessibility fixes (Popfly Project) | 2026-10-04 to 2026-10-11  | [chat:5dd53c0b] |
+| 5dd53c0b | WCAG accessibility fixes (Popfly Project) | 2026-10-04 to 2026-10-13  | [chat:5dd53c0b] |
 
 ---
+
+## 2026-10-13
+
+### Observations
+
+- Site-side changes verified live 2026-10-11 to 2026-10-13: skip link injected by script as the first body element (target the first element after `.header-wrapper`, `tabindex="-1"`); `.btn.modal` divs get `role="button"` and `tabindex="0"`; FAQ items get `role="button"`, `aria-expanded` and `inert` closed answers; the demo modal is a dialog with focus moved in, trapped, Escape and return; cookie link text "Opt out here."; `.p-gray-large` colour `#aeafb0` replaces opacity 0.7; blog rich-text links `#286140`; "Learn more" `c-btn` links removed after 6d4e82fe. (observed) [chat:5dd53c0b] [scan:6d4e82fe]
+- The crawl page set rotates under the 50-page cap: about 54 static pages plus CMS samples against 168 sitemap URLs; 11 pages differed between ee56b381 and 6d4e82fe. (observed) [chat:5dd53c0b] [scan:ee56b381] [scan:6d4e82fe]
+- Blank-site incident: a `/style>` typo (missing `<`) in head custom code left a `<style>` unclosed and every page rendered blank or broken in browsers. The break was live during scan 8e03985c, 21:06–21:13 MDT (all 50 snapshots contain the broken `/style>`; 47 screenshots blank), and fixed by about 21:33, when 0705da2d started clean (observed). The chat timeline placed it after 21:13; the stored snapshots win. Its start was probably one of the 20:14–21:04 blog-CSS publishes (inferred). [chat:5dd53c0b] [scan:8e03985c] [scan:0705da2d]
+- Contrast review: the 37 definitive contrast failures in 8e03985c were accurate measurements of the broken render, not scanner false positives; none fails on the healthy render (0705da2d) or live after settling. (observed) [chat:5dd53c0b] [scan:8e03985c] [scan:0705da2d]
+
+### Fixed
+
+- Pages that render broken or blank are detected on the crawl's own load and not checked; every check is recorded failed on them, no criterion can pass, and the scan and report raise an ALERT with the page list. Replaces review fix 1 (animation settle), whose cause was disproved. Frozen acceptance passed; live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-011. [repo:264d43f] [run:replay-20261015T021053Z-225cfc] [cc:e8a46994] `prompted`
+- Checks that read the serialized DOM no longer treat markup inside `<style>`, `<script>`, `<noscript>` or `<template>` as elements (one helper used by every such check). Replaces review fix 4 (names read before scripts), whose cause was disproved. Frozen acceptance passed; live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-012. [repo:95e1b44] [run:replay-20261015T030044Z-477ab3] [cc:e8a46994] `prompted`
+- The skip-link check accepts a target placed where main content starts (after every header and nav focus stop, at or before the first h1 or content section), e.g. `section#win`. Frozen acceptance passed (fixtures and stored ee56b381 snapshots); live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-013. [repo:6190de2] [run:replay-20261015T031355Z-1eb75b] [cc:e8a46994] `prompted`
+- Page-level summary findings (focus order on `<html>`) cluster per page and are listed under "Per-page fixes" instead of one Top fix; site-level findings stay grouped. Report layer only. Frozen acceptance passed (regenerated reports); live scan pending after merge. docs/popfly-scan-review-2026-10-13.md, P2-014. [repo:56f7550] [cc:e8a46994] `prompted`
+- `wcag scan --urls <file>` scans a pinned page list (before/after scans of the same pages). [repo:8913736] [cc:e8a46994] `prompted`
+- Eval harness, first real-site corpus: capture scroll pass and per-site page cap; provisional labels; `static --record` reaches the model API; declared exclusions v2 (beacons, embed internals, media); deny-proxy socket errors; replay randomness seeded per calling script (Math.random and crypto); `derive-corpus` and `supplement-corpus`; variation logged per run instead of appended to the defect file; pre-commit privacy check of staged exports. (observed) [repo:36f420a] [repo:8e07099] [repo:4054e19] [repo:bf43f80] [repo:e49f11f] [repo:6981638] [repo:51e5605] [repo:c3df176] [repo:12bd16b] [repo:9796c41] [cc:e8a46994] `shipped`
+
+### Results
+
+- Frozen corpus tuning-v4: 47 popfly.com pages from the tuning-v1 capture (51 pages, 21.3 min, 3 s pacing), 4 pages excluded for per-load variation (P2-021, P2-022, P2-023), one supplemented asset (one live request). Pre-fix reference and final run each 3 repeats with 0 HAR, image and cache misses, 0 egress and identical non-behavioral results. Final gate exit 0: one focus-order flake swapped, no other change; static set unchanged (30 pass, 7 fail as before). (observed) [run:capture-20261014T223021Z-db47cc] [run:replay-20261015T013504Z-5b7a06] [run:replay-20261015T032725Z-bd7aa1] [run:compare-20261015T040242Z-1816bd]
+- Frozen deltas are zero for P2-011, P2-012 and P2-013 by design (no tuning page renders broken, no rendered phantom on healthy pages, the `#win` pages are excluded or noindex); their acceptance is shown on stored scans: 8e03985c 49 of 50 pages flagged render-failed and 240 phantom finding occurrences removed; 0705da2d 0 and 0; both ee56b381 `#win` pages pass offline. P2-014: 0705da2d Top fixes lose the `html: focus order mismatch` row; 24 per-page fixes (2.8–6.1 h); headline unchanged. (observed) [scan:8e03985c] [scan:0705da2d] [scan:ee56b381]
+- Reconciliation 8e03985c vs 0705da2d: every difference is the site break and its repair, not engine nondeterminism (bypass 47 → 0, contrast 85 on 3 pages → 528 on 45 pages, image-alt, frame-title and link-in-text-block present only once pages rendered). (observed) [scan:8e03985c] [scan:0705da2d]
+- Model spend for this work: $4.76 of the $10.00 cap (HEAD records $1.36, baseline records $2.93, static cache $0.47). The baseline cache predates per-script seeding and is stale; D6 is deferred. (observed) [run:record-20261014T233843Z-b10cba]
+
+### Known issues
+
+- Rotating page set (P2-016), Instagram embeds not third-party (P2-017, with P2-023), review verdicts not carried forward (P2-018), needs-review `truncated_tab_sweep` failing 2.1.1 (P2-019) and skip links reported broken when focus moves late (P2-015) remain open; see KNOWN_ISSUES.md. [chat:5dd53c0b] [cc:e8a46994]
+- The watch item (skip link missing on 48 pages in 8e03985c) is resolved: not a publish mid-scan but the same break (P2-011). [scan:8e03985c]
+- Prompts can differ per load (P2-020 volatile page text, P2-021 hidden-input values, P2-022 error-message prompt from the page head), so AI verdicts can vary between scans; with /insights, /jobs/head-of-gtm and /start/new excluded, the tuning corpus has no form-submission or error-message coverage (3.3.1, 3.3.3, 3.2.2) until P2-021 and P2-022 are fixed. [cc:e8a46994]
 
 ## 2026-10-12
 
 ### Added
 
 - Chat-derived eval/seed-labels.jsonl preserves 18 Lakewood labels. No eligible local-transcript findings or human_review verdicts can be appended; Popfly findings are excluded and Lakewood scan/finding references remain unresolved in the current Popfly-only store. [chat:f67d0e54] [chat:cb403267] [chat:98edf333] [codex:01a131fd] `shipped`
+- Phase 1 eval harness (`wcag eval`, src/eval): run manifests with dirty-tree refusal for official runs, privacy rules and a committed-export test, eval/config.json with coverage notes for all 50 WCAG 2.1 A/AA criteria. [repo:a72248f] [repo:91eb47b] `shipped`
+- Offline transport boundary: one controlled browser for every engine context, page, reload and popup (blocked service workers, submission containment, HAR replay, engine `route.continue()` turned into fallback, WebSockets refused, deny-and-log proxy), recorded Node fetches with socket denial, and an eval model client with an immutable response cache and image-store check. Baseline runs through a worktree bridge (adapter plus a two-hunk transport patch, sha256 6f224841…). One eval-only scanner hook, default off. [repo:b921a95] `shipped`
+- Capture, corpus verification, replay/record with budget and repeatability, cases/labels/matcher, review and blind audit screens with pace, metrics and aggregate export, Lakewood static set, compare/gate and reference export, municipal admission. [repo:513fe47] [repo:67c0256] [repo:def7e96] [repo:4e6472e] [repo:0c4dc84] [repo:34534e5] [repo:e4ee5dd] `shipped`
 
 ### Results
 
+- D0 pilot on the local fixture, clean tree at 52bfd6c: 37/37 checks; HEAD and baseline replay offline with 0 HAR, Node-fetch, image and cache misses and 0 egress; GET-form, POST, fetch, XHR and beacon submissions contained live and offline with 0 fixture submission hits; trap misses, declared exclusions and WebSockets detected; default path identical to pre-harness 5d7a467 (62 findings, 48 criterion statuses, 78 coverage entries, no diff). [repo:52bfd6c] [run:pilot-20261013T011517Z-e56772]
+- Lakewood static set: 18 seeds resolved to 44 cases (37 runnable, 3 unresolved, 3 scan level, 1 requiring rendering); new disputes SL-003 and SL-013. With an empty static cache, clean tree at 91eb47b: head 29 pass / 3 fail / 5 unavailable, baseline 30 / 3 / 4; replays identical; synthetic SL-001 passes at both. [repo:0c4dc84] [run:static-20261013T012446Z-674fb3] [run:static-20261013T012705Z-4d5436]
+
 - History reconciliation covers 88 implementation commits through snapshot HEAD 86d750d and all 12 main-folder scan directories. Every timeline line has provenance; original chat and repo working halves are merged into this file. Seed JSONL parses and excludes Popfly; unavailable Lakewood ids remain unguessed. [codex:01a131fd] [repo:86d750d]
+
+### Known issues
+
+- Static set: the duplicate-link rule still flags a self-describing navigation link at HEAD and the baseline (LS-012, LS-014; P2-009), and a throwing model-based check still lets 1.1.1, 2.4.4, 1.3.5 and 3.3.4 pass at both versions (SL-016 synthetic; P2-010). Logged in eval/phase2-defects.jsonl, not fixed in Phase 1. [run:static-20261013T012446Z-674fb3] [run:static-20261013T012705Z-4d5436]
 
 ### Planned
 

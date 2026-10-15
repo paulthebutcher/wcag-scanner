@@ -41,6 +41,11 @@ export interface Cluster {
   /** False when some folded pages are known only by count (older scans) */
   pages_complete: boolean;
   representative: { selector: string; html: string; page_url: string };
+  /**
+   * A page-level summary (e.g. a page's focus order): its own problem on
+   * each page, clustered per page and kept out of Top fixes (P2-014)
+   */
+  page_level: boolean;
   remediation: ClusterRemediation;
   finding_ids: string[];
   findings: Finding[];
@@ -163,6 +168,31 @@ export function elementSignature(finding: Finding): string {
   ].join("|");
 }
 
+/**
+ * Failure types reported on <html> that one site-wide change clears (a
+ * skip link, a sitemap or search, the page language): they stay one
+ * cluster across pages.
+ */
+export const SITE_LEVEL_FAILURE_TYPES = new Set([
+  "insufficient_navigation_methods",
+  "missing_skip_navigation",
+  "bypass",
+  "html-has-lang",
+  "html-lang-valid",
+  "html-xml-lang-mismatch",
+]);
+
+/**
+ * A page-level summary finding: reported on <html> or as a summary node
+ * (<focus-order-summary/>), describing something specific to its page, so
+ * the same signature on two pages is two problems, not one fix (P2-014).
+ */
+export function isPageLevelSummary(finding: Finding): boolean {
+  if (SITE_LEVEL_FAILURE_TYPES.has(failureTypeOf(finding))) return false;
+  const html = finding.evidence.element_html ?? "";
+  return normalizeSelector(finding.evidence.element_selector ?? "") === "html" || /^\s*<[a-z]+(?:-[a-z]+)*-summary\b/i.test(html);
+}
+
 /** Stable id for a signature. */
 export function clusterId(signature: string): string {
   return sha1(signature, 12);
@@ -263,7 +293,8 @@ export function clusterFindings(findings: PagedFinding[], options: { platform?: 
   const platform = options.platform ?? "webflow";
   const bySignature = new Map<string, PagedFinding[]>();
   for (const pf of findings) {
-    const sig = elementSignature(pf.finding);
+    // Page-level summaries cluster per page (the page a row is stored against)
+    const sig = elementSignature(pf.finding) + (isPageLevelSummary(pf.finding) ? `|page:${pf.pageUrl}` : "");
     const list = bySignature.get(sig) ?? [];
     list.push(pf);
     bySignature.set(sig, list);
@@ -303,6 +334,7 @@ export function clusterFindings(findings: PagedFinding[], options: { platform?: 
         html: rep.finding.evidence.element_html,
         page_url: rep.pageUrl,
       },
+      page_level: isPageLevelSummary(rep.finding),
       remediation: remediationFor(fs, platform),
       finding_ids: fs.map((f) => f.id),
       findings: fs,

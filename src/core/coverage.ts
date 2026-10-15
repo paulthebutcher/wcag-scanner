@@ -27,6 +27,8 @@ export interface ScanCoverage {
   page_urls: string[];
   /** URLs the crawl tried and could not load (not part of page_urls) */
   crawl_failures: Array<{ url: string; error: string }>;
+  /** Pages that loaded but rendered broken or blank (P2-011): no check ran on them */
+  render_failed?: Array<{ url: string; reasons: string[] }>;
   entries: CoverageEntry[];
 }
 
@@ -68,6 +70,7 @@ export function firstLine(message: string): string {
 export class CoverageRecorder {
   private readonly byKey = new Map<string, CoverageEntry>();
   private readonly crawlFailures: Array<{ url: string; error: string }> = [];
+  private readonly renderFailures: Array<{ url: string; reasons: string[] }> = [];
 
   record(check: string, tier: number, pageUrl: string, status: CoverageStatus, message?: string): void {
     const key = `${check}\u0000${pageUrl}`;
@@ -101,6 +104,16 @@ export class CoverageRecorder {
     this.crawlFailures.push({ url, error: firstLine(error) });
   }
 
+  /**
+   * A page that rendered broken: every given check is recorded as failed on
+   * it (failed outranks any later outcome), so no criterion can be
+   * established from it.
+   */
+  renderFailure(url: string, reasons: string[], checks: Array<{ check: string; tier: number }>): void {
+    this.renderFailures.push({ url, reasons: [...reasons] });
+    for (const { check, tier } of checks) this.record(check, tier, url, "failed", `render_failed: ${reasons[0] ?? "page rendered broken"}`);
+  }
+
   entries(): CoverageEntry[] {
     return Array.from(this.byKey.values());
   }
@@ -110,6 +123,7 @@ export class CoverageRecorder {
       scan_id: scanId,
       page_urls: pageUrls,
       crawl_failures: [...this.crawlFailures],
+      ...(this.renderFailures.length > 0 ? { render_failed: this.renderFailures.map((f) => ({ ...f })) } : {}),
       entries: this.entries(),
     };
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -967,5 +967,25 @@ describe("createScanCommand", () => {
     const { createScanCommand } = await import("../../src/cli/commands/scan.js");
     const cmd = createScanCommand();
     expect(cmd.name()).toBe("scan");
+  });
+
+  it("takes a pinned page list with --urls and refuses an empty one before scanning", async () => {
+    const { createScanCommand } = await import("../../src/cli/commands/scan.js");
+    const cmd = createScanCommand();
+    expect(cmd.options.map((o) => o.long)).toContain("--urls");
+    const file = join(tmpdir(), `wcag-urls-${randomUUID()}.txt`);
+    writeFileSync(file, "# pinned list\n\n");
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (m: string) => { errors.push(m); };
+    try {
+      await cmd.parseAsync(["node", "scan", "https://example.test", "--urls", file, "--quiet"]);
+    } finally {
+      console.error = original;
+      rmSync(file, { force: true });
+    }
+    expect(errors).toEqual(["Error: --urls file lists no URLs"]);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
   });
 });

@@ -6,6 +6,7 @@ import {
   buildAltTextUserPrompt,
 } from "../../prompts/element-evaluation.js";
 import { buildLlmCapture } from "./llm-capture.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -192,7 +193,7 @@ export function altTextPassesPreFilter(alt: string | null): boolean {
  * 5. Returns CheckResult[] for images that fail.
  */
 export async function runAltTextChecks(
-  dom: string,
+  fullDom: string,
   runner: PromptRunner,
   options: {
     axeFlaggedSelectors?: Set<string>;
@@ -208,6 +209,8 @@ export async function runAltTextChecks(
     screenshotProvider,
     imageProvider,
   } = options;
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(fullDom);
 
   // 1. Collect all images
   let images = collectImages(dom, axeFlaggedSelectors);

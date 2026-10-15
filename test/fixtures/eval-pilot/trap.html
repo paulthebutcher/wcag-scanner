@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" data-wf-site="pilot-site-0001" data-wf-page="pilot-page-trap">
+<head>
+  <meta charset="utf-8">
+  <meta name="generator" content="Webflow">
+  <title>Pilot trap page</title>
+  <link rel="stylesheet" href="/css/site.css">
+</head>
+<body class="body">
+  <main class="main">
+    <h1>Trap page</h1>
+    <div id="dynamic"></div>
+  </main>
+  <script>
+    // A request whose URL is new on every load: never in the HAR.
+    fetch('/late/' + Math.random().toString(36).slice(2)).catch(function () {});
+    // A WebSocket: refused by the eval transport.
+    try { new WebSocket('{{SITE_WS}}/socket'); } catch (e) {}
+    // A telemetry beacon on a declared-exclusion host.
+    new Image().src = '{{TELEMETRY}}/collect?r=' + Math.random().toString(36).slice(2);
+    // An image the alt-text check will try to fetch from Node, at a URL
+    // that changes on every load.
+    var img = document.createElement('img');
+    img.src = '{{CDN}}/x-' + Math.random().toString(36).slice(2) + '.png';
+    img.alt = 'IMG_0001.jpg';
+    document.getElementById('dynamic').appendChild(img);
+  </script>
+</body>
+</html>

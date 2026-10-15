@@ -1,0 +1,416 @@
+{
+  "run_id": "pilot-20261013T011517Z-e56772",
+  "purpose": "diagnostic",
+  "harness": {
+    "sha": "52bfd6c92b10bec19fa2a51cf3627135b882a620",
+    "dirty": false
+  },
+  "environment": {
+    "node": "v24.2.0",
+    "os": "darwin 27.0.0 arm64",
+    "lockfile_sha256": "c6485de9caaf441738074743f8b189b320c9daee8854c6b2e7e4c366011116b5",
+    "playwright": "1.58.2",
+    "browser_build": null,
+    "axe_core": "4.11.1",
+    "anthropic_sdk": null,
+    "sharp": "0.33.5"
+  },
+  "validity": {
+    "valid": true,
+    "official": false,
+    "reasons": [],
+    "unavailable": []
+  },
+  "checks": [
+    {
+      "name": "capture: all pilot pages captured",
+      "pass": true,
+      "detail": "p001:captured p002:captured p003:captured p004:captured"
+    },
+    {
+      "name": "capture: no submission endpoint reached during capture",
+      "pass": true,
+      "detail": "0 hit(s) "
+    },
+    {
+      "name": "capture: top-level loads paced",
+      "pass": true,
+      "detail": "min gap 502 ms over 14 loads (interval 500 ms)"
+    },
+    {
+      "name": "capture: robots.txt fetched and applied before the URL list",
+      "pass": true,
+      "detail": "group wildcard"
+    },
+    {
+      "name": "request collection reaches the alt-text image provider without model calls",
+      "pass": true,
+      "detail": "3 alt-text request(s) with image, 1 without; no API key set"
+    },
+    {
+      "name": "request collection reaches submission images without model calls",
+      "pass": true,
+      "detail": "5 error-message request(s) with screenshot"
+    },
+    {
+      "name": "verify-corpus: checksums and artifacts",
+      "pass": true,
+      "detail": "37 files, 10 image entries, 0 problem(s)"
+    },
+    {
+      "name": "containment (live): GET form navigation, POST navigation, fetch, XHR and beacon blocked",
+      "pass": true,
+      "detail": "{\"get-form-click\":1,\"get-form-submit()\":1,\"post-form-navigation\":1,\"fetch-and-xhr\":2,\"beacon\":1}; server submission hits 0"
+    },
+    {
+      "name": "containment (live): normal page loads still work",
+      "pass": true,
+      "detail": "about page status 200"
+    },
+    {
+      "name": "replay: submissions contained against the HAR",
+      "pass": true,
+      "detail": "{\"get-form-click\":1,\"post-form-navigation\":1,\"fetch-and-xhr\":2}"
+    },
+    {
+      "name": "replay: engine interceptor's route.continue() falls back to the HAR, not the network",
+      "pass": true,
+      "detail": "{\"status\":200,\"servedFromHar\":true,\"egress\":0}"
+    },
+    {
+      "name": "replay: an unwrapped route.continue() is caught by the deny proxy",
+      "pass": true,
+      "detail": "{\"egress\":1}"
+    },
+    {
+      "name": "replay: a context created outside the boundary is caught by the deny proxy",
+      "pass": true,
+      "detail": "{\"egress\":2}"
+    },
+    {
+      "name": "replay: reloads and popups go through the boundary",
+      "pass": true,
+      "detail": "reload true, popup true"
+    },
+    {
+      "name": "replay: service workers blocked in eval contexts",
+      "pass": true,
+      "detail": "unavailable"
+    },
+    {
+      "name": "replay: WebSockets refused",
+      "pass": true,
+      "detail": "1 refused"
+    },
+    {
+      "name": "Node egress denied and recorded even when the caller swallows the error",
+      "pass": true,
+      "detail": "tcp-connect 127.0.0.1:9, tcp-connect 198.51.100.7:80"
+    },
+    {
+      "name": "head: clean replay is offline and complete",
+      "pass": true,
+      "detail": "pages 3, HAR misses 0, Node fetch misses 0, egress 0, image misses 0, findings 62, model requests 26"
+    },
+    {
+      "name": "head: page order matches the frozen order",
+      "pass": true,
+      "detail": "p001,p002,p003 vs p001,p002,p003"
+    },
+    {
+      "name": "head: every context and page went through the boundary",
+      "pass": true,
+      "detail": "contexts 2, pages 10, popups 0, CDP attached 13"
+    },
+    {
+      "name": "head: model calls went through the eval client",
+      "pass": true,
+      "detail": "26 requests (8 with image, 18 without): {\"link_text_quality\":10,\"heading_structure\":3,\"alt_text_quality\":3,\"consistent_navigation\":1,\"error_message_quality\":5,\"input_purpose_matching\":4}"
+    },
+    {
+      "name": "head: trap page misses are detected",
+      "pass": true,
+      "detail": "HAR misses 4 (/late/0ditcqrkkwn8, /x-jrss6es9d1.png, /late/ypa4vkci95)"
+    },
+    {
+      "name": "head: declared exclusion counted separately from misses",
+      "pass": true,
+      "detail": "declared 2"
+    },
+    {
+      "name": "head: trap WebSocket refused without egress",
+      "pass": true,
+      "detail": "refused 2, egress 0"
+    },
+    {
+      "name": "head: unrecorded Node image fetch on the trap page is a miss",
+      "pass": true,
+      "detail": "Node fetch misses 1"
+    },
+    {
+      "name": "baseline: clean replay is offline and complete",
+      "pass": true,
+      "detail": "pages 3, HAR misses 0, Node fetch misses 0, egress 0, image misses 0, findings 61, model requests 34"
+    },
+    {
+      "name": "baseline: page order matches the frozen order",
+      "pass": true,
+      "detail": "p001,p002,p003 vs p001,p002,p003"
+    },
+    {
+      "name": "baseline: every context and page went through the boundary",
+      "pass": true,
+      "detail": "contexts 2, pages 13, popups 0, CDP attached 16"
+    },
+    {
+      "name": "baseline: model calls went through the eval client",
+      "pass": true,
+      "detail": "34 requests (7 with image, 27 without): {\"alt_text_quality\":5,\"link_text_quality\":14,\"heading_structure\":3,\"consistent_navigation\":1,\"error_message_quality\":7,\"input_purpose_matching\":4}"
+    },
+    {
+      "name": "baseline: trap page misses are detected",
+      "pass": true,
+      "detail": "HAR misses 6 (/late/ggp79fpgdcd, /x-yghl9xzehyf.png, /late/1r1jjugbnwl)"
+    },
+    {
+      "name": "baseline: declared exclusion counted separately from misses",
+      "pass": true,
+      "detail": "declared 3"
+    },
+    {
+      "name": "baseline: trap WebSocket refused without egress",
+      "pass": true,
+      "detail": "refused 3, egress 0"
+    },
+    {
+      "name": "head: submission images come from the image store",
+      "pass": true,
+      "detail": "substituted 6, absent 0, misses 0"
+    },
+    {
+      "name": "baseline: alt-text requests stay no-image (never given HEAD images)",
+      "pass": true,
+      "detail": "baseline alt-text requests 5, with image 0; HEAD alt-text with image 3"
+    },
+    {
+      "name": "a replay-rendered screenshot is refused at the model boundary",
+      "pass": true,
+      "detail": "image misses 4"
+    },
+    {
+      "name": "replay: a missing cached response is a counted miss, not a live call",
+      "pass": true,
+      "detail": "cache misses 2"
+    },
+    {
+      "name": "default path unchanged: findings, criterion statuses and coverage identical (pre-harness vs current, eval off)",
+      "pass": true,
+      "detail": "findings 61 vs 61 (diff 0/0), criteria 48 (diff 0/0), coverage 78 (diff 0/0)"
+    }
+  ],
+  "engines": {
+    "head-clean": {
+      "totals": {
+        "pages": 3,
+        "har_misses": 0,
+        "node_fetch_misses": 0,
+        "declared_exclusion_hits": 0,
+        "fuzzy_matches": 0,
+        "contained_submissions": 0,
+        "websockets_refused": 0,
+        "attempted_egress": 0,
+        "image_misses": 0,
+        "submission_images_substituted": 6,
+        "submission_images_absent": 0,
+        "submission_image_misses": 0,
+        "cache_misses": 0,
+        "tooling_errors": 0
+      },
+      "transport": {
+        "contexts": 2,
+        "pages": 10,
+        "popups": 0,
+        "cdp_attached": 13,
+        "cdp_failed": 0,
+        "by_decision": {
+          "live": 0,
+          "har": 49,
+          "fuzzy": 0,
+          "declared-exclusion": 0,
+          "miss": 0,
+          "contained-submission": 0,
+          "robots-blocked": 0,
+          "websocket-blocked": 0
+        }
+      },
+      "client": {
+        "requests": 26,
+        "by_template": {
+          "link_text_quality": 10,
+          "heading_structure": 3,
+          "alt_text_quality": 3,
+          "consistent_navigation": 1,
+          "error_message_quality": 5,
+          "input_purpose_matching": 4
+        },
+        "vision": 8
+      },
+      "findings": 62
+    },
+    "head-trap": {
+      "totals": {
+        "pages": 1,
+        "har_misses": 4,
+        "node_fetch_misses": 1,
+        "declared_exclusion_hits": 2,
+        "fuzzy_matches": 0,
+        "contained_submissions": 0,
+        "websockets_refused": 2,
+        "attempted_egress": 0,
+        "image_misses": 0,
+        "submission_images_substituted": 0,
+        "submission_images_absent": 0,
+        "submission_image_misses": 0,
+        "cache_misses": 0,
+        "tooling_errors": 0
+      },
+      "transport": {
+        "contexts": 2,
+        "pages": 2,
+        "popups": 0,
+        "cdp_attached": 3,
+        "cdp_failed": 0,
+        "by_decision": {
+          "live": 0,
+          "har": 4,
+          "fuzzy": 0,
+          "declared-exclusion": 2,
+          "miss": 4,
+          "contained-submission": 0,
+          "robots-blocked": 0,
+          "websocket-blocked": 2
+        }
+      },
+      "client": {
+        "requests": 2,
+        "by_template": {
+          "heading_structure": 1,
+          "alt_text_quality": 1
+        },
+        "vision": 0
+      },
+      "findings": 4
+    },
+    "baseline-clean": {
+      "totals": {
+        "pages": 3,
+        "har_misses": 0,
+        "node_fetch_misses": 0,
+        "declared_exclusion_hits": 0,
+        "fuzzy_matches": 0,
+        "contained_submissions": 0,
+        "websockets_refused": 0,
+        "attempted_egress": 0,
+        "image_misses": 0,
+        "submission_images_substituted": 6,
+        "submission_images_absent": 0,
+        "submission_image_misses": 0,
+        "cache_misses": 0,
+        "tooling_errors": 0
+      },
+      "transport": {
+        "contexts": 2,
+        "pages": 13,
+        "popups": 0,
+        "cdp_attached": 16,
+        "cdp_failed": 0,
+        "by_decision": {
+          "live": 0,
+          "har": 64,
+          "fuzzy": 0,
+          "declared-exclusion": 0,
+          "miss": 0,
+          "contained-submission": 0,
+          "robots-blocked": 0,
+          "websocket-blocked": 0
+        }
+      },
+      "client": {
+        "requests": 34,
+        "by_template": {
+          "alt_text_quality": 5,
+          "link_text_quality": 14,
+          "heading_structure": 3,
+          "consistent_navigation": 1,
+          "error_message_quality": 7,
+          "input_purpose_matching": 4
+        },
+        "vision": 7
+      },
+      "findings": 61
+    },
+    "baseline-trap": {
+      "totals": {
+        "pages": 1,
+        "har_misses": 6,
+        "node_fetch_misses": 0,
+        "declared_exclusion_hits": 3,
+        "fuzzy_matches": 0,
+        "contained_submissions": 0,
+        "websockets_refused": 3,
+        "attempted_egress": 0,
+        "image_misses": 0,
+        "submission_images_substituted": 0,
+        "submission_images_absent": 0,
+        "submission_image_misses": 0,
+        "cache_misses": 0,
+        "tooling_errors": 0
+      },
+      "transport": {
+        "contexts": 2,
+        "pages": 3,
+        "popups": 0,
+        "cdp_attached": 4,
+        "cdp_failed": 0,
+        "by_decision": {
+          "live": 0,
+          "har": 6,
+          "fuzzy": 0,
+          "declared-exclusion": 3,
+          "miss": 6,
+          "contained-submission": 0,
+          "robots-blocked": 0,
+          "websocket-blocked": 3
+        }
+      },
+      "client": {
+        "requests": 2,
+        "by_template": {
+          "alt_text_quality": 1,
+          "heading_structure": 1
+        },
+        "vision": 0
+      },
+      "findings": 3
+    }
+  },
+  "equivalence": {
+    "findings": 61,
+    "criteria": 48,
+    "coverage": 78,
+    "diff": {
+      "findings": [
+        0,
+        0
+      ],
+      "criteria": [
+        0,
+        0
+      ],
+      "coverage": [
+        0,
+        0
+      ]
+    }
+  }
+}

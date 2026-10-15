@@ -412,3 +412,71 @@ describe("runSkipNavChecks", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// P2-013: a target that is not named like "main" but sits where main content
+// starts (popfly /overland: section#win right after .header-wrapper)
+// ---------------------------------------------------------------------------
+
+describe("skip-link target rule (P2-013)", () => {
+  const targetsHtml = readFileSync(join(import.meta.dirname, "..", "fixtures", "skip-link-targets.html"), "utf-8");
+  const withHref = (href: string) => targetsHtml.replace('class="skip-link" href="#win"', `class="skip-link" href="${href}"`);
+  let browser: Browser;
+  let context: BrowserContext;
+
+  beforeAll(async () => {
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext();
+  });
+
+  afterAll(async () => {
+    await browser.close();
+  });
+
+  const cases: Array<{ href: string; pass: boolean; rule?: "name" | "position"; focusMoved: boolean }> = [
+    { href: "#win", pass: true, rule: "position", focusMoved: true },
+    { href: "#main-content", pass: true, rule: "name", focusMoved: true },
+    { href: "#header-promo", pass: false, focusMoved: true },
+    { href: "#footer-top", pass: false, focusMoved: true },
+    { href: "#nope", pass: false, focusMoved: false },
+    { href: "#no-tabindex", pass: false, focusMoved: false },
+  ];
+  for (const c of cases) {
+    it(`${c.href}: ${c.pass ? `passes (${c.rule})` : "fails"}`, async () => {
+      const page = await context.newPage();
+      try {
+        await page.setContent(withHref(c.href));
+        const result = await verifySkipNav(page);
+        expect(result.found).toBe(true);
+        expect(result.focusMoved).toBe(c.focusMoved);
+        if (c.pass) {
+          expect(result.targetIsMainContent).toBe(true);
+          expect(result.targetRule).toBe(c.rule);
+          expect(result.failureReason).toBeNull();
+        }
+        await page.setContent(withHref(c.href));
+        const results = await runSkipNavChecks(page);
+        expect(results).toHaveLength(c.pass ? 0 : 1);
+        if (!c.pass) {
+          expect((results[0].raw_result as { type: string }).type).toBe("broken_skip_navigation");
+          expect(results[0].measured_values?.focus_moved).toBe(c.focusMoved);
+        }
+      } finally {
+        await page.close();
+      }
+    });
+  }
+
+  it("a target that wraps the header does not bypass it", async () => {
+    const page = await context.newPage();
+    try {
+      const html = withHref("#wrapper").replace('<div class="header-wrapper">', '<div id="wrapper" tabindex="-1"><div class="header-wrapper">').replace("<footer", "</div><footer");
+      await page.setContent(html);
+      const result = await verifySkipNav(page);
+      expect(result.focusMoved).toBe(true);
+      expect(result.targetIsMainContent).toBe(false);
+    } finally {
+      await page.close();
+    }
+  });
+});

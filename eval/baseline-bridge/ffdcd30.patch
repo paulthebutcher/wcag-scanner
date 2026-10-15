@@ -1,0 +1,25 @@
+diff --git a/src/core/scanner.ts b/src/core/scanner.ts
+index 17d6fc5..ac128f4 100644
+--- a/src/core/scanner.ts
++++ b/src/core/scanner.ts
+@@ -91,6 +91,10 @@ export interface ScanOptions {
+    * ScanResult.excludedByNoindex, and excluded from the scan.
+    */
+   includeNoindex?: boolean;
++  /** Eval harness bridge (transport only): see eval/baseline-bridge/README.md */
++  evalHooks?: {
++    submissionStates?: (pageUrl: string, form: FormInfo, states: SubmissionState[]) => SubmissionState[];
++  };
+ }
+ 
+ export interface ScanResult {
+@@ -1385,7 +1389,8 @@ export async function scan(
+                   // Error message evaluation (LLM)
+                   if (formRunner && states.length > 0) {
+                     try {
+-                      const errorResults = annotateShared(await evaluateErrorMessages(states, formRunner), form);
++                      const evalStates = options.evalHooks?.submissionStates?.(snapshot.url, form, states) ?? states;
++                      const errorResults = annotateShared(await evaluateErrorMessages(evalStates, formRunner), form);
+                       if (errorResults.length > 0) {
+                         for (const er of errorResults) formViolationCriteria.add(er.wcag_criterion);
+                         const findings = await processCheckResults(errorResults, {

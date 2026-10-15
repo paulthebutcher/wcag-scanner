@@ -7,3 +7,10 @@ coverage/
 .DS_Store
 .claude/worktrees/
 wcag-data-*/
+
+# Eval harness private records (Phase 1 invariant 5). Corpus, caches, runs
+# and worktrees live under wcag-data/, which is already ignored.
+eval/labels.jsonl
+eval/cases.jsonl
+eval/seed-resolutions.jsonl
+eval/**/*.private.*

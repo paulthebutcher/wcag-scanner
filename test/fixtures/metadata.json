@@ -1,27 +1,34 @@
 {
   "webflow-landing": {
     "url": "https://acme-corp.webflow.io/",
-    "title": "Acme Corp — Premium Solutions",
+    "title": "Acme Corp \u2014 Premium Solutions",
     "platform": "webflow",
     "platform_detected_via": "meta_generator",
     "has_violations": true,
-    "violation_types": ["missing-alt", "low-contrast", "empty-link"],
+    "violation_types": [
+      "missing-alt",
+      "low-contrast",
+      "empty-link"
+    ],
     "has_navigation": true,
     "has_form": false
   },
   "webflow-contact-form": {
     "url": "https://acme-corp.webflow.io/contact",
-    "title": "Contact Us — Acme Corp",
+    "title": "Contact Us \u2014 Acme Corp",
     "platform": "webflow",
     "platform_detected_via": "meta_generator",
     "has_violations": true,
-    "violation_types": ["missing-label", "low-contrast"],
+    "violation_types": [
+      "missing-label",
+      "low-contrast"
+    ],
     "has_navigation": true,
     "has_form": true
   },
   "webflow-blog-post": {
     "url": "https://acme-corp.webflow.io/blog/understanding-web-accessibility",
-    "title": "Understanding Web Accessibility — Acme Blog",
+    "title": "Understanding Web Accessibility \u2014 Acme Blog",
     "platform": "webflow",
     "platform_detected_via": "meta_generator",
     "has_violations": false,
@@ -31,12 +38,58 @@
   },
   "webflow-portfolio": {
     "url": "https://acme-design.webflow.io/portfolio",
-    "title": "Portfolio — Acme Design Studio",
+    "title": "Portfolio \u2014 Acme Design Studio",
     "platform": "webflow",
     "platform_detected_via": "meta_generator",
     "has_violations": true,
-    "violation_types": ["missing-lang", "missing-alt", "low-contrast", "missing-link-name"],
+    "violation_types": [
+      "missing-lang",
+      "missing-alt",
+      "low-contrast",
+      "missing-link-name"
+    ],
     "has_navigation": true,
     "has_form": false
+  },
+  "render-broken-blank": {
+    "platform": "webflow",
+    "provenance": "Hand-built on the structure of scan 8e03985c (popfly.com, 2026-10-14T03:06Z). The head custom code, including the '/style>' typo, the skip-link script and the class names are copied from the stored snapshots; page copy is placeholder. The full snapshots stay private in wcag-data/wcag.db.",
+    "defect": "P2-011",
+    "models": "8e03985c /brands (47 of 50 pages): the next </style> comes after the header, every section and the footer, so only footer scripts render",
+    "expected_render_health": "render_failed"
+  },
+  "render-broken-partial": {
+    "platform": "webflow",
+    "provenance": "Hand-built on the structure of scan 8e03985c (popfly.com, 2026-10-14T03:06Z). The head custom code, including the '/style>' typo, the skip-link script and the class names are copied from the stored snapshots; page copy is placeholder. The full snapshots stay private in wcag-data/wcag.db.",
+    "defect": "P2-011",
+    "models": "8e03985c /for-agencies and /: an embed <style> in section 3 closes the swallowed text; the header and sections 1-3 are lost, sections 4-6 render",
+    "expected_render_health": "render_failed"
+  },
+  "render-near-normal": {
+    "platform": "webflow",
+    "provenance": "Hand-built on the structure of scan 8e03985c (popfly.com, 2026-10-14T03:06Z). The head custom code, including the '/style>' typo, the skip-link script and the class names are copied from the stored snapshots; page copy is placeholder. The full snapshots stay private in wcag-data/wcag.db.",
+    "defect": "P2-011",
+    "models": "8e03985c /start/new: the next </style> is the following head <style>, so only a <style> tag is swallowed and the page renders normally",
+    "expected_render_health": "ok"
+  },
+  "render-healthy": {
+    "platform": "webflow",
+    "provenance": "Hand-built on the structure of scan 8e03985c (popfly.com, 2026-10-14T03:06Z). The head custom code, including the '/style>' typo, the skip-link script and the class names are copied from the stored snapshots; page copy is placeholder. The full snapshots stay private in wcag-data/wcag.db.",
+    "defect": "P2-011",
+    "models": "0705da2d (typo fixed): same page, correct </style>",
+    "expected_render_health": "ok"
+  },
+  "skip-link-targets": {
+    "platform": "webflow",
+    "defect": "P2-013",
+    "provenance": "Hand-built on the structure of popfly.com /overland in corpus tuning-v1 (and scan ee56b381): first-body skip link, .header-wrapper with logo and navigation, target section#win.section-convert-header with tabindex=-1. Copy is placeholder.",
+    "expected": {
+      "#win": "pass (position)",
+      "#main-content": "pass (name)",
+      "#header-promo": "fail (inside header)",
+      "#footer-top": "fail (footer)",
+      "#nope": "fail (missing target)",
+      "#no-tabindex": "fail (focus does not move)"
+    }
   }
 }

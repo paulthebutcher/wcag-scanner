@@ -11,6 +11,7 @@
  */
 
 import type { CheckResult } from "../../types.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,8 +117,9 @@ function hasLabel(nav: NavElement): boolean {
  * - Multiple nav elements where any lack labels → duplicate_nav_landmark
  * - Single nav with no label → unlabeled_nav_landmark
  */
-export function runLandmarkLabelChecks(dom: string): CheckResult[] {
-  const navs = extractNavElements(dom);
+export function runLandmarkLabelChecks(fullDom: string): CheckResult[] {
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const navs = extractNavElements(withoutRawTextContent(fullDom));
 
   if (navs.length === 0) return [];
 

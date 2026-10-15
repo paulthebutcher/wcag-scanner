@@ -1,4 +1,5 @@
 // Generated from Data Model spec — see CLAUDE.md for full field reference
+import type { RenderHealth } from "./core/render-health.js";
 
 export type Platform = "webflow" | "squarespace" | "shopify" | "wordpress" | "framer" | "unknown";
 export type Severity = "critical" | "major" | "minor" | "advisory";
@@ -156,6 +157,8 @@ export interface PageSnapshot {
   full_dom: string;
   screenshot: string;
   viewport: Viewport;
+  /** Measured on the crawl's own load (P2-011); not persisted in page_snapshots */
+  render_health?: RenderHealth;
 }
 
 export interface InteractionState {

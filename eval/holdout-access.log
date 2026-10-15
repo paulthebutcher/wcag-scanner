@@ -1,0 +1,2 @@
+# Holdout access log (Phase 1 invariant 10). One line per unsealed access:
+# timestamp<TAB>harness sha<TAB>command<TAB>reason. No content.

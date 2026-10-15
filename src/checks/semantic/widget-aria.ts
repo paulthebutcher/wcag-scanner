@@ -13,6 +13,7 @@
 import type { CheckResult } from "../../types.js";
 import type { PromptRunner, PromptResult, PromptTemplate, ModelRoute } from "../../core/prompt-runner.js";
 import { ELEMENT_EVAL_BASE_SYSTEM, ELEMENT_EVAL_OUTPUT_SCHEMA } from "../../prompts/element-evaluation.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -343,9 +344,11 @@ export function collectWidgetCandidates(dom: string): WidgetCandidate[] {
  * Returns CheckResult[] with wcag_criterion "4.1.2".
  */
 export async function runWidgetAriaChecks(
-  dom: string,
+  fullDom: string,
   runner: PromptRunner,
 ): Promise<CheckResult[]> {
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(fullDom);
   const candidates = collectWidgetCandidates(dom);
   if (candidates.length === 0) return [];
 

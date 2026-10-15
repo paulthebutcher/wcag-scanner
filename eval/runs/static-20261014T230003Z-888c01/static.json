@@ -1,0 +1,294 @@
+{
+  "run_id": "static-20261014T230003Z-888c01",
+  "engine": {
+    "label": "head",
+    "sha": "8e07099dda48a065d0def2a741b016c6c9c90afc",
+    "bridge": null
+  },
+  "harness": {
+    "sha": "8e07099dda48a065d0def2a741b016c6c9c90afc",
+    "dirty": false
+  },
+  "cache_namespace": "static-v1",
+  "validity": {
+    "valid": true,
+    "official": false,
+    "reasons": [],
+    "unavailable": []
+  },
+  "replays_identical": null,
+  "outcomes": [
+    {
+      "case_id": "LS-001",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-002",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-003",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-004",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-005",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-006",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-007",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-008",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-009",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-010",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-011",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-012",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-013",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-014",
+      "outcome": "fail",
+      "reason": "flagged although expected clean",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-015",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-016",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-017",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-101",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-102",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-103",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-104",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-105",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-106",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-107",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-108",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-109",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-110",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-111",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-112",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-113",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-114",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-115",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-116",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-117",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": true
+    },
+    {
+      "case_id": "LS-040",
+      "outcome": "fail",
+      "reason": "expected violation not detected",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-041",
+      "outcome": "pass",
+      "reason": "matches the expected outcome",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-042",
+      "outcome": "fail",
+      "reason": "expected violation not detected",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-043",
+      "outcome": "not_run",
+      "reason": "unresolved_fixture",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-044",
+      "outcome": "not_run",
+      "reason": "unresolved_fixture",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-045",
+      "outcome": "not_run",
+      "reason": "requires_rendering",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-046",
+      "outcome": "not_run",
+      "reason": "unresolved_fixture",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-047",
+      "outcome": "not_run",
+      "reason": "scan_level",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-048",
+      "outcome": "not_run",
+      "reason": "scan_level",
+      "severity_ok": null
+    },
+    {
+      "case_id": "LS-049",
+      "outcome": "not_run",
+      "reason": "scan_level",
+      "severity_ok": null
+    }
+  ],
+  "counts": {
+    "pass": 30,
+    "fail": 7,
+    "not_run": 7
+  },
+  "synthetic": null,
+  "cache_misses": 0,
+  "egress": 0
+}

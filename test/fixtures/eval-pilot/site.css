@@ -1,0 +1,22 @@
+body { font-family: Arial, sans-serif; margin: 0; color: #222; background: #fff; }
+.navbar { display: flex; gap: 24px; padding: 12px 24px; background: #2f5d3a; }
+.w-nav-link { color: #fff; text-decoration: none; }
+a:focus, button:focus, input:focus, .w-tab-link:focus { outline: none; }
+.skip-link { position: absolute; left: -9999px; }
+.skip-link:focus { left: 8px; top: 8px; background: #fff; }
+.main { padding: 24px; max-width: 900px; }
+.hero-image, .team-image { display: block; width: 320px; height: 160px; }
+.divider { display: block; width: 600px; height: 8px; }
+.w-tab-menu { display: flex; gap: 12px; }
+.w-tab-link { cursor: pointer; padding: 6px 10px; border: 1px solid #ccc; }
+.w-tab-pane { display: none; }
+.w-tab-pane.w--tab-active { display: block; }
+.btn { display: inline-block; padding: 10px 16px; background: #2f5d3a; color: #fff; cursor: pointer; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; }
+.modal[hidden] { display: none; }
+.modal-card { background: #fff; padding: 24px; width: 360px; }
+.close-modal { cursor: pointer; color: #2f5d3a; margin-top: 12px; }
+.contact-form, .newsletter-form, .legacy-form, .search-form { display: grid; gap: 8px; max-width: 420px; margin: 16px 0; }
+.error-message { color: #c00; font-size: 14px; }
+.field-error { border: 2px solid #c00; }
+.footer { padding: 24px; background: #eee; }

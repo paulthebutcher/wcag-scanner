@@ -31,6 +31,8 @@ import { LocalFileStore } from "../store/files.js";
 import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
 import { CoverageRecorder, writeCoverage, type ScanCoverage } from "./coverage.js";
+import { CHECK_TIERS } from "./check-registry.js";
+import { withoutRawTextContent } from "./markup.js";
 import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
@@ -105,6 +107,24 @@ export interface ScanOptions {
   checks?: string[];
   /** For a verification rescan: the scan whose fixes this one checks */
   baselineScanId?: string;
+  /** Eval harness only (see src/eval). Unset in every production path. */
+  evalHooks?: EvalScanHooks;
+}
+
+/**
+ * Transport hooks for the offline eval harness. They may replace inputs with
+ * recorded ones but never change candidates, verdicts, severity, confidence
+ * or remediation.
+ */
+export interface EvalScanHooks {
+  /**
+   * Called with a form's submission states before error-message evaluation;
+   * returns the states to evaluate, with each `screenshotAfter` (the model's
+   * image input) replaced by the bytes recorded at capture time, or "" for a
+   * recorded no-image state. A screenshot rendered during replay must never
+   * reach the model.
+   */
+  submissionStates?: (pageUrl: string, form: FormInfo, states: SubmissionState[]) => SubmissionState[];
 }
 
 export interface ScanResult {
@@ -139,6 +159,34 @@ export function detectPlatform(dom: string): { platform: Platform; detected_via:
     }
   }
   return { platform: "unknown", detected_via: "no_match" };
+}
+
+// ---------------------------------------------------------------------------
+// Render failures (P2-011)
+// ---------------------------------------------------------------------------
+
+/** The loud line printed (and reported) when pages rendered broken. */
+export function renderFailedAlert(failed: number, crawled: number): string {
+  return `ALERT: ${failed} of ${crawled} page(s) rendered broken or blank and were not checked. `
+    + "Findings and passes cover the other pages only; fix the site (often an unclosed <style> in custom code) and rescan.";
+}
+
+/**
+ * A page that rendered broken was not tested, so no criterion can pass for
+ * the scan, nor be called not applicable from the pages that were checked:
+ * "passed" and "not_applicable" results become "not_tested". Returns the
+ * results it changed (mutated in place).
+ */
+export function blockPassesOnRenderFailure(results: CriterionResult[], renderFailedPages: number): CriterionResult[] {
+  if (renderFailedPages <= 0) return [];
+  const changed: CriterionResult[] = [];
+  for (const cr of results) {
+    if (cr.status !== "passed" && cr.status !== "not_applicable") continue;
+    cr.status = "not_tested";
+    cr.evidence_summary = `Cannot pass: ${renderFailedPages} page(s) rendered broken and were not checked (was: ${cr.evidence_summary})`;
+    changed.push(cr);
+  }
+  return changed;
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +803,9 @@ export async function scan(
 
   const allFindings: Finding[] = [];
   const allCriterionResults: CriterionResult[] = [];
+  /** Every page the crawl captured (persisted and reported) */
+  let crawledSnapshots: PageSnapshot[] = [];
+  /** Pages the checks run on: crawled pages that rendered healthy (P2-011) */
   let pageSnapshots: PageSnapshot[] = [];
   // Per-check, per-page outcomes: ran | failed (error) | skipped (reason)
   const coverage = new CoverageRecorder();
@@ -784,6 +835,8 @@ export async function scan(
       urlList: options.urls,
       onPage: tiers.includes(1) && runs("axe-core")
         ? async (page, snapshot, screenshot) => {
+            // No check runs on a page that rendered broken (P2-011)
+            if (snapshot.render_health?.status === "render_failed") return;
             const endAxe = startPhase("axe_in_crawl");
             try {
               const output = await runAxeChecks(page, scanId);
@@ -803,9 +856,24 @@ export async function scan(
       throw err;
     });
     endCrawl();
-    pageSnapshots = crawlResult.snapshots;
+    crawledSnapshots = crawlResult.snapshots;
     excludedByNoindex = crawlResult.excludedByNoindex;
     for (const f of crawlResult.failedPages) coverage.crawlFailure(f.url, f.error);
+
+    // Render health (P2-011): a page that rendered broken or blank is not
+    // checked. Every check that would have run is recorded as failed on it,
+    // and no criterion can pass (Phase 8b), so a broken site never reads as
+    // fewer findings.
+    const renderFailed = crawledSnapshots.filter((p) => p.render_health?.status === "render_failed");
+    pageSnapshots = crawledSnapshots.filter((p) => p.render_health?.status !== "render_failed");
+    const scanChecks = Object.entries(CHECK_TIERS)
+      .filter(([check, tier]) => tiers.includes(tier) && runs(check))
+      .map(([check, tier]) => ({ check, tier }));
+    for (const p of renderFailed) coverage.renderFailure(p.url, p.render_health!.reasons, scanChecks);
+    if (renderFailed.length > 0) {
+      reporter.warn("render", renderFailedAlert(renderFailed.length, crawledSnapshots.length));
+      for (const p of renderFailed) reporter.warn("render", `  ${p.url}: ${p.render_health!.reasons.join("; ")}`);
+    }
 
     // Persist excluded-page list on the scan session so the report can
     // surface it after the scan completes.
@@ -815,16 +883,16 @@ export async function scan(
     const excludedMsg = excludedByNoindex.length > 0
       ? ` (${excludedByNoindex.length} noindex page(s) excluded)`
       : "";
-    reporter.complete("crawl", `Discovered ${pageSnapshots.length} page(s)${excludedMsg}`);
+    reporter.complete("crawl", `Discovered ${crawledSnapshots.length} page(s)${excludedMsg}`);
 
-    // Persist page snapshots
-    for (const snapshot of pageSnapshots) {
+    // Persist page snapshots (broken renders too: the evidence of what was seen)
+    for (const snapshot of crawledSnapshots) {
       insertPageSnapshot(db, snapshot);
     }
 
     // --- Phase 2: Platform detection ------------------------------------------
-    if (pageSnapshots.length > 0) {
-      const { platform, detected_via } = detectPlatform(pageSnapshots[0].full_dom);
+    if (crawledSnapshots.length > 0) {
+      const { platform, detected_via } = detectPlatform(crawledSnapshots[0].full_dom);
       scanSession.platform = platform;
       scanSession.platform_detected_via = detected_via;
       updateScanSession(db, scanId, { platform, platform_detected_via: detected_via });
@@ -1516,7 +1584,8 @@ export async function scan(
                   // Error message evaluation (LLM)
                   if (formRunner && states.length > 0 && runs("error-messages")) {
                     try {
-                      const errorResults = annotateShared(await evaluateErrorMessages(states, formRunner), form);
+                      const evalStates = options.evalHooks?.submissionStates?.(snapshot.url, form, states) ?? states;
+                      const errorResults = annotateShared(await evaluateErrorMessages(evalStates, formRunner), form);
                       coverage.ran("error-messages", 4, snapshot.url);
                       if (errorResults.length > 0) {
                         for (const er of errorResults) formViolationCriteria.add(er.wcag_criterion);
@@ -1783,8 +1852,9 @@ export async function scan(
     // Check if any page has audio/video elements. If not, mark 1.2.1-1.2.5 as not_applicable.
     {
       const hasMedia = pageSnapshots.some((snap) => {
-        const dom = snap.full_dom.toLowerCase();
-        return /<(audio|video)\b/.test(dom) || /<source\b[^>]+type\s*=\s*["'](audio|video)\//i.test(snap.full_dom);
+        // Rendered markup only (P2-012)
+        const markup = withoutRawTextContent(snap.full_dom);
+        return /<(audio|video)\b/i.test(markup) || /<source\b[^>]+type\s*=\s*["'](audio|video)\//i.test(markup);
       });
       if (!hasMedia) {
         const mediaCriteria: Array<[string, string]> = [
@@ -1825,8 +1895,12 @@ export async function scan(
     // Later tiers may add violations for criteria that earlier tiers marked passed.
     const reconciledResults = reconcileCriterionResults(scanId, allFindings, allCriterionResults, db);
 
+    // --- Phase 8b: No criterion passes while a page rendered broken (P2-011) --
+    const renderFailedCount = crawledSnapshots.length - pageSnapshots.length;
+    for (const cr of blockPassesOnRenderFailure(reconciledResults, renderFailedCount)) upsertCriterionResult(db, cr);
+
     // --- Phase 9: Compute summary ---------------------------------------------
-    const pageUrlById = new Map(pageSnapshots.map((p) => [p.id, p.url]));
+    const pageUrlById = new Map(crawledSnapshots.map((p) => [p.id, p.url]));
     const summary = computeSummary(scanId, allFindings, reconciledResults, (id) => pageUrlById.get(id) ?? id);
     upsertScanSummary(db, summary);
 
@@ -1835,7 +1909,7 @@ export async function scan(
     updateScanSession(db, scanId, { completed_at: scanSession.completed_at });
 
     // --- Phase 10b: Coverage ----------------------------------------------------
-    const coverageData = coverage.toJSON(scanId, pageSnapshots.map((p) => p.url));
+    const coverageData = coverage.toJSON(scanId, crawledSnapshots.map((p) => p.url));
     // A check-subset scan records only the checks it was asked to run
     coverageData.entries = coverageData.entries.filter((e) => runs(e.check));
     try {
@@ -1866,7 +1940,7 @@ export async function scan(
       writeFileSync(join(scanDir, "timings.json"), JSON.stringify({
         scan_id: scanId,
         total_ms: totalMs,
-        pages: pageSnapshots.length,
+        pages: crawledSnapshots.length,
         page_concurrency: pageConcurrency,
         llm_concurrency: llmConcurrency,
         // Overlapping phases each record their own elapsed time; axe_in_crawl
@@ -1891,14 +1965,15 @@ export async function scan(
       reporter.warn("timing", `Could not write timings: ${msg}`);
     }
 
-    reporter.complete("scan", `Complete: ${allFindings.length} finding(s)`);
+    if (renderFailedCount > 0) reporter.warn("render", renderFailedAlert(renderFailedCount, crawledSnapshots.length));
+    reporter.complete("scan", `Complete: ${allFindings.length} finding(s)${renderFailedCount > 0 ? ` on ${pageSnapshots.length} of ${crawledSnapshots.length} page(s)` : ""}`);
 
     return {
       scanSession,
       summary,
       findings: allFindings,
       criterionResults: reconciledResults,
-      pageSnapshots,
+      pageSnapshots: crawledSnapshots,
       excludedByNoindex,
       coverage: coverageData,
     };
@@ -1911,7 +1986,7 @@ export async function scan(
         const summary = computeSummary(scanId, allFindings, allCriterionResults);
         upsertScanSummary(db, summary);
       }
-      writeCoverage(options.dataDir, coverage.toJSON(scanId, pageSnapshots.map((p) => p.url)));
+      writeCoverage(options.dataDir, coverage.toJSON(scanId, crawledSnapshots.map((p) => p.url)));
     } catch {
       // If even partial save fails, just continue to rethrow
     }

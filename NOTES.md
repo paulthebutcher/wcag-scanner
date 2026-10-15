@@ -213,8 +213,83 @@ The truncation did not reproduce in 9 keyboard-only sweeps, so the retry path ra
 
 Tests after all five fixes: 1,305 (1,288 before).
 
+## Scanner fixes (2026-10-13, Popfly review)
+
+Review: `docs/popfly-scan-review-2026-10-13.md`. Frozen corpus tuning-v4: 47 popfly.com pages from the tuning-v1 capture (`capture-20261014T223021Z-db47cc`), with 4 pages excluded for per-load variation and one supplemented asset. Pre-fix reference: `replay-20261015T013504Z-5b7a06` (3 repeats, valid, non-behavioral identical; focus-order flake 2/46). Static pre-fix reference: `static-20261015T013516Z-072ff9` (30 pass, 7 fail). Tests before these fixes: 1,427.
+
+Checkpoint 0 changed the plan (observed): scan 8e03985c captured the unclosed-style break on all 50 pages, so review fixes 1 (animation settle) and 4 (names read before scripts) targeted the wrong causes; see the Corrections in the review's resolution log. With Paul's approval they were replaced by P2-011 (render health) and P2-012 (raw-text elements). Fixes 2 and 3 are P2-013 and P2-014.
+
+### Fix 1: pages that render broken or blank (P2-011)
+
+- Observed: all 50 snapshots of 8e03985c contain the broken `/style>`. 47 full-page screenshots are a blank 800 px viewport; `/` and `/for-agencies` lost the header and their top sections; `/start/new` lost only a `<style>` tag and rendered normally. Every check ran on what rendered, and the DOM-text checks also read the swallowed markup.
+- Cause (observed): an unclosed `<style>` in head custom code turns the following markup into CSS text. The review inferred animations; the 37 definitive contrast failures were accurate measurements of the broken render, and none recurs on the healthy render 27 minutes later (0705da2d) or live.
+- Change: `src/core/render-health.ts` (new: `assessRenderHealth`, `classifyRenderHealth`, `measureServedHtml`, `isUniformImage`). `crawler.ts` `visit()` measures each page on its own load: markup inside `<style>` text, rendered vs served section/landmark count, visible text, a flat screenshot. In `scanner.ts` a failed page is persisted but not checked: `CoverageRecorder.renderFailure` records every check that would have run as `failed` (`render_failed: …`), `blockPassesOnRenderFailure` turns `passed` and `not_applicable` criteria into `not_tested`, and an ALERT is printed after the crawl and at completion. `coverage.json` lists `render_failed` pages; findings.md and the HTML report open the coverage section with the ALERT.
+- Validation on stored data (offline, network blocked; observed): 8e03985c 49 of 50 pages fail (`/start/new` passes); 0705da2d 0 of 50.
+
+| Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `225cfc` | Live |
+|---|---|---|---|
+| Pages render_failed | — | 0 | pending |
+| Findings (predictions, repeat 1) | 867 | 867 | pending |
+| Coverage ran / skipped | 926 / 270 | 926 / 270 | pending |
+| Gate `compare-20261015T024600Z-492054` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
+
+- Tests: `test/unit/render-health.test.ts` (17) with fixtures `render-broken-blank`, `render-broken-partial`, `render-near-normal`, `render-healthy` (hand-built on the 8e03985c structure; provenance in `test/fixtures/metadata.json`). Suite 1,427 → 1,444.
+- Assumptions: a failed page produces no findings (its checks are skipped) rather than quarantined findings; "counted separately" is the alert's page count (assumed reading of the request). No tuning page renders broken, so the frozen delta is zero by design; the effect is shown on the 8e03985c snapshots.
+
+### Fix 2: markup inside style, script, noscript and template (P2-012)
+
+- Observed: 8e03985c reports `image_link_no_alt` on the header logo link on 49 pages (2 rows), although the header sat inside the unclosed `<style>` and never rendered. Checks that read `snapshot.full_dom` with regular expressions treat raw-text element contents as elements.
+- Cause (observed): regex extraction does not respect raw-text elements. The review inferred that names were read before webflow.js ran; disproved: webflow.js sets `aria-label="home"` 5–12 ms after DOMContentLoaded (live, 2026-10-14) and the label is in all 50 healthy snapshots of 0705da2d.
+- Real-world effect before the fix, by element location in the stored snapshots (observed): 8e03985c has 240 phantom finding occurrences (elements only inside raw-text elements), among them `image_link_no_alt` 49, `semantic` 49, `animated_content_no_pause` 47, `style_not_structure` 40, `generic_link_text` 23, `missing_autocomplete` 11; the healthy scan 0705da2d has 0 (its 161 `missing_autocomplete` occurrences are rendered inputs). The one `image_link_no_alt` left in 0705da2d is the footer Instagram link on `/case-studies`, the only page whose copy has no `aria-label` (inferred true positive). On 0705da2d the helper removes 100 alt-text candidates (LinkedIn and Facebook tracking pixels inside `<noscript>`) and changes the surrounding context of 1,608 images (CSS and script text no longer included).
+- Change: `src/core/markup.ts` (new, `withoutRawTextContent`) used by alt-text, link-text, headings, landmark-labels, widget-aria, table-structure, duplicate-links, consistent-nav, form discovery, multiple-ways, the GIF/video/carousel/pause-control/inline-animation parts of pause-stop-hide and three-flashes, and the scanner's media check. CSS animation rules, `prefers-reduced-motion` and motion listeners are still read from style and script text by design. Platform detection and the error-message prompt (P2-001) are unchanged.
+
+| Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `477ab3` | Live |
+|---|---|---|---|
+| Findings (predictions) | 867 | 867 | pending |
+| Model requests changed | — | 3 (re-record `646e00`, $0.01); static 1 ($0.013) | |
+| Gate `compare-20261015T031239Z-44c3ba` | | exit 0: 0 added, 0 removed, 0 criterion or coverage changes; static unchanged | |
+
+- Tests: `test/unit/markup.test.ts` (12): the helper, and each converted check on swallowed vs rendered markup, including a nameless logo link that is still evaluated. Suite 1,444 → 1,456.
+- Assumptions: HTML comments are not stripped (not requested; not checked for phantoms); nested `<template>` is cut at the first closing tag.
+
+### Fix 3: skip-link targets not named like "main" (P2-013)
+
+- Observed: scan ee56b381 reports `broken_skip_navigation` on `/start/new` and `/overland` with `focus_moved: true`, `target_is_main_content: false`; the target is `section#win` (`tabindex="-1"`), the first section after `.header-wrapper`, and focus moves there live (review).
+- Cause (observed): `isMainContent` accepted only `main`, `role="main"`, ids main/content/main-content/maincontent/primary or class main-content. The review's cause is confirmed.
+- Change: `src/checks/behavioral/skip-nav.ts`, the target evaluation in `activateAndVerifySkipLink`: a target also counts when it is not inside header, nav or footer, comes after every header and nav focus stop in DOM order, and is at or before the first `h1` or first content section. Name matches still pass on their own; the focus checks and the late-focus wait (7494e90) are unchanged. The rule used is recorded as `targetRule` in the raw result.
+- Corpus: the `#win` pages are not exercised on tuning-v4 (`/start/new` is excluded for P2-021; `/overland` is noindex and not scanned), so acceptance rests on the fixtures and the stored ee56b381 snapshots. Offline (scripts stripped, network blocked) both ee56b381 pages go from `broken_skip_navigation` (`focus_moved=true main=false`) to pass (observed).
+
+| Run (tuning-v4, 47 pages) | Pre-fix `5b7a06` | Post-fix `1eb75b` | Live |
+|---|---|---|---|
+| `broken_skip_navigation` | 1 (/post/5-fall-reel-trend-you-need-to-try-right-now, focus not moved, P2-015) | 1 (same, unchanged) | pending |
+| Findings (predictions) | 867 | 867 | pending |
+| Gate `compare-20261015T032556Z-dec27e` | | exit 0: 1 `focus_order_mismatch` swapped (the known focus-order flake); 0 criterion or case changes; static unchanged | |
+
+- Tests: `test/unit/skip-nav.test.ts` +7 with fixture `skip-link-targets.html` (shape of `/overland`): `#win` passes by position, `#main-content` by name; a target inside the header, in the footer, missing, without `tabindex` (focus does not move) or wrapping the header fails. Suite 1,456 → 1,463.
+- Assumptions: header and nav stops are focusables inside `header`, `nav`, `[role=banner]` or `[role=navigation]`; content sections are `main`, `section` and `article` outside header, nav and footer.
+
+### Fix 4: page-level findings clustered as one Top fix (P2-014)
+
+- Observed: Top fixes row 5 "html: focus order mismatch" (cluster `79dc811ae6ad`, 0.1–0.2 h) spans 17 pages in ee56b381 and 20 in 6d4e82fe and 0705da2d: every page's own focus-order summary is reported on `<html>` and shares one signature.
+- Cause (observed): the cluster signature has no page component for page-level summary findings. The review's cause is confirmed.
+- Change: `src/report/clustering.ts`: `isPageLevelSummary` (selector `html` or a `<…-summary>` node, unless the failure type is on the explicit `SITE_LEVEL_FAILURE_TYPES` allowlist: `insufficient_navigation_methods`, `missing_skip_navigation`, `bypass`, `html-has-lang`, `html-lang-valid`, `html-xml-lang-mismatch`); such findings cluster per page (signature plus the stored page URL) and carry `page_level`. `src/report/top-fixes-report.ts`: `topFixClusters` leaves them out of Top fixes; new "Per-page fixes" section (`renderPageLevelMarkdown`, `renderPageLevelHtml`) with each page's estimate, in findings.md and the HTML report. `finding_type_hash` (P2-003) is unchanged.
+- Detection is unchanged: this is the report layer only, so it was gated by unit tests and by regenerating Top fixes from stored data instead of a replay (approved).
+
+| Stored scan | Top fixes before | Top fixes after | Per-page fixes after | Headline estimate | Live |
+|---|---|---|---|---|---|
+| 0705da2d | 9 estimated rows, 4.7–9.4 h, incl. `html: focus order mismatch` | 9 rows, 5.1–10.2 h, no html row | 24 pages (23 focus order, 1 truncated tab sweep), 2.8–6.1 h | 27–46 h (unchanged) | pending |
+| 8e03985c | 9 rows, 3.95–7.9 h (no html row: 2 pages) | unchanged | 2 pages, 0.2–0.4 h | 16–29 h (unchanged) | pending |
+
+- The headline estimate does not move because the effort model already counted focus order per page (`KIND_BY_FAILURE_TYPE`); only Top fixes understated it.
+- Tests: `test/unit/page-level-clusters.test.ts` (4). Suite 1,463 → 1,467.
+- Assumptions: a deduplicated summary row keeps its "also found on" pages in its own per-page row (identical summaries on one template are one change).
+
 ## Out of scope
 
+- Popfly review items 5–8 and P2-015 (registered as P2-016..P2-019 and P2-015; see KNOWN_ISSUES.md), and the residual per-load variation sources P2-020..P2-023 beyond the eval-harness side.
+- The animation-settle pass proposed for review fix 1: not reproduced (0 definitive contrast failures live before and after settling), so not built.
+- Stripping HTML comments in `withoutRawTextContent` (not requested; comments were not checked for phantoms).
+- Re-recording the baseline engine on tuning-v4 (stale cache; D6 deferred).
 - Grouping class-level style fixes (focus indicators, colours set on a class) by class instead of per element. It would merge the per-link footer focus clusters into one Top fix, but needs a different signature from the one specified.
 - Recognising GrowSurf by `data-grsf-*` attributes or `growsurf-prod` image URLs, which would move the three GrowSurf images (Top fixes 5 to 7) to Third-party.
 - The report's "Findings by Type" cards merge different axe rules that share a `finding_type_hash` (for example `aria-prohibited-attr` inside the "aria allowed attr" card), and a card shows one remediation for the whole group. Top fixes keeps them apart. Fixing the card grouping changes report structure beyond these phases.

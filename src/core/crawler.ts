@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { PageSnapshot, Viewport } from "../types.js";
 import type { FileStore } from "../store/files.js";
 import type { ProgressReporter } from "./progress.js";
+import { assessRenderHealth, type RenderHealth } from "./render-health.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -719,6 +720,10 @@ export async function crawl(
           screenshotBuffer,
         );
 
+        // Render health (P2-011): is this render the page the server sent?
+        const servedHtml = response ? await response.text().catch(() => null) : null;
+        const renderHealth: RenderHealth | undefined = await assessRenderHealth(page, servedHtml, screenshotBuffer).catch(() => undefined);
+
         const snapshot: PageSnapshot = {
           id: randomUUID(),
           scan_session_id: options.scanSessionId,
@@ -728,6 +733,7 @@ export async function crawl(
           full_dom: dom,
           screenshot: screenshotPath,
           viewport,
+          render_health: renderHealth,
         };
         snapshots.push(snapshot);
         options.reporter?.update("crawl", `Discovering pages... ${snapshots.length} captured, ${queued.size} known`);

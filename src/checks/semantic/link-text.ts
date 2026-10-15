@@ -5,6 +5,7 @@ import {
   buildLinkTextUserPrompt,
 } from "../../prompts/element-evaluation.js";
 import { buildLlmCapture } from "./llm-capture.js";
+import { withoutRawTextContent } from "../../core/markup.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -277,13 +278,15 @@ export function hasDescriptiveAriaLabel(link: LinkContext): boolean {
  * 5. Returns CheckResult[] for links that fail.
  */
 export async function runLinkTextChecks(
-  dom: string,
+  fullDom: string,
   runner: PromptRunner,
   options: {
     deduplicateCms?: boolean;
   } = {},
 ): Promise<CheckResult[]> {
   const { deduplicateCms = true } = options;
+  // Markup inside <style>/<script>/<noscript>/<template> is never rendered (P2-012)
+  const dom = withoutRawTextContent(fullDom);
 
   // 1. Collect all links
   let links = collectLinks(dom);

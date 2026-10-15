@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refuse a commit whose staged eval exports fail the privacy scan
+# (URLs, markup or private hostnames). Enable once per clone:
+#   git config core.hooksPath .githooks
+exec npx --no-install tsx src/cli/index.ts eval privacy --staged
