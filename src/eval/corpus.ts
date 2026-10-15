@@ -4,7 +4,7 @@ import { canonicalJson, hashJson, readJson, sha256, sha256File, writeJson } from
 import type { BrowserContract } from "./transport/browser.js";
 import type { NodeFetchRecord } from "./transport/node-fetch.js";
 import type { EvalPaths } from "./paths.js";
-import { isServable, readHar } from "./transport/har.js";
+import { isServable, readHar, type HarEntry } from "./transport/har.js";
 
 // ---------------------------------------------------------------------------
 // Frozen corpus layout (D1). Everything here is private.
@@ -100,6 +100,11 @@ export interface SiteCapture {
   containment: { contained_requests: number; by_detail: Record<string, number> };
   /** Every file under the site directory except this one → sha256 */
   file_hashes: Record<string, string>;
+  /** Live fetches added to a derived version (site/supplement.har): the capture log for each */
+  supplements?: Array<{
+    url: string; fetched_at: string; run_id: string; reason: string; user_agent: string;
+    robots: string; status: number; content_type: string | null; bytes: number; sha256: string;
+  }>;
   /** Set on a corpus version derived from another (deriveCorpus) */
   derived_from?: { version: string; capture_run_id: string; derived_at: string; excluded: Array<{ page_id: string; reason: string }> };
 }
@@ -268,6 +273,57 @@ export function deriveCorpus(paths: EvalPaths, input: { from: string; to: string
   mkdirSync(dirname(join(dst, "site.private.json")), { recursive: true });
   writeJson(join(dst, "site.private.json"), derived);
   return derived;
+}
+
+/** Supplementary HAR of a derived version: assets the capture never requested. */
+export const SUPPLEMENT_HAR = join("site", "supplement.har");
+
+/**
+ * Derive a version and add assets the capture never requested, fetched live
+ * (one request each, by the caller's fetch under the capture etiquette) into
+ * site/supplement.har. Replay merges it after the page HARs, so a captured
+ * entry always wins. Each fetch is recorded in site.private.json.
+ */
+export async function supplementCorpus(paths: EvalPaths, input: {
+  from: string; to: string; split: Split; siteId: string; urls: string[]; reason: string; runId: string; userAgent: string;
+  robotsDecision: (url: string) => string;
+  fetchImpl: (url: string) => Promise<{ status: number; headers: Array<[string, string]>; body: Buffer }>;
+}): Promise<SiteCapture> {
+  if (!input.reason.trim()) throw new Error("A supplement needs a reason");
+  // Every URL is checked before anything is written or fetched
+  const decisions = new Map(input.urls.map((url) => [url, input.robotsDecision(url)]));
+  for (const [url, robots] of decisions) if (robots.startsWith("disallowed")) throw new Error(`robots: ${url} ${robots}`);
+  const derived = deriveCorpus(paths, { from: input.from, to: input.to, split: input.split, siteId: input.siteId, exclude: [] });
+  const dst = siteDir(paths, { version: input.to, split: input.split, siteId: input.siteId });
+  const entries: HarEntry[] = [];
+  const log: NonNullable<SiteCapture["supplements"]> = [...(derived.supplements ?? [])];
+  for (const url of input.urls) {
+    const robots = decisions.get(url)!;
+    const fetchedAt = new Date().toISOString();
+    const res = await input.fetchImpl(url);
+    const contentType = res.headers.find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? null;
+    entries.push({
+      startedDateTime: fetchedAt,
+      time: 0,
+      request: { method: "GET", url, httpVersion: "HTTP/1.1", headers: [], queryString: [], cookies: [], headersSize: -1, bodySize: 0 } as HarEntry["request"],
+      response: {
+        status: res.status, statusText: "", httpVersion: "HTTP/1.1", cookies: [], redirectURL: "", headersSize: -1, bodySize: res.body.length,
+        headers: res.headers.filter(([k]) => !/^(content-length|content-encoding|transfer-encoding|set-cookie)$/i.test(k)).map(([name, value]) => ({ name, value })),
+        content: { size: res.body.length, mimeType: contentType ?? "application/octet-stream", text: res.body.toString("base64"), encoding: "base64" },
+      } as HarEntry["response"],
+      cache: {}, timings: { send: 0, wait: 0, receive: 0 },
+    });
+    log.push({ url, fetched_at: fetchedAt, run_id: input.runId, reason: input.reason, user_agent: input.userAgent, robots, status: res.status, content_type: contentType, bytes: res.body.length, sha256: sha256(res.body) });
+  }
+  const harPath = join(dst, SUPPLEMENT_HAR);
+  const existing: HarEntry[] = existsSync(harPath) ? readHar(harPath).log.entries : [];
+  if (existsSync(harPath)) unlinkSync(harPath);
+  mkdirSync(dirname(harPath), { recursive: true });
+  writeJson(harPath, { log: { version: "1.2", creator: { name: "wcag-eval supplement", version: "1" }, entries: [...existing, ...entries] } });
+  unlinkSync(join(dst, "site.private.json"));
+  const out: SiteCapture = { ...derived, supplements: log, file_hashes: hashTree(dst, ["site.private.json"]) };
+  writeJson(join(dst, "site.private.json"), out);
+  return out;
 }
 
 // ---------------------------------------------------------------------------

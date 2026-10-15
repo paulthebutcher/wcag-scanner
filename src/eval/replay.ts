@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  loadImageIndex, loadNodeFetchRecords, loadSiteCapture, siteDir, imageIndexHash,
+  loadImageIndex, loadNodeFetchRecords, loadSiteCapture, siteDir, imageIndexHash, SUPPLEMENT_HAR,
   type SiteCapture, type SiteRef,
 } from "./corpus.js";
 import { isDeclaredConnect, launchControlledBrowser, type ControlledBrowser, type TransportCounters } from "./transport/browser.js";
@@ -136,7 +136,12 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
   const pageIdOf = (url: string) => pageIdByUrl.get(url) ?? `(other:${url.length})`;
 
   // --- merged HAR -------------------------------------------------------------
-  const merged = mergeHars(pages.map((p) => ({ pageId: p.page_id, har: readHar(join(dir, p.page_id, "page.har")) })));
+  // A derived version's supplement (assets the capture never requested) sorts last, so captured entries win
+  const supplementPath = join(dir, SUPPLEMENT_HAR);
+  const merged = mergeHars([
+    ...pages.map((p) => ({ pageId: p.page_id, har: readHar(join(dir, p.page_id, "page.har")) })),
+    ...(existsSync(supplementPath) ? [{ pageId: "~supplement", har: readHar(supplementPath) }] : []),
+  ]);
   const harDir = join(options.runDir, "har");
   mkdirSync(harDir, { recursive: true });
   const tag = options.tag ?? options.engine.label;

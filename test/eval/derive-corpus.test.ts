@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { deriveCorpus, hashTree, loadSiteCapture, siteDir, verifySite, type SiteCapture } from "../../src/eval/corpus.js";
+import { deriveCorpus, hashTree, loadSiteCapture, siteDir, supplementCorpus, verifySite, SUPPLEMENT_HAR, type SiteCapture } from "../../src/eval/corpus.js";
 import { evalPaths } from "../../src/eval/paths.js";
 
 function fakeCorpus() {
@@ -59,6 +59,48 @@ describe("deriveCorpus", () => {
     try {
       expect(() => deriveCorpus(paths, { from: "v1", to: "v3", split: "tuning", siteId: "t01", exclude: [{ page_id: "p009", reason: "x" }] })).toThrow(/No page p009/);
       expect(() => deriveCorpus(paths, { from: "v1", to: "v4", split: "tuning", siteId: "t01", exclude: [{ page_id: "p001", reason: " " }] })).toThrow(/needs a reason/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("supplementCorpus", () => {
+  it("adds a fetched asset to a new version's supplement HAR and logs the fetch", async () => {
+    const { root, paths, dir } = fakeCorpus();
+    try {
+      const calls: string[] = [];
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const out = await supplementCorpus(paths, {
+        from: "v1", to: "v5", split: "tuning", siteId: "t01", urls: ["https://cdn.x.test/menu.png"], reason: "hidden menu icon never requested at capture",
+        runId: "supplement-1", userAgent: "WCAGEngine-Eval/0.1 (+{EVAL_CONTACT_URL})", robotsDecision: () => "not governed",
+        fetchImpl: async (url) => { calls.push(url); return { status: 200, headers: [["content-type", "image/png"], ["content-length", "4"]], body: png }; },
+      });
+      expect(calls).toEqual(["https://cdn.x.test/menu.png"]);
+      expect(out.supplements).toEqual([expect.objectContaining({ url: "https://cdn.x.test/menu.png", status: 200, content_type: "image/png", bytes: 4, run_id: "supplement-1", reason: "hidden menu icon never requested at capture" })]);
+      const dst = siteDir(paths, { version: "v5", split: "tuning", siteId: "t01" });
+      const har = JSON.parse(readFileSync(join(dst, SUPPLEMENT_HAR), "utf8"));
+      expect(har.log.entries[0].request.url).toBe("https://cdn.x.test/menu.png");
+      expect(Buffer.from(har.log.entries[0].response.content.text, "base64")).toEqual(png);
+      expect(har.log.entries[0].response.headers.some((h: { name: string }) => /content-length/i.test(h.name))).toBe(false);
+      expect(verifySite(paths, { version: "v5", split: "tuning", siteId: "t01" }).problems).toEqual([]);
+      expect(loadSiteCapture(paths, { version: "v1", split: "tuning", siteId: "t01" }).supplements).toBeUndefined();
+      expect(() => readFileSync(join(dir, SUPPLEMENT_HAR))).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a disallowed URL before fetching", async () => {
+    const { root, paths } = fakeCorpus();
+    try {
+      let fetched = false;
+      await expect(supplementCorpus(paths, {
+        from: "v1", to: "v6", split: "tuning", siteId: "t01", urls: ["https://x.test/private"], reason: "r", runId: "s", userAgent: "ua",
+        robotsDecision: () => "disallowed by the captured robots.txt", fetchImpl: async () => { fetched = true; return { status: 200, headers: [], body: Buffer.alloc(0) }; },
+      })).rejects.toThrow(/robots/);
+      expect(fetched).toBe(false);
+      expect(() => loadSiteCapture(paths, { version: "v6", split: "tuning", siteId: "t01" })).toThrow(/No capture/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

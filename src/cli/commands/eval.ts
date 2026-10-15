@@ -8,7 +8,7 @@ import { startRun, OfficialRunRefused, PURPOSES, type Purpose, type RunHandle } 
 import { repoRoot } from "../../eval/util.js";
 import { runPilot } from "../../eval/pilot.js";
 import { captureSite } from "../../eval/capture.js";
-import { deriveCorpus, verifyCorpus, type Split } from "../../eval/corpus.js";
+import { deriveCorpus, loadSiteCapture, supplementCorpus, verifyCorpus, type Split } from "../../eval/corpus.js";
 import { isExportPath, knownPrivateHosts, scanCommittedExports, scanStagedExports, writeExport } from "../../eval/privacy.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveEngine } from "../../eval/engine/resolve.js";
@@ -33,6 +33,7 @@ import type { StaticFile, StaticCaseOutcome } from "../../eval/static.js";
 import { admitSites, readCandidateFile, selectPages, type FetchLike } from "../../eval/admit.js";
 import { loadSitesPrivate, registerSite } from "../../eval/corpus.js";
 import { userAgentFor } from "../../eval/capture.js";
+import { parseRobots, isAllowed as robotsAllowed } from "../../eval/robots.js";
 import { Pacer } from "../../eval/transport/pacer.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { existsSync } from "node:fs";
@@ -205,6 +206,59 @@ export function createEvalCommand(): Command {
         process.stdout.write(`${opts.to}/${opts.split}/${opts.site}: ${captured} page(s) kept, ${exclude.length} excluded; ${problems.length === 0 ? "verified" : `${problems.length} problem(s)`}\n`);
       } catch (err) {
         run.invalidate(`derive error: ${err instanceof Error ? err.message : String(err)}`);
+        run.finish("failed");
+        console.error(err instanceof Error ? err.message : err);
+        process.exitCode = 2;
+      }
+    });
+
+  cmd.command("supplement-corpus")
+    .description("New corpus version adding assets the capture never requested: one live request per URL under the capture etiquette, logged")
+    .requiredOption("--from <version>", "Source corpus version")
+    .requiredOption("--to <version>", "New corpus version")
+    .requiredOption("--split <split>", "tuning | dev | holdout")
+    .requiredOption("--site <id>", "Site id")
+    .requiredOption("--url <url...>", "Exact asset URLs to fetch")
+    .requiredOption("--reason <text>", "Why the capture lacks them (recorded)")
+    .action(async (opts: { from: string; to: string; split: string; site: string; url: string[]; reason: string }) => {
+      const { paths, config } = context();
+      const contactUrl = process.env.EVAL_CONTACT_URL;
+      if (!contactUrl) { console.error("EVAL_CONTACT_URL is required (it goes in the user agent)."); process.exit(2); }
+      const ua = userAgentFor(config, contactUrl!);
+      const src = loadSiteCapture(paths, { version: opts.from, split: opts.split as Split, siteId: opts.site });
+      // robots from the capture's own robots.txt (no extra request); it governs the site host only
+      const robotsPath = join(paths.corpusDir, opts.from, opts.split, opts.site, "site", "robots.txt");
+      const policy = existsSync(robotsPath) ? parseRobots(readFileSync(robotsPath, "utf8")) : null;
+      const siteHost = new URL(src.root_url).host;
+      const robotsDecision = (url: string): string => {
+        const host = new URL(url).host;
+        if (host !== siteHost) return `not governed by ${siteHost} robots.txt (asset host ${host})`;
+        if (!policy) return "no robots.txt in the capture";
+        return robotsAllowed(policy, url) ? "allowed by the captured robots.txt" : "disallowed by the captured robots.txt";
+      };
+      const run = begin("supplement-corpus", ["supplement-corpus", "--from", opts.from, "--to", opts.to, "--split", opts.split, "--site", opts.site], "diagnostic");
+      try {
+        let last = 0;
+        const minGap = config.capture.min_seconds_between_top_level_loads * 1000;
+        const fetchImpl = async (url: string) => {
+          const wait = last + minGap - Date.now();
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+          last = Date.now();
+          const res = await fetch(url, { headers: { "user-agent": ua }, redirect: "manual" });
+          return { status: res.status, headers: Array.from(res.headers.entries()), body: Buffer.from(await res.arrayBuffer()) };
+        };
+        const out = await supplementCorpus(paths, {
+          from: opts.from, to: opts.to, split: opts.split as Split, siteId: opts.site, urls: opts.url, reason: opts.reason,
+          runId: run.manifest.run_id, userAgent: config.capture.user_agent_template, robotsDecision, fetchImpl,
+        });
+        const problems = verifySite(paths, { version: opts.to, split: opts.split as CorpusSplit, siteId: opts.site }).problems;
+        for (const p of problems) run.invalidate(`verify: ${p.site}${p.page ? `/${p.page}` : ""} ${p.problem}`);
+        run.manifest.extra = { from: opts.from, to: opts.to, site: opts.site, supplements: (out.supplements ?? []).filter((s) => s.run_id === run.manifest.run_id).map((s) => ({ status: s.status, bytes: s.bytes, sha256: s.sha256, content_type: s.content_type, robots: s.robots, fetched_at: s.fetched_at })), live_requests: opts.url.length };
+        run.finish("completed");
+        for (const s of (out.supplements ?? []).filter((x) => x.run_id === run.manifest.run_id)) process.stdout.write(`fetched ${s.status} ${s.content_type} ${s.bytes} B sha256 ${s.sha256.slice(0, 12)} (${s.robots})\n`);
+        process.stdout.write(`${opts.to}: ${problems.length === 0 ? "verified" : `${problems.length} problem(s)`}\n`);
+      } catch (err) {
+        run.invalidate(`supplement error: ${err instanceof Error ? err.message : String(err)}`);
         run.finish("failed");
         console.error(err instanceof Error ? err.message : err);
         process.exitCode = 2;
