@@ -1,0 +1,481 @@
+{
+  "run_id": "compare-20261016T183405Z-dba755",
+  "base": "replay-20261016T172357Z-f9d36a",
+  "head": "replay-20261016T175418Z-66fd1f",
+  "exit": 2,
+  "invalid": [
+    "runs used different corpus versions or splits",
+    "runs used different page sets",
+    "artifact hashes differ between runs",
+    "browser contracts differ",
+    "runs used different image indexes"
+  ],
+  "regressions": [
+    {
+      "kind": "coverage_dropped",
+      "detail": "t01/p023 high-risk-forms: ran → skipped"
+    },
+    {
+      "kind": "coverage_dropped",
+      "detail": "t01/p023 input-purpose: ran → skipped"
+    }
+  ],
+  "existing_blockers": [
+    {
+      "kind": "static_broken",
+      "detail": "LS-010: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-011: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-012: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-014: fails in both (flagged although expected clean)"
+    }
+  ],
+  "report": {
+    "findings_added": {
+      "1.1.1|image-alt": 1
+    },
+    "findings_removed": {
+      "1.3.1|style_not_structure": 1,
+      "1.3.5|input_purpose": 1
+    },
+    "criterion_transitions": [
+      {
+        "site": "t01",
+        "criterion": "3.2.2",
+        "base": "not_tested",
+        "head": "failed"
+      },
+      {
+        "site": "t01",
+        "criterion": "3.3.1",
+        "base": "not_tested",
+        "head": "failed"
+      },
+      {
+        "site": "t01",
+        "criterion": "3.3.3",
+        "base": "not_tested",
+        "head": "passed"
+      }
+    ],
+    "case_changes": [],
+    "severity_disagreements": {
+      "base": 0,
+      "head": 0
+    },
+    "unlabeled": {
+      "base": 881,
+      "head": 915
+    },
+    "coverage_changes": [
+      {
+        "site": "t01",
+        "page": "p001",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p002",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p003",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p004",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p005",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p006",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p007",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p008",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p009",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p010",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p011",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p012",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p013",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p014",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p015",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p017",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p019",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p020",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p021",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p022",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p023",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p024",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p025",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p026",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p027",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p028",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p029",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p030",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p031",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p032",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p033",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p034",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p035",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p036",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p037",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p038",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p039",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p040",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p041",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p042",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p043",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p044",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p045",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p046",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p047",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p048",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p049",
+        "check": "error-quality",
+        "base": "skipped",
+        "head": "ran"
+      },
+      {
+        "site": "t01",
+        "page": "p023",
+        "check": "high-risk-forms",
+        "base": "ran",
+        "head": "skipped"
+      },
+      {
+        "site": "t01",
+        "page": "p023",
+        "check": "input-purpose",
+        "base": "ran",
+        "head": "skipped"
+      }
+    ],
+    "coverage_comparison": "compared",
+    "tooling_errors": {
+      "base": 0,
+      "head": 0
+    },
+    "ambiguities": {
+      "base": 0,
+      "head": 0
+    },
+    "flake_rates": {
+      "base": [],
+      "head": [
+        {
+          "check": "error-messages",
+          "flake_rate": 0
+        },
+        {
+          "check": "error-quality",
+          "flake_rate": 0
+        },
+        {
+          "check": "focus-order",
+          "flake_rate": 0
+        },
+        {
+          "check": "focus-visible",
+          "flake_rate": 0
+        },
+        {
+          "check": "form-submission",
+          "flake_rate": 0
+        },
+        {
+          "check": "keyboard",
+          "flake_rate": 0
+        },
+        {
+          "check": "keyboard-trap",
+          "flake_rate": 0
+        },
+        {
+          "check": "modal",
+          "flake_rate": 0
+        },
+        {
+          "check": "on-input",
+          "flake_rate": 0
+        },
+        {
+          "check": "skip-nav",
+          "flake_rate": 0
+        }
+      ]
+    },
+    "shared_pages": 47,
+    "unanchored": []
+  },
+  "label_snapshot_sha256": "ea107108732f81d1bb035271829705221b201c42735a3ed63da9ef47b92dc1d3"
+}

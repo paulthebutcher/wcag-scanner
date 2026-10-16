@@ -1,0 +1,57 @@
+{
+  "run_id": "compare-20261016T184713Z-14fd9f",
+  "base": "replay-20261016T172357Z-f9d36a",
+  "head": "replay-20261016T183438Z-130745",
+  "exit": 0,
+  "invalid": [],
+  "regressions": [],
+  "existing_blockers": [
+    {
+      "kind": "static_broken",
+      "detail": "LS-010: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-011: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-012: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-014: fails in both (flagged although expected clean)"
+    }
+  ],
+  "report": {
+    "findings_added": {},
+    "findings_removed": {},
+    "criterion_transitions": [],
+    "case_changes": [],
+    "severity_disagreements": {
+      "base": 0,
+      "head": 0
+    },
+    "unlabeled": {
+      "base": 881,
+      "head": 881
+    },
+    "coverage_changes": [],
+    "coverage_comparison": "compared",
+    "tooling_errors": {
+      "base": 0,
+      "head": 0
+    },
+    "ambiguities": {
+      "base": 0,
+      "head": 0
+    },
+    "flake_rates": {
+      "base": [],
+      "head": []
+    },
+    "shared_pages": 47,
+    "unanchored": []
+  },
+  "label_snapshot_sha256": "ea107108732f81d1bb035271829705221b201c42735a3ed63da9ef47b92dc1d3"
+}
