@@ -11,7 +11,7 @@ export interface FocusOrderIssue {
   /** The tab stop where focus jumped to */
   toStop: FocusStop;
   /** Type of ordering issue */
-  issueType: "backward_jump" | "large_gap" | "cross_column";
+  issueType: "backward_jump" | "cross_column";
   /** Vertical distance of the jump (positive = downward, negative = backward) */
   verticalDelta: number;
   /** Horizontal distance of the jump */
@@ -36,8 +36,6 @@ export interface FocusOrderResult {
 export interface FocusOrderOptions {
   /** Threshold in pixels for a "backward jump". Default: 200 */
   backwardThresholdPx?: number;
-  /** Threshold in pixels for a "large gap". Default: 500 */
-  largeGapThresholdPx?: number;
   /** Row tolerance in pixels — elements within this vertical range are in the same "row". Default: 30 */
   rowTolerancePx?: number;
 }
@@ -115,7 +113,6 @@ export function analyzeFocusOrder(
   options?: FocusOrderOptions,
 ): FocusOrderResult {
   const backwardThreshold = options?.backwardThresholdPx ?? 200;
-  const largeGapThreshold = options?.largeGapThresholdPx ?? 500;
   const rowTolerance = options?.rowTolerancePx ?? 30;
 
   // Embed stops (third-party content the sweep stepped over) have no position of their own
@@ -167,18 +164,10 @@ export function analyzeFocusOrder(
         description: `Focus jumps ${Math.abs(Math.round(horizontalDelta))}px backward (leftward) on the same row`,
       });
     }
-    // Check for large vertical gap
-    else if (verticalDelta > largeGapThreshold) {
-      issues.push({
-        fromStop: current,
-        toStop: next,
-        issueType: "large_gap",
-        verticalDelta,
-        horizontalDelta,
-        confidence: "moderate",
-        description: `Focus jumps ${Math.round(verticalDelta)}px downward, skipping visual content`,
-      });
-    }
+    // A large downward distance between consecutive stops is not reported:
+    // in page coordinates (P2-036) it only means a stretch of the page with
+    // no focusable content, which is not a focus-order defect. The former
+    // "large_gap" rule produced 106 such issues on 23 of 48 corpus pages.
   }
 
   return {
@@ -234,10 +223,16 @@ export function runFocusOrderChecks(
     measured_values: {
       total_issues: result.issues.length,
       backward_jumps: result.issues.filter((i) => i.issueType === "backward_jump").length,
-      large_gaps: result.issues.filter((i) => i.issueType === "large_gap").length,
       confidence: hasHighConfidence ? "high" : "moderate",
       tab_stops_with_positions: result.tabOrder.length,
       divergence_index: result.issues[0]?.fromStop.sequenceIndex ?? null,
+      // Page-coordinate distance of each jump (negative = upward), in sequence order
+      jump_distances_px: result.issues.map((i) => ({
+        from_index: i.fromStop.sequenceIndex,
+        to_index: i.toStop.sequenceIndex,
+        vertical: Math.round(i.verticalDelta),
+        horizontal: Math.round(i.horizontalDelta),
+      })),
     },
   }];
 }

@@ -136,16 +136,35 @@ describe("analyzeFocusOrder", () => {
     expect(issue!.confidence).toBe("moderate");
   });
 
-  it("detects large visual gaps (>500px downward)", () => {
+  it("does not report a large downward distance between consecutive stops (the large_gap rule is gone, P2-036)", () => {
+    // In page coordinates this is a stretch of page with no focusable content: nav button → first job link, 1,324 px
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 600, width: 100, height: 30 } }), // 600px gap
+      makeStop({ selector: "nav-btn", sequenceIndex: 0, pagePosition: { x: 1064, y: 37, width: 100, height: 30 } }),
+      makeStop({ selector: "job-1", sequenceIndex: 1, pagePosition: { x: 908, y: 1361, width: 100, height: 30 } }),
+      makeStop({ selector: "job-2", sequenceIndex: 2, pagePosition: { x: 908, y: 1467, width: 100, height: 30 } }),
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
-    const gap = result.issues.find((i) => i.issueType === "large_gap");
-    expect(gap).toBeDefined();
-    expect(gap!.verticalDelta).toBeGreaterThan(500);
+    expect(result.issues).toEqual([]);
+    expect(result.matchesVisualOrder).toBe(true);
+    expect(runFocusOrderChecks(makeTabSequence(stops))).toEqual([]);
+  });
+
+  it("still reports an upward jump of more than 200 px, with its page-coordinate distance", () => {
+    const stops: FocusStop[] = [
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 1400, width: 100, height: 30 } }), // far down: fine
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 900, width: 100, height: 30 } }), // 500 px back up
+    ];
+
+    const results = runFocusOrderChecks(makeTabSequence(stops));
+    expect(results).toHaveLength(1);
+    const measured = results[0].measured_values as Record<string, unknown>;
+    expect(measured.total_issues).toBe(1);
+    expect(measured.backward_jumps).toBe(1);
+    expect(measured.jump_distances_px).toEqual([{ from_index: 1, to_index: 2, vertical: -500, horizontal: 0 }]);
+    expect(measured.confidence).toBe("high");
+    expect(measured).not.toHaveProperty("large_gaps");
   });
 
   it("catches Webflow flexbox reordering pattern", () => {
@@ -235,18 +254,18 @@ describe("runFocusOrderChecks", () => {
     expect(measured.confidence).toBe("high");
   });
 
-  it("includes backward_jumps and large_gaps counts in measured_values", () => {
+  it("includes the backward_jumps count and the jump distances in measured_values", () => {
     const stops: FocusStop[] = [
       makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 800, width: 100, height: 30 } }), // Large gap
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 800, width: 100, height: 30 } }), // far down: not an issue
       makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }), // Backward jump
     ];
 
     const results = runFocusOrderChecks(makeTabSequence(stops));
     const measured = results[0].measured_values as Record<string, unknown>;
-    expect(typeof measured.backward_jumps).toBe("number");
-    expect(typeof measured.large_gaps).toBe("number");
-    expect((measured.backward_jumps as number) + (measured.large_gaps as number)).toBeGreaterThan(0);
+    expect(measured.backward_jumps).toBe(1);
+    expect(measured.total_issues).toBe(1);
+    expect((measured.jump_distances_px as Array<{ vertical: number }>).map((j) => j.vertical)).toEqual([-750]);
   });
 });
 
