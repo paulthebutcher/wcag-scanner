@@ -70,7 +70,7 @@ import type { FormInfo } from "../checks/forms/discovery.js";
 import { testFormSubmission, countVisibleFields } from "../checks/forms/submission.js";
 import type { SubmissionState } from "../checks/forms/submission.js";
 import { evaluateErrorMessages, evaluateInputPurpose } from "../checks/forms/error-evaluation.js";
-import { evaluateHighRiskForms } from "../checks/forms/high-risk.js";
+import { evaluateHighRiskForms, classifyFormRisk } from "../checks/forms/high-risk.js";
 // Indicator checks (Tier 5)
 import { checkPauseStopHide, checkThreeFlashes } from "../checks/indicators/pause-stop-hide.js";
 import { checkMultipleWays, checkMotionActuation } from "../checks/indicators/multiple-ways.js";
@@ -1515,6 +1515,8 @@ export async function scan(
         let totalFormsFound = 0;
         // Forms whose fields were visible and actually exercised in the browser
         let formsExercised = 0;
+        // Forms the high-risk classifier handed to the model (3.3.4 is not applicable without one)
+        let highRiskCandidates = 0;
 
         // 4a: Discover forms on every page up front. The same form repeated
         // across pages (site-wide signup, footer contact form, CMS template)
@@ -1592,6 +1594,7 @@ export async function scan(
             }
             if (formRunner && runs("high-risk-forms")) {
               try {
+                highRiskCandidates += forms.filter((f) => classifyFormRisk(f).riskCategory !== "none").length;
                 const highRiskResults = (await evaluateHighRiskForms(forms, formRunner)).flatMap((r) => {
                   const form = forms.find((f) => f.selector === r.element_selector);
                   return form ? annotateShared([r], form) : [r];
@@ -1811,6 +1814,10 @@ export async function scan(
             if (totalFormsFound === 0) {
               status = "not_applicable";
               summary = `${desc}: no forms found on scanned pages`;
+            } else if (criterion === "3.3.4" && highRiskCandidates === 0) {
+              // Nothing to evaluate: no legal, financial or data-changing form
+              status = "not_applicable";
+              summary = `${desc}: none of ${formCountDesc} is a legal, financial or data-changing form`;
             } else if (interactionCriteria.has(criterion) && formsExercised === 0) {
               status = "not_tested";
               summary = `${desc}: ${formCountDesc} found, but none had visible fields to test at page load`;
