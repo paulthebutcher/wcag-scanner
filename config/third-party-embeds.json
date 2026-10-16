@@ -7,6 +7,8 @@
       "name": "Instagram",
       "containers": [
         "blockquote.instagram-media",
+        "blockquote.instagram-media-registered",
+        "blockquote[data-instgrm-permalink]",
         "iframe[src*=\"instagram.com\"]",
         "iframe[id^=\"instagram-embed-\"]",
         "[id^=\"instagram-embed-\"]"

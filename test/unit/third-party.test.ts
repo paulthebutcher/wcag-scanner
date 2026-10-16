@@ -69,6 +69,17 @@ describe("embed containers in a serialized DOM", () => {
     expect(PAGE.slice(tt.start, tt.end)).toContain('name="__tt_embed__v11482"');
     expect(containersOf(PAGE)).toHaveLength(6);
   });
+
+  it("finds an Instagram blockquote that embed.js has registered but not yet replaced (class renamed, permalink kept)", () => {
+    // Instagram's script renames instagram-media to instagram-media-registered before swapping in the iframe;
+    // a post it never renders (seen live on a /tv/ permalink) keeps the placeholder markup under that class
+    const dom = `<p><a href="/own" target="_blank">own</a></p><blockquote class=" instagram-media-registered" data-instgrm-captioned="" data-instgrm-permalink="https://www.instagram.com/tv/X/?utm_source=ig_embed"><div><a href="https://www.instagram.com/tv/X/?utm_source=ig_embed&amp;utm_campaign=loading" target="_blank"><div style=" color:#3897f0;">View this post on Instagram</div></a></div></blockquote>`;
+    const c = findEmbedContainers(dom, config);
+    expect(c.map((x) => [x.vendor, x.tag])).toEqual([["instagram", "blockquote"]]);
+    expect(classifyInDom('p > a[target="_blank"]', `<a href="https://www.instagram.com/tv/X/?utm_source=ig_embed&amp;utm_campaign=loading" target="_blank">`, dom, c, config)).toMatchObject({ vendor: "instagram", via: "dom" });
+    expect(classifyInDom('p > a[target="_blank"]', `<a href="/own" target="_blank">own</a>`, dom, c, config)).toBeNull();
+    expect(matchesCompoundSelector(parseOpeningTag(`<blockquote class="instagram-media-registered" data-instgrm-permalink="https://www.instagram.com/p/y/">`)!, "blockquote[data-instgrm-permalink]")).toBe(true);
+  });
 });
 
 describe("classifying findings", () => {
