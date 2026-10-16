@@ -182,14 +182,16 @@ export function createEvalCommand(): Command {
     });
 
   cmd.command("derive-corpus")
-    .description("New corpus version that leaves pages out of an existing one, each with a reason (artifacts are hard links)")
+    .description("New corpus version that leaves pages out of an existing one (each with a reason) or brings excluded pages back; artifacts are hard links")
     .requiredOption("--from <version>", "Source corpus version")
     .requiredOption("--to <version>", "New corpus version")
     .requiredOption("--split <split>", "tuning | dev | holdout")
     .requiredOption("--site <id>", "Site id")
-    .requiredOption("--exclude <page=reason...>", "Pages to leave out, e.g. p047=\"Instagram embed render varies (P2-017)\"")
-    .action((opts: { from: string; to: string; split: string; site: string; exclude: string[] }) => {
+    .option("--exclude <page=reason...>", "Pages to leave out, e.g. p047=\"Instagram embed render varies (P2-017)\"", [])
+    .option("--restore <page...>", "Excluded pages to bring back", [])
+    .action((opts: { from: string; to: string; split: string; site: string; exclude: string[]; restore: string[] }) => {
       const { paths } = context();
+      if (opts.exclude.length === 0 && opts.restore.length === 0) { console.error("derive-corpus needs --exclude and/or --restore"); process.exit(2); }
       const exclude = opts.exclude.map((e) => {
         const i = e.indexOf("=");
         if (i < 1) { console.error(`--exclude needs page=reason, got "${e}"`); process.exit(2); }
@@ -197,13 +199,13 @@ export function createEvalCommand(): Command {
       });
       const run = begin("derive-corpus", ["derive-corpus", "--from", opts.from, "--to", opts.to, "--split", opts.split, "--site", opts.site], "diagnostic");
       try {
-        const derived = deriveCorpus(paths, { from: opts.from, to: opts.to, split: opts.split as Split, siteId: opts.site, exclude });
+        const derived = deriveCorpus(paths, { from: opts.from, to: opts.to, split: opts.split as Split, siteId: opts.site, exclude, restore: opts.restore });
         const problems = verifySite(paths, { version: opts.to, split: opts.split as CorpusSplit, siteId: opts.site }).problems;
         for (const p of problems) run.invalidate(`verify: ${p.site}${p.page ? `/${p.page}` : ""} ${p.problem}`);
         const captured = derived.pages.filter((p) => p.status === "captured").length;
-        run.manifest.extra = { from: opts.from, to: opts.to, site: opts.site, excluded: exclude, captured, problems: problems.length };
+        run.manifest.extra = { from: opts.from, to: opts.to, site: opts.site, excluded: exclude, restored: opts.restore, captured, problems: problems.length };
         run.finish("completed");
-        process.stdout.write(`${opts.to}/${opts.split}/${opts.site}: ${captured} page(s) kept, ${exclude.length} excluded; ${problems.length === 0 ? "verified" : `${problems.length} problem(s)`}\n`);
+        process.stdout.write(`${opts.to}/${opts.split}/${opts.site}: ${captured} page(s) kept, ${exclude.length} excluded, ${opts.restore.length} restored; ${problems.length === 0 ? "verified" : `${problems.length} problem(s)`}\n`);
       } catch (err) {
         run.invalidate(`derive error: ${err instanceof Error ? err.message : String(err)}`);
         run.finish("failed");

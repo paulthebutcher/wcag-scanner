@@ -106,7 +106,7 @@ export interface SiteCapture {
     robots: string; status: number; content_type: string | null; bytes: number; sha256: string;
   }>;
   /** Set on a corpus version derived from another (deriveCorpus) */
-  derived_from?: { version: string; capture_run_id: string; derived_at: string; excluded: Array<{ page_id: string; reason: string }> };
+  derived_from?: { version: string; capture_run_id: string; derived_at: string; excluded: Array<{ page_id: string; reason: string }>; restored?: string[] };
 }
 
 export interface SiteRef {
@@ -245,10 +245,11 @@ function linkTree(src: string, dst: string): void {
 
 /**
  * A new corpus version that leaves pages out of an existing one, with a
- * reason for each. Artifacts are hard links to the source version (both are
+ * reason for each, or brings excluded pages back (their artifacts are still
+ * in the version). Artifacts are hard links to the source version (both are
  * immutable); only site.private.json is new. The source is never modified.
  */
-export function deriveCorpus(paths: EvalPaths, input: { from: string; to: string; split: Split; siteId: string; exclude: Array<{ page_id: string; reason: string }> }): SiteCapture {
+export function deriveCorpus(paths: EvalPaths, input: { from: string; to: string; split: Split; siteId: string; exclude: Array<{ page_id: string; reason: string }>; restore?: string[] }): SiteCapture {
   const src = siteDir(paths, { version: input.from, split: input.split, siteId: input.siteId });
   const dst = siteDir(paths, { version: input.to, split: input.split, siteId: input.siteId });
   if (existsSync(dst)) throw new Error(`Corpus ${input.to}/${input.split}/${input.siteId} already exists; versions are immutable`);
@@ -259,6 +260,15 @@ export function deriveCorpus(paths: EvalPaths, input: { from: string; to: string
     if (page.status !== "captured") throw new Error(`${e.page_id} is not a captured page (${page.status})`);
     if (!e.reason.trim()) throw new Error(`An exclusion needs a reason (${e.page_id})`);
   }
+  const restore = input.restore ?? [];
+  for (const id of restore) {
+    const page = capture.pages.find((p) => p.page_id === id);
+    if (!page) throw new Error(`No page ${id} in ${input.from}/${input.siteId}`);
+    if (page.status !== "excluded") throw new Error(`${id} is not an excluded page (${page.status})`);
+    for (const f of ["dom.html", "page.har", "screenshot.png", "capture.private.json"]) {
+      if (!existsSync(join(src, id, f))) throw new Error(`${id} cannot be restored: ${f} is missing`);
+    }
+  }
   mkdirSync(dst, { recursive: true });
   linkTree(src, dst);
   // Replace the link, never write through it into the source version
@@ -267,8 +277,10 @@ export function deriveCorpus(paths: EvalPaths, input: { from: string; to: string
   const derived: SiteCapture = {
     ...capture,
     corpus_version: input.to,
-    pages: capture.pages.map((p) => (reasons.has(p.page_id) ? { ...p, status: "excluded", error: reasons.get(p.page_id)! } : p)),
-    derived_from: { version: input.from, capture_run_id: capture.capture_run_id, derived_at: new Date().toISOString(), excluded: input.exclude.map((e) => ({ ...e })) },
+    pages: capture.pages.map((p) => reasons.has(p.page_id)
+      ? { ...p, status: "excluded", error: reasons.get(p.page_id)! }
+      : restore.includes(p.page_id) ? { ...p, status: "captured", error: null } : p),
+    derived_from: { version: input.from, capture_run_id: capture.capture_run_id, derived_at: new Date().toISOString(), excluded: input.exclude.map((e) => ({ ...e })), ...(restore.length > 0 ? { restored: [...restore] } : {}) },
   };
   mkdirSync(dirname(join(dst, "site.private.json")), { recursive: true });
   writeJson(join(dst, "site.private.json"), derived);

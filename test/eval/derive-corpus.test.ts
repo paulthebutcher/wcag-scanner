@@ -54,6 +54,21 @@ describe("deriveCorpus", () => {
     }
   });
 
+  it("restores an excluded page in a later version, with its artifacts still in place", () => {
+    const { root, paths } = fakeCorpus();
+    try {
+      deriveCorpus(paths, { from: "v1", to: "v2", split: "tuning", siteId: "t01", exclude: [{ page_id: "p002", reason: "varies" }] });
+      const v3 = deriveCorpus(paths, { from: "v2", to: "v3", split: "tuning", siteId: "t01", exclude: [], restore: ["p002"] });
+      expect(v3.pages.map((p) => [p.page_id, p.status, p.error])).toEqual([["p001", "captured", null], ["p002", "captured", null]]);
+      expect(v3.derived_from).toMatchObject({ version: "v2", restored: ["p002"] });
+      expect(verifySite(paths, { version: "v3", split: "tuning", siteId: "t01" }).problems).toEqual([]);
+      expect(loadSiteCapture(paths, { version: "v2", split: "tuning", siteId: "t01" }).pages[1].status).toBe("excluded");
+      expect(() => deriveCorpus(paths, { from: "v1", to: "v4", split: "tuning", siteId: "t01", exclude: [], restore: ["p001"] })).toThrow(/not an excluded page/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses unknown pages and missing reasons", () => {
     const { root, paths } = fakeCorpus();
     try {
