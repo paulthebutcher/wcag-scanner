@@ -34,6 +34,59 @@ export interface SubmissionState {
   navigated: boolean;
   /** Form info for the form tested */
   formInfo: FormInfo;
+  /**
+   * The form's own markup after submission, its error regions and a bounded
+   * context around it (P2-001): what the error-message prompt is built from.
+   * Absent on states recorded before this field existed.
+   */
+  formMarkup?: FormMarkup;
+}
+
+/** Markup captured in the page right after a submission attempt */
+export interface FormMarkup {
+  /** outerHTML of the form (or div-based form container) */
+  form: string;
+  /** outerHTML of each detected error element, live region and invalid field, deduplicated */
+  errorRegions: string[];
+  /** The form's parent with the form itself replaced by a placeholder, bounded around it */
+  context: string;
+}
+
+/** Caps applied when the markup is sent to the model (characters) */
+export const FORM_MARKUP_CAPS = { form: 8000, errorRegions: 2000, contextEachSide: 1500 } as const;
+
+/**
+ * Capture the form, its error regions and the surrounding context from the
+ * live page after a submission attempt. Null when the form is gone (a
+ * navigation replaced the page).
+ */
+export async function captureFormMarkup(page: Page, formSelector: string, errorSelectors: string[]): Promise<FormMarkup | null> {
+  return page.evaluate(({ formSelector, errorSelectors }) => {
+    const form = document.querySelector(formSelector);
+    if (!form) return null;
+    const seen = new Set<string>();
+    const regions: string[] = [];
+    const add = (el: Element | null) => {
+      if (!el) return;
+      const html = el.outerHTML;
+      if (seen.has(html)) return;
+      seen.add(html);
+      regions.push(html);
+    };
+    for (const sel of errorSelectors) {
+      try { add(document.querySelector(sel)); } catch { /* an unusable selector */ }
+    }
+    for (const el of Array.from(form.querySelectorAll("[role=\"alert\"], [aria-live], [aria-invalid=\"true\"]"))) add(el);
+    const parent = form.parentElement;
+    let context = "";
+    if (parent) {
+      const placeholder = "<!-- the form, shown above -->";
+      const outer = parent.outerHTML;
+      const i = outer.indexOf(form.outerHTML);
+      context = i >= 0 ? outer.slice(0, i) + placeholder + outer.slice(i + form.outerHTML.length) : outer;
+    }
+    return { form: form.outerHTML, errorRegions: regions, context };
+  }, { formSelector, errorSelectors }).catch(() => null);
 }
 
 /** An error message detected on the page after form submission */
@@ -548,6 +601,11 @@ export async function testFormSubmission(
         // Detect errors
         const errorMessages = await detectErrors(page, form.selector);
 
+        // The form, its error regions and a bounded context: the error-message
+        // prompt's input (P2-001), captured here so live scans and replays
+        // build the same prompt
+        const formMarkup = await captureFormMarkup(page, form.selector, errorMessages.map((e) => e.selector));
+
         const state: SubmissionState = {
           scenario,
           domBefore,
@@ -556,6 +614,7 @@ export async function testFormSubmission(
           errorMessages,
           navigated,
           formInfo: form,
+          ...(formMarkup ? { formMarkup } : {}),
         };
         states.push(state);
 

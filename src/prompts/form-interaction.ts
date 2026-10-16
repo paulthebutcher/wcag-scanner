@@ -180,7 +180,7 @@ export function buildErrorMessageUserPrompt(params: {
 
   return `Evaluate form error messages for WCAG 3.3.1 and 3.3.3 compliance.
 
-Form HTML (after submission):
+Form markup after submission, its error regions and a bounded context around it (the header line records what was sent):
 ${params.formHtml}
 
 Error messages found:

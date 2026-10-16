@@ -1,6 +1,7 @@
 import type { CheckResult } from "../../types.js";
 import type { PromptRunner, PromptResult, PromptInput } from "../../core/prompt-runner.js";
 import type { FormInfo, FormFieldInfo } from "./discovery.js";
+import { FORM_MARKUP_CAPS } from "./submission.js";
 import type { SubmissionState, DetectedError } from "./submission.js";
 import {
   errorMessageQuality,
@@ -96,7 +97,7 @@ export async function evaluateErrorMessages(
   const promptInputs = relevantStates.map((state) => ({
     template: errorMessageQuality,
     userMessage: buildErrorMessageUserPrompt({
-      formHtml: truncateHtml(state.domAfter, 8000),
+      formHtml: composeErrorPromptMarkup(state),
       errorMessages: state.errorMessages.map((e) => ({
         fieldName: e.fieldSelector ?? e.selector,
         message: e.text,
@@ -419,4 +420,59 @@ export function isPersonalInfoField(field: FormFieldInfo): boolean {
 function truncateHtml(html: string, maxLength: number): string {
   if (html.length <= maxLength) return html;
   return html.slice(0, maxLength) + "...";
+}
+
+/**
+ * What the error-message prompt sees (P2-001): the form's own markup after
+ * submission, its error regions and a bounded context around it, each
+ * capped, with a header that records exactly what was sent (sizes and
+ * truncation) so llm_input shows it. The page's html element and head never
+ * reach the model, so per-load noise there (font-loader classes, P2-022)
+ * cannot change the prompt. A state recorded without formMarkup falls back
+ * to the form's discovery-time markup, never to the page head.
+ */
+export function composeErrorPromptMarkup(state: Pick<SubmissionState, "formMarkup" | "formInfo" | "domAfter">): string {
+  const caps = FORM_MARKUP_CAPS;
+  const markup = state.formMarkup;
+  if (!markup) {
+    const form = truncateHtml(state.formInfo.html, caps.form);
+    return [
+      `[sent: form ${form.length} chars (discovery-time markup; no post-submission capture), 0 error regions, no context]`,
+      "Form (as discovered):",
+      form,
+    ].join("\n");
+  }
+  const form = truncateHtml(markup.form, caps.form);
+  const formTruncated = form.length < markup.form.length;
+  const regions: string[] = [];
+  let regionChars = 0;
+  let regionsTruncated = false;
+  for (const r of markup.errorRegions) {
+    if (regionChars + r.length > caps.errorRegions) { regionsTruncated = true; break; }
+    regions.push(r);
+    regionChars += r.length;
+  }
+  const placeholder = "<!-- the form, shown above -->";
+  const at = markup.context.indexOf(placeholder);
+  let context: string;
+  if (at >= 0) {
+    const before = markup.context.slice(Math.max(0, at - caps.contextEachSide), at);
+    const after = markup.context.slice(at + placeholder.length, at + placeholder.length + caps.contextEachSide);
+    context = `${at > caps.contextEachSide ? "…" : ""}${before}${placeholder}${after}${markup.context.length - at - placeholder.length > caps.contextEachSide ? "…" : ""}`;
+  } else {
+    context = truncateHtml(markup.context, caps.contextEachSide * 2);
+  }
+  const contextTruncated = context.length < markup.context.length;
+  const header = `[sent: form ${form.length} chars${formTruncated ? " (truncated)" : ""}, ${regions.length} of ${markup.errorRegions.length} error region(s) ${regionChars} chars${regionsTruncated ? " (truncated)" : ""}, context ${context.length} chars${contextTruncated ? " (bounded)" : ""}]`;
+  return [
+    header,
+    "Form (after submission):",
+    form,
+    "",
+    "Error regions (role=alert, aria-live, aria-invalid fields and detected messages):",
+    regions.length > 0 ? regions.join("\n") : "(none)",
+    "",
+    "Surrounding context (the form's parent, bounded):",
+    context || "(none)",
+  ].join("\n");
 }
