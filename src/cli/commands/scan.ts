@@ -164,13 +164,14 @@ export function createScanCommand(): Command {
           process.stdout.write(JSON.stringify({
             ...result.summary,
             excluded_by_noindex: result.excludedByNoindex,
+            excluded_pages: result.excludedPages,
           }, null, 2) + "\n");
         } else {
           process.stdout.write(formatTable(result.summary, result.scanSession.id) + "\n");
-          if (result.excludedByNoindex.length > 0) {
-            process.stdout.write(`\nExcluded from scan (noindex): ${result.excludedByNoindex.length} page(s)\n`);
-            for (const ex of result.excludedByNoindex) {
-              process.stdout.write(`  - ${ex.url}  [${ex.source}]\n`);
+          if (result.excludedPages.length > 0) {
+            process.stdout.write(`\nNot scanned: ${result.excludedPages.length} page(s)\n`);
+            for (const ex of result.excludedPages) {
+              process.stdout.write(`  - ${ex.url}  [${ex.reason}${ex.detail ? `: ${ex.detail}` : ""}]\n`);
             }
           }
         }

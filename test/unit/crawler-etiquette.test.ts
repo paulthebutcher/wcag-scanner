@@ -34,6 +34,10 @@ describe("production scan etiquette in the crawler (P2-007) and GET containment 
       const path = req.url ?? "/";
       hits.push({ path, ua: req.headers["user-agent"], at: Date.now(), method: req.method ?? "" });
       if (path === "/robots.txt") { res.statusCode = robots.status; res.setHeader("Content-Type", "text/plain"); res.end(robots.body); return; }
+      if (path === "/old-public") { res.statusCode = 301; res.setHeader("Location", "/public"); res.end(); return; }
+      if (path === "/go-away") { res.statusCode = 302; res.setHeader("Location", `http://localhost:${(server.address() as AddressInfo).port}/public`); res.end(); return; } // another origin (host differs)
+      if (path === "/drop") { req.socket.destroy(); return; }
+      if (path === "/hidden") { res.setHeader("Content-Type", "text/html; charset=utf-8"); res.end(`<!DOCTYPE html><html lang="en"><head><meta name="robots" content="noindex"><title>hidden</title></head><body><h1>hidden</h1></body></html>`); return; }
       if (path === "/favicon.ico") { res.statusCode = 404; res.end(); return; }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.end(page(path));
@@ -58,7 +62,7 @@ describe("production scan etiquette in the crawler (P2-007) and GET containment 
     expect(result.snapshots.map((s) => new URL(s.url).pathname)).toEqual(["/public"]);
     expect(result.excludedByRobots).toEqual([`${origin}/private/secret`]);
     expect(result.robots).toMatchObject({ source: "parsed", status: 200, group: "wildcard", rules: 1, crawl_delay_seconds: null });
-    expect(lines).toContain(`Skipped by robots.txt: ${origin}/private/secret`);
+    expect(lines).toContain(`Not scanned: ${origin}/private/secret (robots_disallowed: robots.txt)`);
     expect(lines.some((l) => l.startsWith("robots.txt: 1 rule(s) for the wildcard group"))).toBe(true);
     expect(hits.some((h) => h.path === "/private/secret")).toBe(false);
   }, 30_000);
@@ -122,4 +126,24 @@ describe("production scan etiquette in the crawler (P2-007) and GET containment 
       await context.close();
     }
   }, 30_000);
+
+  it("records every pinned entry it does not scan with its reason: duplicate_of, redirect_to, noindex, robots_disallowed, load_failed (P2-038)", async () => {
+    robots = { status: 200, body: "User-agent: *\nDisallow: /private/\n" };
+    const result = await crawl(`${origin}/`, { ...options(), urlList: [`${origin}/public`, `${origin}/old-public`, `${origin}/go-away`, `${origin}/hidden`, `${origin}/private/secret`, `${origin}/drop`] }, browser);
+    expect(result.snapshots.map((s) => new URL(s.url).pathname)).toEqual(["/public"]);
+    const byPath = Object.fromEntries(result.excluded.map((e) => [new URL(e.url).pathname, [e.reason, e.detail.replace(origin, "")]]));
+    expect(byPath["/old-public"]).toEqual(["duplicate_of", "/public"]);
+    expect(byPath["/go-away"][0]).toBe("redirect_to");
+    expect(byPath["/go-away"][1]).toMatch(/^http:\/\/localhost:\d+\/public$/);
+    expect(byPath["/hidden"]).toEqual(["noindex", "meta-robots"]);
+    expect(byPath["/private/secret"]).toEqual(["robots_disallowed", "robots.txt"]);
+    expect(byPath["/drop"][0]).toBe("load_failed");
+    expect(byPath["/drop"][1]).toMatch(/net::|ERR_|socket|closed/i);
+    expect(result.excluded).toHaveLength(5);
+    for (const e of result.excluded) expect(lines).toContain(`Not scanned: ${e.url} (${e.reason}: ${e.detail})`);
+    // The older views still hold
+    expect(result.excludedByNoindex).toEqual([{ url: `${origin}/hidden`, source: "meta-robots" }]);
+    expect(result.excludedByRobots).toEqual([`${origin}/private/secret`]);
+    expect(result.failedPages.map((f) => new URL(f.url).pathname)).toEqual(["/drop"]);
+  }, 60_000);
 });

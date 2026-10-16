@@ -44,6 +44,8 @@ export interface EngineRunResult {
   coverage: ScanCoverage | null;
   pageSnapshots: PageSnapshot[];
   warnings: string[];
+  /** Pages the engine did not scan, with reasons (P2-038); absent on older engines */
+  excludedPages?: Array<{ url: string; reason: string; detail: string }>;
 }
 
 export interface EngineHandle {

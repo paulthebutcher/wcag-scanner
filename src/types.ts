@@ -132,6 +132,18 @@ export interface DetectionManifest {
   semantic_checks: string[];
 }
 
+export type PageExclusionReason = "noindex" | "redirect_to" | "duplicate_of" | "robots_disallowed" | "load_failed";
+
+/** A page the crawl did not scan, and why (P2-038) */
+export interface PageExclusion {
+  url: string;
+  reason: PageExclusionReason;
+  /** The noindex source, the target page, or the error */
+  detail: string;
+  /** Older sessions: the noindex source */
+  source?: string;
+}
+
 export interface ScanSession {
   id: string;
   url: string;
@@ -143,8 +155,13 @@ export interface ScanSession {
   scan_type: ScanType;
   /** Audit trail: which rules, versions, and tiers were active */
   detection_manifest: DetectionManifest | null;
-  /** Pages skipped at crawl time because they're hidden from SERPs */
-  excluded_pages: Array<{ url: string; source: string }> | null;
+  /**
+   * Pages the crawl did not scan, each with its reason (P2-038): noindex
+   * (detail: the source), redirect_to / duplicate_of (detail: the page),
+   * robots_disallowed, load_failed (detail: the error). Older sessions
+   * stored noindex entries only, as { url, source }.
+   */
+  excluded_pages: PageExclusion[] | null;
   /** For a verification rescan (`wcag verify`): the scan whose fixes it checks */
   baseline_scan_id?: string | null;
 }

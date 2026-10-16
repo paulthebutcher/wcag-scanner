@@ -128,7 +128,7 @@ function originOf(o: AssertionOutcome, judgments: Map<string, FoldedJudgment>): 
 export interface RunInputs {
   manifest: RunManifest;
   runDir: string;
-  sites: Array<{ site: string; predictions: Prediction[]; coverage: CoverageRow[] | null; criteria: CriterionStatusRow[]; pages: string[] }>;
+  sites: Array<{ site: string; predictions: Prediction[]; coverage: CoverageRow[] | null; criteria: CriterionStatusRow[]; pages: string[]; pages_excluded?: Array<{ page: string; reason: string }> }>;
 }
 
 export function loadRunInputs(paths: EvalPaths, manifest: RunManifest): RunInputs {
@@ -145,15 +145,22 @@ export function loadRunInputs(paths: EvalPaths, manifest: RunManifest): RunInput
   }
   const sites = Array.from(chosen.entries()).map(([site, dir]) => {
     const capture = loadSiteCapture(paths, { version: manifest.corpus!.version, split: manifest.corpus!.split as Split, siteId: site });
+    // A page the engine recorded as not scanned (noindex, redirect, robots,
+    // load failure; P2-038) leaves the coverage denominator: no check could
+    // have run there, so it establishes nothing either way.
+    const summary = readJson<{ pages_excluded?: Array<{ page: string; reason: string }> }>(join(dir, "summary.json"));
+    const excluded = new Set((summary.pages_excluded ?? []).map((e) => e.page));
+    const pages = (manifest.scan_contract
+      ? manifest.scan_contract.page_order.filter((x) => x.startsWith(`${site}/`)).map((x) => x.slice(site.length + 1))
+      : capture.pages.filter((p) => p.status === "captured").map((p) => p.page_id)).filter((p) => !excluded.has(p));
     return {
       site,
       predictions: readJson<Prediction[]>(join(dir, "predictions.json")),
       coverage: readJson<CoverageRow[] | null>(join(dir, "coverage.json")),
       criteria: readJson<CriterionStatusRow[]>(join(dir, "criteria.json")),
       // The run's own page set (a diagnostic run may replay a subset)
-      pages: manifest.scan_contract
-        ? manifest.scan_contract.page_order.filter((x) => x.startsWith(`${site}/`)).map((x) => x.slice(site.length + 1))
-        : capture.pages.filter((p) => p.status === "captured").map((p) => p.page_id),
+      pages,
+      pages_excluded: summary.pages_excluded ?? [],
     };
   });
   return { manifest, runDir, sites };

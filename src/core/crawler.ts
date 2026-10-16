@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { decideRobots, fetchRobots, isAllowed, PRODUCT_TOKEN, type RobotsFetchOutcome, type RobotsPolicy } from "./robots.js";
 import { getActivePacer } from "./etiquette.js";
 import type { Pacer } from "./pacer.js";
-import type { PageSnapshot, Viewport } from "../types.js";
+import type { PageSnapshot, Viewport, PageExclusion } from "../types.js";
 import type { FileStore } from "../store/files.js";
 import type { ProgressReporter } from "./progress.js";
 import { assessRenderHealth, type RenderHealth } from "./render-health.js";
@@ -86,6 +86,12 @@ export interface ExcludedPage {
 
 export interface CrawlResult {
   snapshots: PageSnapshot[];
+  /**
+   * Every page the crawl did not scan, with its reason (P2-038): noindex
+   * pages; fixed-list entries disallowed by robots.txt, redirected off-site
+   * or onto another page, duplicates of a captured page, and load failures.
+   */
+  excluded: PageExclusion[];
   excludedByNoindex: ExcludedPage[];
   /** URLs of a fixed list that robots.txt disallows (skipped, P2-007) */
   excludedByRobots: string[];
@@ -621,12 +627,17 @@ export async function crawl(
 
   // ----- Phase 3: seed queue ---------------------------------------------------
   const visited = new Set<string>();
+  const excluded: PageExclusion[] = [];
+  const exclude = (url: string, reason: PageExclusion["reason"], detail: string): void => {
+    excluded.push({ url, reason, detail });
+    options.reporter?.warn("crawl", `Not scanned: ${url} (${reason}${detail ? `: ${detail}` : ""})`);
+  };
   const excludedByRobots: string[] = [];
   const allowedList = fixedList
     ? fixedList.filter((u) => {
         if (isAllowed(robotsPolicy, u)) return true;
         excludedByRobots.push(u);
-        options.reporter?.warn("crawl", `Skipped by robots.txt: ${u}`);
+        exclude(u, "robots_disallowed", "robots.txt");
         return false;
       })
     : null;
@@ -756,10 +767,16 @@ export async function crawl(
       const responseHeaders = response?.headers() ?? {};
 
       // A URL that redirects off-site or onto a page we already have is
-      // not a new page.
+      // not a new page. A pinned entry records why it was not scanned.
       const finalUrl = normalizeUrl(page.url(), page.url());
       if (finalUrl && finalUrl !== url) {
-        if (!isSameOrigin(finalUrl, rootOrigin) || visited.has(finalUrl)) {
+        if (!isSameOrigin(finalUrl, rootOrigin)) {
+          if (fixedList) exclude(url, "redirect_to", finalUrl);
+          return;
+        }
+        if (visited.has(finalUrl)) {
+          // The final URL is a page of this scan (queued or already loaded)
+          if (fixedList) exclude(url, "duplicate_of", finalUrl);
           return;
         }
         visited.add(finalUrl);
@@ -814,10 +831,7 @@ export async function crawl(
         }
       } else if (shouldExclude) {
         excludedByNoindex.push({ url, source: noindex.source! });
-        options.reporter?.update(
-          "crawl",
-          `Excluded noindex page: ${url} (${noindex.source})`,
-        );
+        exclude(url, "noindex", noindex.source!);
       }
 
       // Extract links regardless of exclusion so BFS can still discover
@@ -832,6 +846,7 @@ export async function crawl(
       const msg = err instanceof Error ? err.message : String(err);
       options.reporter?.warn("crawl", `Skipping ${url}: ${msg}`);
       failedPages.push({ url, error: msg });
+      if (fixedList) exclude(url, "load_failed", msg.split("\n")[0]);
     } finally {
       recordSignature(url, signature);
       await page.close().catch(() => {});
@@ -874,5 +889,5 @@ export async function crawl(
     );
   }
 
-  return { snapshots, excludedByNoindex, excludedByRobots, robots: robotsSummary, failedPages };
+  return { snapshots, excluded, excludedByNoindex, excludedByRobots, robots: robotsSummary, failedPages };
 }

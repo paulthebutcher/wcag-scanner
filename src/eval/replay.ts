@@ -84,6 +84,8 @@ export interface SiteReplay {
   capture: Pick<SiteCapture, "corpus_version" | "split" | "site_id" | "capture_run_id">;
   page_ids: string[];
   page_order_observed: string[];
+  /** Corpus pages the engine did not scan, with the engine's reason (P2-038) */
+  pages_excluded: Array<{ page: string; reason: string; detail: string }>;
   result: EngineRunResult;
   totals: SiteReplayTotals;
   transport: TransportCounters;
@@ -277,6 +279,7 @@ export async function replaySite(options: ReplaySiteOptions): Promise<SiteReplay
       capture: { corpus_version: capture.corpus_version, split: capture.split, site_id: capture.site_id, capture_run_id: capture.capture_run_id },
       page_ids: pages.map((p) => p.page_id),
       page_order_observed: result.pageSnapshots.map((s) => pageIdOf(s.url)),
+      pages_excluded: (result.excludedPages ?? []).map((e) => ({ page: pageIdOf(e.url), reason: e.reason, detail: e.detail })),
       result,
       totals,
       transport: controlled.counters,
@@ -314,7 +317,7 @@ function writeSiteReplay(runDir: string, replay: SiteReplay, controlled: Control
   mkdirSync(out, { recursive: true });
   writeJson(join(out, "summary.json"), {
     site: replay.site, engine: replay.engine, tag: replay.tag, capture: replay.capture, page_ids: replay.page_ids,
-    page_order_observed: replay.page_order_observed, totals: replay.totals, transport: replay.transport,
+    page_order_observed: replay.page_order_observed, pages_excluded: replay.pages_excluded, totals: replay.totals, transport: replay.transport,
     har_merge: replay.har_merge, node_fetch: replay.node_fetch, egress: replay.egress, miss_urls: replay.miss_urls.slice(0, 500),
     client: replay.client, image_index_sha256: replay.image_index_sha256, scan_id: replay.result.scanId, warnings: replay.result.warnings,
     engine_data_dir: replay.engine_data_dir,

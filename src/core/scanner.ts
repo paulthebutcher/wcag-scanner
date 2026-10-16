@@ -17,8 +17,7 @@ import type {
   CategoryCounts,
   PlatformAdapter,
   DetectedBy,
-  DetectionManifest,
-} from "../types.js";
+  DetectionManifest, PageExclusion } from "../types.js";
 import {
   getPageSnapshot, openDatabase } from "../store/db.js";
 import {
@@ -160,6 +159,8 @@ export interface ScanResult {
   excludedByNoindex: Array<{ url: string; source: string }>;
   /** URLs of a fixed list that robots.txt disallows (P2-007) */
   excludedByRobots: string[];
+  /** Every page the crawl did not scan, with its reason (P2-038) */
+  excludedPages: PageExclusion[];
   /** What the scan sent and how it paced itself (null without etiquette) */
   etiquette: ScanEtiquetteReport | null;
   /** Per-check, per-page outcome (also written to <dataDir>/<scanId>/coverage.json) */
@@ -965,13 +966,13 @@ export async function scan(
       for (const p of renderFailed) reporter.warn("render", `  ${p.url}: ${p.render_health!.reasons.join("; ")}`);
     }
 
-    // Persist excluded-page list on the scan session so the report can
-    // surface it after the scan completes.
-    scanSession.excluded_pages = excludedByNoindex.length > 0 ? excludedByNoindex : null;
+    // Persist every unscanned page with its reason on the scan session so
+    // the CLI and the report can list them (P2-038).
+    scanSession.excluded_pages = crawlResult.excluded.length > 0 ? crawlResult.excluded : null;
     updateScanSession(db, scanId, { excluded_pages: scanSession.excluded_pages });
 
-    const excludedMsg = excludedByNoindex.length > 0
-      ? ` (${excludedByNoindex.length} noindex page(s) excluded)`
+    const excludedMsg = crawlResult.excluded.length > 0
+      ? ` (${crawlResult.excluded.length} page(s) not scanned: ${Object.entries(crawlResult.excluded.reduce<Record<string, number>>((m, e) => ({ ...m, [e.reason]: (m[e.reason] ?? 0) + 1 }), {})).map(([r, n]) => `${n} ${r}`).join(", ")})`
       : "";
     reporter.complete("crawl", `Discovered ${crawledSnapshots.length} page(s)${excludedMsg}`);
 
@@ -2112,6 +2113,7 @@ export async function scan(
       pageSnapshots: crawledSnapshots,
       excludedByNoindex,
       excludedByRobots: crawlResult.excludedByRobots,
+      excludedPages: crawlResult.excluded,
       etiquette: etiquetteReport,
       coverage: coverageData,
     };

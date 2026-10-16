@@ -45,6 +45,7 @@ export function headEngine(sha: string, label = "head"): EngineHandle {
         coverage: result.coverage,
         pageSnapshots: result.pageSnapshots,
         warnings: reporter.warnings,
+        excludedPages: result.excludedPages,
       };
     },
   };

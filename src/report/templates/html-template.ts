@@ -1157,20 +1157,28 @@ function renderScanScope(data: ReportData, pageUrlMap: Map<string, string>): str
     ? `<ol class="scope-page-list">${urls.map(u => `<li><code>${esc(u)}</code></li>`).join("")}</ol>`
     : `<p>No page list available.</p>`;
 
-  const excluded = data.scanSession.excluded_pages ?? [];
+  const excluded = (data.scanSession.excluded_pages ?? []).map((e) => ({
+    url: e.url,
+    // Older sessions stored noindex exclusions only, as { url, source }
+    reason: e.reason ?? "noindex",
+    detail: e.detail ?? e.source ?? "",
+  }));
+  const reasonText: Record<string, string> = {
+    noindex: "hidden from search engines (meta robots / X-Robots-Tag); rescan with --include-noindex to include it",
+    redirect_to: "redirects to another page",
+    duplicate_of: "the same page as one already scanned",
+    robots_disallowed: "disallowed by robots.txt",
+    load_failed: "could not be loaded",
+  };
   const excludedHtml = excluded.length > 0
     ? `
-      <h3>Excluded from Scan</h3>
+      <h3>Not Scanned</h3>
       <p>
         <strong>${excluded.length} page${excluded.length !== 1 ? "s" : ""}</strong>
-        were fetched but excluded from this assessment because
-        they are hidden from search engine results
-        (<code>meta robots</code> / <code>X-Robots-Tag</code>). These pages are
-        not the intended target of the public-site assessment. Rescan with
-        <code>--include-noindex</code> to include them.
+        in the requested scope ${excluded.length !== 1 ? "were" : "was"} not scanned, for the reason given beside each.
       </p>
       <ol class="scope-page-list">
-        ${excluded.map(e => `<li><code>${esc(e.url)}</code> <span class="scope-exclude-source">— ${esc(e.source)}</span></li>`).join("")}
+        ${excluded.map(e => `<li><code>${esc(e.url)}</code> <span class="scope-exclude-source">— ${esc(reasonText[e.reason] ?? e.reason)}${e.detail ? ` (${esc(e.detail)})` : ""}</span></li>`).join("")}
       </ol>`
     : "";
 
