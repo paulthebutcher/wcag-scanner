@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { computeFindingTypeHash, FINDING_HASH_VERSION } from "../core/finding-hash.js";
 import type {
   ScanSession,
   PageSnapshot,
@@ -109,12 +110,53 @@ CREATE INDEX IF NOT EXISTS idx_criterion_results_scan ON criterion_results(scan_
 // Database connection
 // ---------------------------------------------------------------------------
 
+/**
+ * Stored findings carry the hash scheme of the engine that wrote them. Older
+ * scans hashed the tier constant (axe_violation, semantic, …) instead of the
+ * finding's failure type (P2-003); recompute every stored hash from the
+ * measured failure type once, so wcag verify and report --compare match
+ * groups across the change. Idempotent: the schema version is kept in
+ * PRAGMA user_version. Returns the old → new mapping of hashes that changed.
+ */
+export function migrateFindingTypeHashes(db: Database.Database): Map<string, string> {
+  const mapping = new Map<string, string>();
+  const version = Number(db.pragma("user_version", { simple: true }));
+  if (version >= FINDING_HASH_VERSION) return mapping;
+  const rows = db.prepare(`
+    SELECT f.id, f.wcag_criterion, f.finding_type_hash, f.evidence, s.platform
+    FROM findings f
+    JOIN page_snapshots p ON p.id = f.page_snapshot_id
+    JOIN scan_sessions s ON s.id = p.scan_session_id
+  `).all() as Array<{ id: string; wcag_criterion: string; finding_type_hash: string; evidence: string; platform: string }>;
+  const update = db.prepare("UPDATE findings SET finding_type_hash = ? WHERE id = ?");
+  const run = db.transaction(() => {
+    for (const row of rows) {
+      let failureType: unknown;
+      try {
+        failureType = (JSON.parse(row.evidence) as { measured_values?: { failure_type?: unknown } }).measured_values?.failure_type;
+      } catch {
+        continue;
+      }
+      if (typeof failureType !== "string" || !failureType) continue; // nothing better than the stored hash
+      const next = computeFindingTypeHash(row.wcag_criterion, failureType, row.platform);
+      if (next !== row.finding_type_hash) {
+        update.run(next, row.id);
+        mapping.set(row.finding_type_hash, next);
+      }
+    }
+    db.pragma(`user_version = ${FINDING_HASH_VERSION}`);
+  });
+  run();
+  return mapping;
+}
+
 export function openDatabase(dbPath: string): Database.Database {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
+  migrateFindingTypeHashes(db);
 
   // Migrate: add missing columns for pre-existing databases.
   const cols = db.pragma("table_info(scan_sessions)") as { name: string }[];

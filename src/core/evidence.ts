@@ -18,6 +18,7 @@ import type {
 } from "../types.js";
 import type { FileStore } from "../store/files.js";
 import { insertFinding } from "../store/db.js";
+import { computeFindingTypeHash as hashFindingType, realFailureType } from "./finding-hash.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -182,23 +183,8 @@ const CRITERION_CATEGORIES: Record<string, Category> = {
 // Pure helper functions (exported for testing)
 // ---------------------------------------------------------------------------
 
-/**
- * Generate a deterministic SHA-256 hash for grouping identical violation patterns.
- * Same inputs always produce the same hash regardless of key insertion order.
- */
-export function computeFindingTypeHash(
-  wcagCriterion: string,
-  failureType: string,
-  platform: string,
-): string {
-  // Sorted keys for determinism
-  const payload = JSON.stringify({
-    failure_type: failureType,
-    platform,
-    wcag_criterion: wcagCriterion,
-  });
-  return createHash("sha256").update(payload).digest("hex");
-}
+/** Re-exported for callers and tests; the implementation lives in finding-hash.ts (P2-003). */
+export { computeFindingTypeHash } from "./finding-hash.js";
 
 /**
  * Map a WCAG criterion code to its conformance level.
@@ -670,9 +656,11 @@ export async function createFinding(
       checkResult.wcag_criterion,
     ),
     category: mapCriterionToCategory(checkResult.wcag_criterion),
-    finding_type_hash: computeFindingTypeHash(
+    // The real failure type (axe rule id, measured or model failure_type),
+    // not the tier constant in options.failureType (P2-003)
+    finding_type_hash: hashFindingType(
       checkResult.wcag_criterion,
-      options.failureType,
+      realFailureType(checkResult, options.failureType),
       options.platform,
     ),
     evidence,
