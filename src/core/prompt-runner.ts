@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { effectiveRequestFor, requestKey, type EffectiveRequest } from "./request-key.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { PromptRunnerConfig, PromptMode } from "../types.js";
 
@@ -99,6 +99,10 @@ const MODEL_ENV_OVERRIDES: Record<ModelRoute, string> = {
  * Requests send `temperature: 0`; a model that rejects sampling parameters
  * will fail every call.
  */
+/** Sampling parameters every request sends (part of the request identity) */
+export const MAX_TOKENS = 4096;
+export const TEMPERATURE = 0;
+
 export function resolveModelId(route: ModelRoute): string {
   return process.env[MODEL_ENV_OVERRIDES[route]] || MODEL_IDS[route];
 }
@@ -115,14 +119,27 @@ export interface PromptStats {
   totalLatencyMs: number;
 }
 
-function cacheKey(input: PromptInput): string {
-  const hash = createHash("sha1");
-  hash.update(input.template.name);
-  hash.update("\0");
-  hash.update(input.userMessage);
-  hash.update("\0");
-  if (input.template.vision && input.imageBase64) hash.update(input.imageBase64);
-  return hash.digest("hex");
+/** The request the runner will send for an input, as the eval cache identifies it (P2-002). */
+export function effectiveRequestOf(input: PromptInput): EffectiveRequest {
+  return effectiveRequestFor({
+    template: input.template,
+    modelId: resolveModelId(input.template.model),
+    userMessage: input.userMessage,
+    imageBase64: input.imageBase64,
+    imageMediaType: input.imageMediaType,
+    maxTokens: MAX_TOKENS,
+    temperature: TEMPERATURE,
+  });
+}
+
+/**
+ * In-scan cache key: the same key the eval harness's persistent cache uses
+ * for the same request, so it covers the model id, the system prompt and
+ * the template's content and output schema as well as the user text and
+ * image (P2-002).
+ */
+export function cacheKey(input: PromptInput): string {
+  return requestKey(effectiveRequestOf(input));
 }
 
 function isRetryableApiError(err: unknown): boolean {
@@ -164,8 +181,8 @@ export function buildMessages(
 
   return {
     model: resolveModelId(input.template.model),
-    max_tokens: 4096,
-    temperature: 0,
+    max_tokens: MAX_TOKENS,
+    temperature: TEMPERATURE,
     system: input.template.systemPrompt,
     messages: [
       {

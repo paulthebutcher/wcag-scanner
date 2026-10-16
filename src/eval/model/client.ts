@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { canonicalJson, sha256 } from "../util.js";
+import { templateSha256, outputSchemaSha256 } from "../../core/request-key.js";
 import { requestKey, ResponseCache, NO_IMAGE, type CachedAttempt, type EffectiveRequest, type RecordedError } from "./cache.js";
 import { costOf, worstCaseCost } from "./pricing.js";
 
@@ -310,7 +311,7 @@ export function templateContext(template: { name: string; family?: string; model
   return {
     name: template.name,
     family: template.family ?? "",
-    sha256: sha256(canonicalJson(template)),
-    output_schema_sha256: sha256(canonicalJson(template.outputSchema ?? null)),
+    sha256: templateSha256(template),
+    output_schema_sha256: outputSchemaSha256(template),
   };
 }

@@ -8,8 +8,7 @@ import {
   createPromptRunner,
   type PromptTemplate,
   type PromptInput,
-  type PromptLogEntry,
-} from "../../src/core/prompt-runner.js";
+  type PromptLogEntry, cacheKey, effectiveRequestOf } from "../../src/core/prompt-runner.js";
 
 // ---------------------------------------------------------------------------
 // Test prompt template
@@ -355,6 +354,43 @@ describe("PromptRunner retry behavior", () => {
 // ---------------------------------------------------------------------------
 // PromptRunner — identical-input cache and stats
 // ---------------------------------------------------------------------------
+
+describe("in-scan cache key is the eval request key (P2-002)", () => {
+  const template: PromptTemplate = { name: "key_test", family: "element_evaluation", model: "sonnet", vision: true, systemPrompt: "You judge alt text.", outputSchema: { type: "object", properties: { verdict: { type: "string" } } } };
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString("base64");
+
+  it("equals requestKey over the eval client's effectiveRequest for the same input, with and without an image", async () => {
+    const { EvalAnthropicClient, runWithTemplate, templateContext } = await import("../../src/eval/model/client.js");
+    const { requestKey } = await import("../../src/core/request-key.js");
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new EvalAnthropicClient({ mode: "inject", errors: Anthropic, engineLabel: "head", runId: "k", injector: () => ({ text: "{}" }) });
+    for (const input of [{ template, userMessage: "alt: a dog" }, { template, userMessage: "alt: a dog", imageBase64: png, imageMediaType: "image/png" }]) {
+      const { req } = runWithTemplate(templateContext(template), () => client.effectiveRequest(buildMessages(input)));
+      expect(cacheKey(input)).toBe(requestKey(req));
+      expect(effectiveRequestOf(input)).toEqual(req);
+    }
+    expect(effectiveRequestOf({ template, userMessage: "x" }).image).toBe("no-image");
+    expect(effectiveRequestOf({ template, userMessage: "x", imageBase64: png }).image).toMatchObject({ media_type: "image/png" });
+  });
+
+  it("changes with the model id, the system prompt, the output schema and the parameters, not only the text", () => {
+    const base = cacheKey({ template, userMessage: "same" });
+    expect(cacheKey({ template: { ...template, systemPrompt: "You judge alt text, strictly." }, userMessage: "same" })).not.toBe(base);
+    expect(cacheKey({ template: { ...template, outputSchema: { type: "object" } }, userMessage: "same" })).not.toBe(base);
+    expect(cacheKey({ template: { ...template, model: "opus" }, userMessage: "same" })).not.toBe(base);
+    expect(cacheKey({ template, userMessage: "same", imageBase64: png })).not.toBe(base);
+    const saved = process.env.WCAG_MODEL_SONNET;
+    process.env.WCAG_MODEL_SONNET = "claude-sonnet-test-id";
+    try {
+      expect(cacheKey({ template, userMessage: "same" })).not.toBe(base);
+      expect(effectiveRequestOf({ template, userMessage: "same" }).model).toBe("claude-sonnet-test-id");
+    } finally {
+      if (saved === undefined) delete process.env.WCAG_MODEL_SONNET; else process.env.WCAG_MODEL_SONNET = saved;
+    }
+    expect(cacheKey({ template, userMessage: "same" })).toBe(base);
+    expect(effectiveRequestOf({ template, userMessage: "same" }).parameters).toEqual({ max_tokens: 4096, temperature: 0 });
+  });
+});
 
 describe("PromptRunner cache", () => {
   const template: PromptTemplate = {

@@ -12,23 +12,10 @@ import { canonicalJson, sha256, writeOnce } from "../util.js";
 //   <cacheDir>/<namespace>/<key[0:2]>/<key>/attempt-000.json
 // ---------------------------------------------------------------------------
 
-export const NO_IMAGE = "no-image";
-
-/** Everything that makes two requests the same request. */
-export interface EffectiveRequest {
-  model: string;
-  template_name: string;
-  template_sha256: string;
-  system: string;
-  user_text: string;
-  image: { sha256: string; media_type: string } | typeof NO_IMAGE;
-  output_schema_sha256: string;
-  parameters: { max_tokens: number; temperature: number | null };
-}
-
-export function requestKey(req: EffectiveRequest): string {
-  return sha256(canonicalJson({ v: 1, ...req }));
-}
+// The request identity and its key live in core (P2-002): the in-scan
+// prompt cache and this persistent cache key the same way.
+import type { EffectiveRequest } from "../../core/request-key.js";
+export { NO_IMAGE, requestKey, type EffectiveRequest } from "../../core/request-key.js";
 
 export interface RecordedError {
   class_name: string;

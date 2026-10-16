@@ -7,34 +7,13 @@ import { dirname, join } from "node:path";
 // Hashing and canonical JSON
 // ---------------------------------------------------------------------------
 
-export function sha256(data: string | Buffer): string {
-  return createHash("sha256").update(data).digest("hex");
-}
+export { sha256, canonicalJson } from "../core/request-key.js";
 
 export function sha256File(path: string): string {
   return sha256(readFileSync(path));
 }
 
-/**
- * JSON with object keys sorted at every level, so equal values always
- * serialise (and hash) the same way regardless of insertion order.
- */
-export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeys(value));
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === "object" && !(value instanceof Buffer)) {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      const v = (value as Record<string, unknown>)[key];
-      if (v !== undefined) out[key] = sortKeys(v);
-    }
-    return out;
-  }
-  return value;
-}
+import { sha256, canonicalJson } from "../core/request-key.js";
 
 export function hashJson(value: unknown): string {
   return sha256(canonicalJson(value));
