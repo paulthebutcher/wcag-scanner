@@ -30,12 +30,6 @@ Scans 6d4e82fe and 0705da2d report `broken_skip_navigation` with "focus did not 
 
 **Possible improvement:** record when focus reaches the target on those pages and extend or adapt the wait.
 
-## AI verdicts can differ between scans of an unchanged page (P2-020, P2-021)
-
-Some prompts include page content that changes on every load, so the same element can be sent to the model with slightly different text each scan and get a different verdict. Seen on popfly.com: a hidden `visitor_id` and `landing_timestamp` in a form (form checks). Style and script text (GrowSurf's random class) no longer reaches link-text and alt-text prompts since P2-012, and the error-message prompt no longer contains the page's `html` element since P2-001 (fixed).
-
-**Possible improvement:** leave hidden-input values out of form prompts, and build the error-message prompt from the form and its error region instead of the start of the page (P2-001).
-
 ## The crawler follows links users cannot see (P2-031)
 
 The crawl collects every link in a page's HTML, including links inside hidden elements (a menu item hidden with a `hide` class, `hidden` or `aria-hidden` containers). A scan can therefore check pages that visitors cannot reach from the pages scanned. On popfly.com a hidden mobile-menu link leads to `/archive/pricing` from 73 of 75 pages; that page is noindex, so it only appears in scans run with `--include-noindex`.
