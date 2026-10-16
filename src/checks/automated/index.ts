@@ -15,7 +15,17 @@ export interface AxeCheckOptions {
   disableRules?: string[];
 }
 
+/** One axe rule's outcome on one page, with every WCAG criterion its tags name */
+export interface AxeRuleOutcome {
+  rule: string;
+  criteria: string[];
+  outcome: "passed" | "inapplicable" | "violation" | "incomplete";
+  nodes: number;
+}
+
 export interface AxeCheckOutput {
+  /** Every rule's outcome on this page (for the per-scan aggregation, P2-004) */
+  ruleOutcomes: AxeRuleOutcome[];
   /** One CheckResult per violation node */
   violations: CheckResult[];
   /** CheckResults for incomplete (needs_review) nodes */
@@ -326,5 +336,66 @@ export async function runAxeChecks(
     scanSessionId,
   );
 
-  return { violations, incomplete, passes, inapplicable };
+  const ruleOutcomes: AxeRuleOutcome[] = [
+    ...axeResults.passes.map((r) => ({ rule: r.id, criteria: extractWcagCriteria(r.tags), outcome: "passed" as const, nodes: r.nodes.length })),
+    ...axeResults.inapplicable.map((r) => ({ rule: r.id, criteria: extractWcagCriteria(r.tags), outcome: "inapplicable" as const, nodes: 0 })),
+    ...axeResults.violations.map((r) => ({ rule: r.id, criteria: extractWcagCriteria(r.tags), outcome: "violation" as const, nodes: r.nodes.length })),
+    ...axeResults.incomplete.map((r) => ({ rule: r.id, criteria: extractWcagCriteria(r.tags), outcome: "incomplete" as const, nodes: r.nodes.length })),
+  ].filter((o) => o.criteria.length > 0);
+
+  return { violations, incomplete, passes, inapplicable, ruleOutcomes };
+}
+
+/**
+ * Criterion results from every page's axe rule outcomes (P2-004). A
+ * criterion passes only when, on every page tested, each rule mapped to it
+ * (by all of its WCAG tags) passed or was inapplicable, and at least one
+ * rule passed somewhere; a violation or incomplete result on any page, in
+ * any order, keeps it from passing (the findings then set failed or
+ * needs_review). All rules inapplicable everywhere: not_applicable.
+ */
+export function aggregateAxeCriteria(
+  pages: Array<{ url: string; outcomes: AxeRuleOutcome[] }>,
+  scanSessionId: string,
+): CriterionResult[] {
+  interface Tally { passed: Set<string>; inapplicable: Set<string>; blocked: Set<string>; pagesPassed: Set<string>; pages: Set<string> }
+  const tallies = new Map<string, Tally>();
+  const tally = (c: string): Tally => {
+    let t = tallies.get(c);
+    if (!t) {
+      t = { passed: new Set(), inapplicable: new Set(), blocked: new Set(), pagesPassed: new Set(), pages: new Set() };
+      tallies.set(c, t);
+    }
+    return t;
+  };
+  for (const page of pages) {
+    for (const o of page.outcomes) {
+      for (const c of o.criteria) {
+        const t = tally(c);
+        t.pages.add(page.url);
+        if (o.outcome === "passed") { t.passed.add(o.rule); t.pagesPassed.add(page.url); }
+        else if (o.outcome === "inapplicable") t.inapplicable.add(o.rule);
+        else t.blocked.add(o.rule);
+      }
+    }
+  }
+  const results: CriterionResult[] = [];
+  for (const [criterion, t] of tallies) {
+    if (t.blocked.size > 0) continue; // a violation or incomplete result somewhere: the findings decide
+    const rules = Array.from(new Set([...t.passed, ...t.inapplicable])).sort();
+    if (t.passed.size > 0) {
+      results.push({
+        scan_session_id: scanSessionId, wcag_criterion: criterion, status: "passed", tested_by: "axe_core",
+        evidence_summary: `Passed ${t.passed.size} axe-core rule(s) on ${t.pagesPassed.size} of ${t.pages.size} page(s), inapplicable elsewhere: ${rules.join(", ")}`,
+        finding_ids: [],
+      });
+    } else {
+      results.push({
+        scan_session_id: scanSessionId, wcag_criterion: criterion, status: "not_applicable", tested_by: "axe_core",
+        evidence_summary: `No applicable elements on ${t.pages.size} page(s) for ${rules.length} axe-core rule(s): ${rules.join(", ")}`,
+        finding_ids: [],
+      });
+    }
+  }
+  return results.sort((a, b) => a.wcag_criterion.localeCompare(b.wcag_criterion));
 }

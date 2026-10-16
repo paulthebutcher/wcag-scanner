@@ -27,14 +27,17 @@ import {
   insertPageSnapshot,
   upsertScanSummary,
   upsertCriterionResult,
+  deleteCriterionResult,
   updateFinding,
 } from "../store/db.js";
 import { LocalFileStore } from "../store/files.js";
 import { crawl } from "./crawler.js";
-import { runAxeChecks } from "../checks/automated/index.js";
+import { runAxeChecks, aggregateAxeCriteria, type AxeRuleOutcome } from "../checks/automated/index.js";
 import { pacedGoto, setActivePacer, type ScanEtiquette } from "./etiquette.js";
 import { CoverageRecorder, writeCoverage, type ScanCoverage } from "./coverage.js";
 import { CHECK_TIERS } from "./check-registry.js";
+import { settleCriterionResults } from "./criterion-status.js";
+import { WCAG_AA_CRITERION_IDS } from "./wcag-criteria.js";
 import { withoutRawTextContent } from "./markup.js";
 import { containersOf, isThirdPartyFinding, loadThirdPartyConfig, tagCheckResults, thirdPartyTagOf, writeThirdPartyReport, type EmbedSweepStop } from "./third-party.js";
 import { createImageFetcher } from "../checks/semantic/image-fetch.js";
@@ -609,11 +612,13 @@ export function reconcileInMemory(
       // Only third-party embed findings remain: no evidence either way, so
       // the stored status stays (never a pass from them)
     } else if (cr.status === "failed") {
-      // Criterion was failed but all its findings were filtered out.
-      // Flip to "passed": no remaining violations. Keep tested_by.
-      cr.status = "passed";
+      // Every finding behind the stored failure was filtered from this view
+      // (possibly noisy). Nothing showed the criterion passes, so it needs a
+      // manual check, never a pass (P2-033).
+      const filtered = cr.finding_ids.length;
+      cr.status = "needs_review";
       cr.finding_ids = [];
-      cr.evidence_summary = "No issues detected";
+      cr.evidence_summary = `${filtered} finding(s) filtered from this view as possibly noisy; needs a manual check`;
     }
     // else: already pass / needs_review / not_applicable / not_tested —
     // leave alone. A needs_review criterion is never turned into a pass.
@@ -765,7 +770,6 @@ const UNTESTED_BY_TIER: Array<{ tier: number; testedBy: DetectedBy; criteria: Ar
       ["1.3.2", "Meaningful Sequence"],
       ["1.3.3", "Sensory Characteristics"],
       ["1.3.4", "Orientation"],
-      ["1.3.6", "Identify Purpose"],
       ["1.4.5", "Images of Text"],
       ["1.4.10", "Reflow"],
       ["1.4.11", "Non-text Contrast"],
@@ -1009,6 +1013,9 @@ export async function scan(
       if (tiers.includes(1)) {
         reporter.update("axe", "Processing axe-core results...");
         const endAxeProcess = startPhase("axe_process");
+        // Rule outcomes per page; criterion statuses are settled over all
+        // pages at once, never per page (P2-004)
+        const axePages: Array<{ url: string; outcomes: AxeRuleOutcome[] }> = [];
 
         for (const snapshot of pageSnapshots) {
           const stash = axeByPage.get(snapshot.id);
@@ -1052,17 +1059,7 @@ export async function scan(
               allFindings.push(...incompleteFindings);
             }
 
-            // Store pass criterion results
-            for (const cr of axeOutput.passes) {
-              upsertCriterionResult(db, cr);
-              allCriterionResults.push(cr);
-            }
-
-            // Store inapplicable criterion results
-            for (const cr of axeOutput.inapplicable) {
-              upsertCriterionResult(db, cr);
-              allCriterionResults.push(cr);
-            }
+            axePages.push({ url: snapshot.url, outcomes: axeOutput.ruleOutcomes });
 
             reporter.update(
               "axe",
@@ -1073,6 +1070,10 @@ export async function scan(
             reporter.warn("axe", `Failed for ${snapshot.url}: ${msg}`);
             coverage.failed("axe-core", 1, snapshot.url, err);
           }
+        }
+        for (const cr of aggregateAxeCriteria(axePages, scanId)) {
+          upsertCriterionResult(db, cr);
+          allCriterionResults.push(cr);
         }
         endAxeProcess();
 
@@ -1981,7 +1982,17 @@ export async function scan(
     // --- Phase 8: Reconcile CriterionResults ------------------------------------
     // Ensure no criterion is both "passed" and has findings.
     // Later tiers may add violations for criteria that earlier tiers marked passed.
-    const reconciledResults = reconcileCriterionResults(scanId, allFindings, allCriterionResults, db);
+    const reconciled = reconcileCriterionResults(scanId, allFindings, allCriterionResults, db);
+
+    // --- Phase 8a: Settle statuses (P2-010, P2-004, P2-032, stored gap) ------
+    // A pass is withheld (not_tested, with the reason) when a check addressing
+    // the criterion failed on any page; every A/AA criterion gets one row, a
+    // criterion no check covers as not_tested / no_check; out-of-scope rows go.
+    const reconciledResults = settleCriterionResults({ scanId, results: reconciled, coverage: coverage.entries() });
+    for (const cr of reconciledResults) upsertCriterionResult(db, cr);
+    for (const cr of reconciled) {
+      if (!WCAG_AA_CRITERION_IDS.includes(cr.wcag_criterion)) deleteCriterionResult(db, scanId, cr.wcag_criterion);
+    }
 
     // --- Phase 8b: No criterion passes while a page rendered broken (P2-011) --
     const renderFailedCount = crawledSnapshots.length - pageSnapshots.length;

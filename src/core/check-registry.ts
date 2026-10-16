@@ -77,6 +77,46 @@ const CHECK_BY_FAILURE_TYPE: Record<string, string> = {
   motion_actuation_detected: "motion-actuation",
 };
 
+/**
+ * Criteria each check addresses (the same map as eval/config.json). A
+ * criterion passes on a check's evidence only when that check ran on every
+ * page it was tried on; a check that threw leaves its criteria not_tested
+ * (P2-010, core/criterion-status.ts).
+ */
+export const CHECK_CRITERIA: Record<string, readonly string[]> = {
+  "axe-core": ["1.1.1", "1.2.2", "1.3.1", "1.3.5", "1.4.1", "1.4.2", "1.4.3", "1.4.4", "1.4.12", "2.1.1", "2.2.1", "2.2.2", "2.4.1", "2.4.2", "2.4.4", "3.1.1", "3.1.2", "3.3.2", "4.1.2"],
+  "keyboard": ["2.1.1"],
+  "focus-visible": ["2.4.7"],
+  "focus-order": ["2.4.3"],
+  "keyboard-trap": ["2.1.2"],
+  "skip-nav": ["2.4.1"],
+  "modal": [],
+  "alt-text": ["1.1.1"],
+  "link-text": ["2.4.4"],
+  "headings": ["1.3.1", "2.4.6"],
+  "landmark-labels": ["1.3.1"],
+  "widget-aria": ["4.1.2"],
+  "table-structure": ["1.3.1"],
+  "duplicate-links": ["2.4.4"],
+  "consistent-nav": ["3.2.3"],
+  "form-discovery": [],
+  "high-risk-forms": ["3.3.4"],
+  "form-submission": ["1.4.1", "3.3.1"],
+  "error-messages": ["3.3.1", "3.3.3"],
+  "input-purpose": ["1.3.5"],
+  "on-input": ["3.2.2"],
+  "error-quality": ["3.3.1"],
+  "pause-stop-hide": ["2.2.2"],
+  "three-flashes": ["2.3.1"],
+  "multiple-ways": ["2.4.5"],
+  "motion-actuation": ["2.5.4"],
+};
+
+/** Checks that address a criterion. */
+export function checksForCriterion(criterion: string): string[] {
+  return Object.entries(CHECK_CRITERIA).filter(([, cs]) => cs.includes(criterion)).map(([c]) => c);
+}
+
 /** Remaining Claude API findings fall back to the check for their criterion. */
 const CHECK_BY_CRITERION: Record<string, string> = {
   "1.1.1": "alt-text",

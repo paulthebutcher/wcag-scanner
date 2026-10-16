@@ -93,8 +93,8 @@ describe("criterion status with needs-review findings (P2-030, P2-019)", () => {
   it("a stored needs_review criterion is never turned into a pass when its findings are filtered from the client view", () => {
     const [r] = reconcileInMemory("s", [], [cr("4.1.2", "needs_review")]);
     expect(r.status).toBe("needs_review");
-    // the existing rule for a failed criterion whose findings were all filtered is unchanged
-    expect(reconcileInMemory("s", [], [cr("4.1.2", "failed")])[0].status).toBe("passed");
+    // a failed criterion whose findings were all filtered needs a manual check, never a pass (P2-033)
+    expect(reconcileInMemory("s", [], [cr("4.1.2", "failed")])[0].status).toBe("needs_review");
   });
 });
 

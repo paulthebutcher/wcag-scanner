@@ -16,79 +16,17 @@ import { renderThirdPartyHtml } from "../third-party-report.js";
 import { renderVerifyHtml } from "../verify-report.js";
 import { estimateRemediation, fixUnits, formatHours, unitHoursFor, type RemediationEstimate, type FixKind } from "../effort.js";
 import type { VerifyResult } from "../../core/verify.js";
+import { WCAG_AA_CRITERIA, WCAG_AA_CRITERION_IDS } from "../../core/wcag-criteria.js";
+import { notTestedRows } from "../../core/criterion-status.js";
 
 // ---------------------------------------------------------------------------
 // WCAG criterion names
 // ---------------------------------------------------------------------------
 
-const CRITERION_NAMES: Record<string, string> = {
-  "1.1.1": "Non-text Content",
-  "1.2.1": "Audio-only and Video-only (Prerecorded)",
-  "1.2.2": "Captions (Prerecorded)",
-  "1.2.3": "Audio Description or Media Alternative (Prerecorded)",
-  "1.2.4": "Captions (Live)",
-  "1.2.5": "Audio Description (Prerecorded)",
-  "1.3.1": "Info and Relationships",
-  "1.3.2": "Meaningful Sequence",
-  "1.3.3": "Sensory Characteristics",
-  "1.3.4": "Orientation",
-  "1.3.5": "Identify Input Purpose",
-  "1.3.6": "Identify Purpose",
-  "1.4.1": "Use of Color",
-  "1.4.2": "Audio Control",
-  "1.4.3": "Contrast (Minimum)",
-  "1.4.4": "Resize Text",
-  "1.4.5": "Images of Text",
-  "1.4.10": "Reflow",
-  "1.4.11": "Non-text Contrast",
-  "1.4.12": "Text Spacing",
-  "1.4.13": "Content on Hover or Focus",
-  "2.1.1": "Keyboard",
-  "2.1.2": "No Keyboard Trap",
-  "2.1.4": "Character Key Shortcuts",
-  "2.2.1": "Timing Adjustable",
-  "2.2.2": "Pause, Stop, Hide",
-  "2.3.1": "Three Flashes or Below Threshold",
-  "2.4.1": "Bypass Blocks",
-  "2.4.2": "Page Titled",
-  "2.4.3": "Focus Order",
-  "2.4.4": "Link Purpose (In Context)",
-  "2.4.5": "Multiple Ways",
-  "2.4.6": "Headings and Labels",
-  "2.4.7": "Focus Visible",
-  "2.5.1": "Pointer Gestures",
-  "2.5.2": "Pointer Cancellation",
-  "2.5.3": "Label in Name",
-  "2.5.4": "Motion Actuation",
-  "3.1.1": "Language of Page",
-  "3.1.2": "Language of Parts",
-  "3.2.1": "On Focus",
-  "3.2.2": "On Input",
-  "3.2.3": "Consistent Navigation",
-  "3.2.4": "Consistent Identification",
-  "3.3.1": "Error Identification",
-  "3.3.2": "Labels or Instructions",
-  "3.3.3": "Error Suggestion",
-  "3.3.4": "Error Prevention (Legal, Financial, Data)",
-  "4.1.1": "Parsing",
-  "4.1.2": "Name, Role, Value",
-  "4.1.3": "Status Messages",
-};
+const CRITERION_NAMES: Record<string, string> = Object.fromEntries(WCAG_AA_CRITERIA.map((c) => [c.id, c.name]));
 
-const ALL_CRITERIA = [
-  "1.1.1", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5",
-  "1.3.1", "1.3.2", "1.3.3", "1.3.4", "1.3.5", "1.3.6",
-  "1.4.1", "1.4.2", "1.4.3", "1.4.4", "1.4.5", "1.4.10", "1.4.11", "1.4.12", "1.4.13",
-  "2.1.1", "2.1.2", "2.1.4",
-  "2.2.1", "2.2.2",
-  "2.3.1",
-  "2.4.1", "2.4.2", "2.4.3", "2.4.4", "2.4.5", "2.4.6", "2.4.7",
-  "2.5.1", "2.5.2", "2.5.3", "2.5.4",
-  "3.1.1", "3.1.2",
-  "3.2.1", "3.2.2", "3.2.3", "3.2.4",
-  "3.3.1", "3.3.2", "3.3.3", "3.3.4",
-  "4.1.1", "4.1.2", "4.1.3",
-];
+// The 50 WCAG 2.1 A/AA criteria (P2-032): the scorecard's rows and the executive summary's denominator
+const ALL_CRITERIA: string[] = [...WCAG_AA_CRITERION_IDS];
 
 // Sitewide threshold: an issue appearing on this many+ pages is sitewide
 const SITEWIDE_THRESHOLD = 5;
@@ -660,7 +598,28 @@ function renderComplianceScorecard(criterionResults: CriterionResult[]): string 
           ${rows.join("")}
         </tbody>
       </table>
+      ${renderNotTestedList(criterionResults)}
     </section>`;
+}
+
+/** Criteria the scan did not establish, each with its stored reason. */
+function renderNotTestedList(criterionResults: CriterionResult[]): string {
+  const known = new Set(criterionResults.map((r) => r.wcag_criterion));
+  const rows = notTestedRows(criterionResults.filter((r) => ALL_CRITERIA.includes(r.wcag_criterion)));
+  for (const c of ALL_CRITERIA) {
+    if (!known.has(c)) rows.push({ criterion: c, name: CRITERION_NAMES[c] ?? c, reason: "no result stored for this criterion", tested_by: "manual" });
+  }
+  if (rows.length === 0) return "";
+  rows.sort((a, b) => a.criterion.localeCompare(b.criterion, undefined, { numeric: true }));
+  return `
+      <h3 class="not-tested-heading">Not tested (${rows.length})</h3>
+      <p class="section-intro">These criteria were not established by the automated checks; each needs a manual check for the reason given.</p>
+      <table class="scorecard-table not-tested-table">
+        <thead><tr><th>Criterion</th><th>Name</th><th>Reason</th></tr></thead>
+        <tbody>${rows.map((r) => `
+          <tr><td>${esc(r.criterion)}</td><td>${esc(r.name)}</td><td>${esc(r.reason)}</td></tr>`).join("")}
+        </tbody>
+      </table>`;
 }
 
 // ---------------------------------------------------------------------------

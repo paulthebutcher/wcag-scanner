@@ -243,8 +243,9 @@ describe("CRITERION_NAMES", () => {
 
 describe("ALL_CRITERIA", () => {
   it("contains all WCAG 2.1 AA criteria", () => {
-    // 50 WCAG 2.1 A/AA criteria plus 1.3.6 (AAA): criterion-map defect P2-032
-    expect(ALL_CRITERIA.length).toBe(51);
+    // Exactly the 50 WCAG 2.1 A/AA criteria (P2-032: 1.3.6, AAA, is out of scope)
+    expect(ALL_CRITERIA.length).toBe(50);
+    expect(ALL_CRITERIA).not.toContain("1.3.6");
   });
 
   it("starts with 1.1.1 and ends with 4.1.3", () => {

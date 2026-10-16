@@ -507,6 +507,10 @@ function rowToCriterion(row: Record<string, unknown>): CriterionResult {
   };
 }
 
+export function deleteCriterionResult(db: Database.Database, scanSessionId: string, wcagCriterion: string): void {
+  db.prepare("DELETE FROM criterion_results WHERE scan_session_id = ? AND wcag_criterion = ?").run(scanSessionId, wcagCriterion);
+}
+
 export function upsertCriterionResult(db: Database.Database, result: CriterionResult): void {
   db.prepare(`
     INSERT INTO criterion_results (scan_session_id, wcag_criterion, status, tested_by, evidence_summary, finding_ids)
