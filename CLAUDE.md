@@ -290,6 +290,7 @@ WCAG_DATA_DIR        — Default: ./wcag-data
 WCAG_MAX_PAGES       — Default: 50
 WCAG_CONCURRENCY     — Default: 5 (parallel Claude API calls)
 WCAG_PROMPT_MODE     — "realtime" | "batch"
+WCAG_CONTACT_URL     — Required for production scans (falls back to EVAL_CONTACT_URL): contact page sent in the user agent
 ```
 
 ## Skills

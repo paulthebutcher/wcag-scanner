@@ -1,4 +1,5 @@
 import type { Page, ElementHandle } from "playwright";
+import { pacedReload } from "../../core/etiquette.js";
 import type { CheckResult } from "../../types.js";
 import { vendorSelectorLists, type EmbedSweepStop } from "../../core/third-party.js";
 
@@ -624,7 +625,7 @@ export async function runKeyboardChecks(
       stops: tabSequence.focusStops.length,
       lastFocusedSelector: tabSequence.lastFocusedSelector,
     };
-    await page.reload({ waitUntil: "load", timeout: 30_000 }).catch(() => {});
+    await pacedReload(page, { waitUntil: "load", timeout: 30_000 }).catch(() => {});
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
     tabSequence = await recordTabSequence(page, options);
   }

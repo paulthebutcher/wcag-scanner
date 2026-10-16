@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { pacedGoto } from "../../core/etiquette.js";
 import type { CheckResult, PageSnapshot } from "../../types.js";
 import type { FormInfo, FormFieldInfo } from "../forms/discovery.js";
 import type { SubmissionState } from "../forms/submission.js";
@@ -96,7 +97,7 @@ export async function checkOnInput(
 
       // Navigate back if the page changed
       if (page.url() !== originalUrl) {
-        await page.goto(originalUrl, { waitUntil: "load", timeout: 10_000 });
+        await pacedGoto(page, originalUrl, { waitUntil: "load", timeout: 10_000 });
         await page.waitForTimeout(300);
       }
     } catch (err) {

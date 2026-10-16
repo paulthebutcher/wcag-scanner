@@ -88,6 +88,7 @@ WCAG_PROMPT_MODE=realtime
 | `WCAG_PROMPT_MODE` | `realtime` | `realtime` or `batch` |
 | `WCAG_MODEL_SONNET` | `claude-sonnet-4-6` | Model for element, form and remediation prompts |
 | `WCAG_MODEL_OPUS` | `claude-opus-4-6` | Model for the executive summary |
+| `WCAG_CONTACT_URL` | none (falls back to `EVAL_CONTACT_URL`) | Required for `scan` and `verify`: an http(s) page the site owner can read, sent in the user agent `WCAGEngine/<version> (+<url>)` |
 
 Build the CLI (or run it directly with `tsx`):
 
@@ -118,7 +119,11 @@ npx wcag scan https://example.com --tiers 1,2          # no API key needed
 | `--data-dir <path>` | `./wcag-data` | Where results are stored |
 | `--page-concurrency <n>` | `4` | Pages loaded and tested in parallel |
 | `--include-noindex` | off | Also scan pages marked `noindex` |
+| `--urls <file>` | — | Scan exactly these pages (one per line) instead of crawling; robots.txt still applies |
+| `--min-delay-ms <n>` | `3000` | Smallest gap between top-level page loads per host; a larger robots.txt `Crawl-delay` wins |
 | `--quiet` | off | Suppress progress output |
+
+Every production scan identifies itself (`WCAGEngine/<version> (+<contact URL>)`), reads `robots.txt` in both modes (a disallowed URL is skipped and logged; an unreadable robots.txt refuses the scan), paces page loads, and contains form submissions: POST requests and GET form navigations are answered locally and never reach the site.
 
 Each scan also writes a verbose findings dump to `<data-dir>/<scan-id>/` (`findings.md`, `findings.jsonl`, and one markdown file per finding), grouped into triage buckets: fix now, verify manually, possibly noisy, advisory. The same directory gets `timings.json`: time per phase, and API calls, cache hits and tokens per prompt.
 

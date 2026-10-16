@@ -1,6 +1,9 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
+import { decideRobots, fetchRobots, isAllowed, PRODUCT_TOKEN, type RobotsFetchOutcome, type RobotsPolicy } from "./robots.js";
+import { getActivePacer } from "./etiquette.js";
+import type { Pacer } from "./pacer.js";
 import type { PageSnapshot, Viewport } from "../types.js";
 import type { FileStore } from "../store/files.js";
 import type { ProgressReporter } from "./progress.js";
@@ -13,6 +16,19 @@ import { assessRenderHealth, type RenderHealth } from "./render-health.js";
 export interface CrawlOptions {
   scanSessionId: string;
   fileStore: FileStore;
+  /** Identifying user agent for every request (production scans, P2-007) */
+  userAgent?: string;
+  /** Paces top-level loads per host; the active scan pacer when omitted */
+  pacer?: Pacer;
+  /** robots.txt product token (default: the engine's) */
+  productToken?: string;
+  /**
+   * How robots.txt is applied (P2-007). "strict" (production): fetched in
+   * every mode, a fetch error or non-4xx failure refuses the scan.
+   * "lenient" (default): fetched, errors mean no restrictions. "skip": not
+   * fetched (offline callers that enforce robots themselves).
+   */
+  robots?: "strict" | "lenient" | "skip";
   maxPages?: number;
   timeoutMs?: number;
   viewport?: Viewport;
@@ -54,6 +70,15 @@ export interface CrawlOptions {
   urlList?: string[];
 }
 
+export interface RobotsSummary {
+  source: RobotsPolicy["source"];
+  /** HTTP status of the robots.txt fetch (null on a network error, which refuses the scan) */
+  status: number | null;
+  group: RobotsPolicy["group"];
+  rules: number;
+  crawl_delay_seconds: number | null;
+}
+
 export interface ExcludedPage {
   url: string;
   source: NoindexSource;
@@ -62,6 +87,10 @@ export interface ExcludedPage {
 export interface CrawlResult {
   snapshots: PageSnapshot[];
   excludedByNoindex: ExcludedPage[];
+  /** URLs of a fixed list that robots.txt disallows (skipped, P2-007) */
+  excludedByRobots: string[];
+  /** What robots.txt said for the root origin */
+  robots: RobotsSummary;
   /** URLs that could not be loaded (timeouts, network errors) */
   failedPages: Array<{ url: string; error: string }>;
 }
@@ -375,11 +404,12 @@ export function detectNoindex(
 async function fetchText(
   url: string,
   timeoutMs: number,
+  userAgent?: string,
 ): Promise<string | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal: controller.signal, headers: userAgent ? { "user-agent": userAgent } : {} });
     clearTimeout(timer);
     if (!res.ok) return null;
     return await res.text();
@@ -466,11 +496,11 @@ async function pageSkeleton(page: Page): Promise<string> {
 }
 
 /** Follow redirects from `url` and return the final URL, or null on failure. */
-async function resolveFinalUrl(url: string, timeoutMs: number): Promise<string | null> {
+async function resolveFinalUrl(url: string, timeoutMs: number, userAgent?: string): Promise<string | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(url, { signal: controller.signal, redirect: "follow" });
+    const res = await fetch(url, { signal: controller.signal, redirect: "follow", headers: userAgent ? { "user-agent": userAgent } : {} });
     clearTimeout(timer);
     await res.body?.cancel().catch(() => {});
     return res.url || null;
@@ -540,7 +570,7 @@ export async function crawl(
   // ----- Phase 0: resolve root redirect ---------------------------------------
   // If the site redirects (apex → www, http → https), crawl from the final
   // URL so sitemap and link same-origin checks use the real origin.
-  const finalRoot = await resolveFinalUrl(normalizedRoot, timeoutMs);
+  const finalRoot = await resolveFinalUrl(normalizedRoot, timeoutMs, options.userAgent);
   if (finalRoot) {
     const normalizedFinal = normalizeUrl(finalRoot, finalRoot);
     if (normalizedFinal && new URL(normalizedFinal).origin !== new URL(normalizedRoot).origin) {
@@ -551,23 +581,58 @@ export async function crawl(
   const rootOrigin = new URL(normalizedRoot).origin;
 
   // ----- Phase 1: robots.txt --------------------------------------------------
-  const robotsTxt = fixedList ? null : await fetchText(`${rootOrigin}/robots.txt`, timeoutMs);
-  const robotsRules: RobotsRules = robotsTxt
-    ? parseRobotsTxt(robotsTxt)
-    : { disallowedPaths: [], sitemapUrls: [] };
+  // Fetched in both modes (P2-007). A 4xx means no restrictions; a network
+  // error or any other status refuses the scan rather than assuming consent.
+  const pacer = options.pacer ?? getActivePacer();
+  const robotsMode = options.robots ?? "lenient";
+  const robotsOutcome: RobotsFetchOutcome = robotsMode === "skip"
+    ? { kind: "http-error", status: 0 }
+    : await fetchRobots(rootOrigin, options.userAgent, timeoutMs);
+  let robotsDecision = decideRobots(robotsOutcome, options.productToken ?? PRODUCT_TOKEN);
+  if (!robotsDecision.usable) {
+    if (robotsMode === "strict") {
+      throw new Error(`${rootOrigin}/robots.txt: ${robotsDecision.reason}. Refusing to scan until robots.txt can be read.`);
+    }
+    robotsDecision = decideRobots({ kind: "http-error", status: 404 }, options.productToken ?? PRODUCT_TOKEN);
+  }
+  if (!robotsDecision.usable) throw new Error("unreachable");
+  const robotsPolicy = robotsDecision.policy;
+  const robotsSummary: RobotsSummary = {
+    source: robotsPolicy.source,
+    status: robotsOutcome.kind === "network-error" ? null : robotsOutcome.status,
+    group: robotsPolicy.group,
+    rules: robotsPolicy.rules.length,
+    crawl_delay_seconds: robotsPolicy.crawlDelaySeconds,
+  };
+  if (robotsPolicy.crawlDelaySeconds && pacer) pacer.setCrawlDelay(new URL(rootOrigin).host, robotsPolicy.crawlDelaySeconds);
+  if (robotsMode !== "skip") options.reporter?.complete(
+    "crawl",
+    robotsPolicy.source === "parsed"
+      ? `robots.txt: ${robotsPolicy.rules.length} rule(s) for the ${robotsPolicy.group} group${robotsPolicy.crawlDelaySeconds ? `, crawl-delay ${robotsPolicy.crawlDelaySeconds}s` : ""}${pacer ? `; loads paced ${pacer.intervalFor(new URL(rootOrigin).host)} ms apart` : ""}`
+      : `robots.txt: none (HTTP ${robotsSummary.status}); no restrictions${pacer ? `; loads paced ${pacer.intervalFor(new URL(rootOrigin).host)} ms apart` : ""}`,
+  );
 
   // ----- Phase 2: sitemaps -----------------------------------------------------
   const sitemapPageUrls = fixedList ? [] : await fetchAllSitemapUrls(
     rootOrigin,
-    robotsRules.sitemapUrls,
+    robotsPolicy.sitemaps,
     timeoutMs,
   );
 
   // ----- Phase 3: seed queue ---------------------------------------------------
   const visited = new Set<string>();
+  const excludedByRobots: string[] = [];
+  const allowedList = fixedList
+    ? fixedList.filter((u) => {
+        if (isAllowed(robotsPolicy, u)) return true;
+        excludedByRobots.push(u);
+        options.reporter?.warn("crawl", `Skipped by robots.txt: ${u}`);
+        return false;
+      })
+    : null;
   // Every URL ever queued, so each is queued (and counted) once.
-  const queued = new Set<string>(fixedList ?? [normalizedRoot]);
-  const queue: string[] = fixedList ? [...fixedList] : [normalizedRoot];
+  const queued = new Set<string>(allowedList ?? [normalizedRoot]);
+  const queue: string[] = allowedList ? [...allowedList] : [normalizedRoot];
 
   const enqueue = (raw: string, base: string): void => {
     const normalized = normalizeUrl(raw, base);
@@ -575,7 +640,7 @@ export async function crawl(
       normalized &&
       !queued.has(normalized) &&
       isSameOrigin(normalized, rootOrigin) &&
-      isAllowedByRobots(new URL(normalized).pathname, robotsRules.disallowedPaths)
+      isAllowed(robotsPolicy, normalized)
     ) {
       queued.add(normalized);
       queue.push(normalized);
@@ -678,6 +743,7 @@ export async function crawl(
     const page = await ctx.newPage();
     let signature: string | null = null;
     try {
+      if (pacer) await pacer.beforeTopLevel(url);
       const response = await page.goto(url, {
         waitUntil: "load",
         timeout: timeoutMs,
@@ -776,6 +842,7 @@ export async function crawl(
     context = await browser.newContext({
       viewport: { width: viewport.width, height: viewport.height },
       deviceScaleFactor: viewport.deviceScaleFactor,
+      ...(options.userAgent ? { userAgent: options.userAgent } : {}),
     });
     // tsx/esbuild (keepNames) wraps named functions in a `__name(fn, "name")`
     // helper. Callbacks passed to page.evaluate are serialized into the
@@ -807,5 +874,5 @@ export async function crawl(
     );
   }
 
-  return { snapshots, excludedByNoindex, failedPages };
+  return { snapshots, excludedByNoindex, excludedByRobots, robots: robotsSummary, failedPages };
 }

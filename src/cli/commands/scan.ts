@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
+import { DEFAULT_MIN_DELAY_MS, productionEtiquette } from "../../core/etiquette.js";
 import { scan } from "../../core/scanner.js";
 import { ScanProgressReporter, QuietProgressReporter } from "../../core/progress.js";
 import type { ScanSummary } from "../../types.js";
@@ -78,6 +79,7 @@ export function createScanCommand(): Command {
       "Also scan pages marked noindex (meta robots / X-Robots-Tag). Default: exclude them from the scan.",
     )
     .option("--urls <file>", "Scan exactly these pages (one URL per line, # comments allowed) instead of crawling; for before/after scans of the same page set")
+    .option("--min-delay-ms <n>", "Smallest gap between top-level page loads per host; a larger robots.txt Crawl-delay wins", String(DEFAULT_MIN_DELAY_MS))
     .option("--quiet", "Suppress progress output, only print results")
     .action(async (url: string, opts: Record<string, string>) => {
       const maxPages = parseInt(opts["maxPages"], 10);
@@ -109,6 +111,12 @@ export function createScanCommand(): Command {
         return;
       }
 
+      const minDelayMs = parseInt(opts["minDelayMs"], 10);
+      if (isNaN(minDelayMs) || minDelayMs < 0) {
+        console.error("Error: --min-delay-ms must be a non-negative integer");
+        process.exitCode = 1;
+        return;
+      }
       let urls: string[] | undefined;
       if (opts["urls"]) {
         urls = readFileSync(opts["urls"], "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
@@ -117,6 +125,16 @@ export function createScanCommand(): Command {
           process.exitCode = 1;
           return;
         }
+      }
+
+      // Production scans identify themselves and pace their loads (P2-007)
+      let etiquette;
+      try {
+        etiquette = productionEtiquette({ minDelayMs });
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+        return;
       }
 
       const reporter = quiet
@@ -135,6 +153,7 @@ export function createScanCommand(): Command {
           tiers,
           reporter,
           includeNoindex: "includeNoindex" in opts,
+          etiquette,
         });
 
         // Results go to stdout (allows piping)

@@ -1,4 +1,6 @@
-import type { Page, Request as PlaywrightRequest, Route } from "playwright";
+import type { Page, Request as PlaywrightRequest, Route, CDPSession } from "playwright";
+import { classifyRequest, FORM_SUBMISSION_REASONS, PendingSubmissions } from "../../core/containment.js";
+import { pacedGoto } from "../../core/etiquette.js";
 import type { CheckResult } from "../../types.js";
 import type { FormInfo, FormFieldInfo } from "./discovery.js";
 
@@ -431,26 +433,50 @@ export async function setupRequestInterception(
 ): Promise<{ interceptedRequests: Array<{ url: string; method: string; postData: string | null }>; cleanup: () => Promise<void> }> {
   const interceptedRequests: Array<{ url: string; method: string; postData: string | null }> = [];
 
+  // Same approach as the eval transport (core/containment.ts, P2-006): CDP
+  // announces a form submission (formSubmissionGet/Post) before its request,
+  // so a GET form's navigation is told apart from the engine's own page
+  // loads. A submission navigation is answered 204 (the page stays put);
+  // any unsafe-method request (POST fetch/XHR) is aborted.
+  const pending = new PendingSubmissions();
+  let session: CDPSession | null = null;
+  try {
+    session = await page.context().newCDPSession(page);
+    session.on("Page.frameRequestedNavigation", (e: { reason: string; url: string }) => {
+      if (FORM_SUBMISSION_REASONS.has(e.reason)) pending.add(e.url);
+    });
+    await session.send("Page.enable");
+  } catch {
+    // Without CDP (non-Chromium), unsafe methods are still contained; GET
+    // forms navigate as before.
+    session = null;
+  }
+
   const handler = async (route: Route) => {
     const request = route.request();
     const method = request.method();
-    const resourceType = request.resourceType();
-
-    // Block form submissions (POST requests from forms or navigation from GET forms)
-    if (
-      (method === "POST" && resourceType === "document") ||
-      (method === "POST" && resourceType === "fetch") ||
-      (method === "POST" && resourceType === "xhr")
-    ) {
-      interceptedRequests.push({
-        url: request.url(),
-        method,
-        postData: request.postData(),
-      });
-      await route.abort("blockedbyclient");
-    } else {
-      await route.continue();
+    const isNavigation = request.isNavigationRequest() && request.frame() === page.mainFrame();
+    let isPending = false;
+    if (isNavigation) {
+      isPending = pending.take(request.url());
+      if (!isPending && method.toUpperCase() === "GET" && session) {
+        // The CDP event can arrive just after the request; give it a moment
+        await new Promise((r) => setTimeout(r, 30));
+        isPending = pending.take(request.url());
+      }
     }
+    const decision = classifyRequest({ method, isNavigation, url: request.url() }, isPending);
+    if (decision === "pass") {
+      await route.continue();
+      return;
+    }
+    interceptedRequests.push({
+      url: request.url(),
+      method,
+      postData: request.postData(),
+    });
+    if (decision === "contain-navigation") await route.fulfill({ status: 204, body: "" });
+    else await route.abort("blockedbyclient");
   };
 
   await page.route("**/*", handler);
@@ -459,6 +485,7 @@ export async function setupRequestInterception(
     interceptedRequests,
     cleanup: async () => {
       await page.unroute("**/*", handler);
+      if (session) await session.detach().catch(() => {});
     },
   };
 }
@@ -492,7 +519,7 @@ export async function testFormSubmission(
     try {
       // Navigate back to original page if navigated away
       if (page.url() !== pageUrl) {
-        await page.goto(pageUrl, { waitUntil: "load", timeout: 10_000 });
+        await pacedGoto(page, pageUrl, { waitUntil: "load", timeout: 10_000 });
       }
 
       // Set up request interception

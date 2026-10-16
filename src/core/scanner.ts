@@ -32,6 +32,7 @@ import {
 import { LocalFileStore } from "../store/files.js";
 import { crawl } from "./crawler.js";
 import { runAxeChecks } from "../checks/automated/index.js";
+import { pacedGoto, setActivePacer, type ScanEtiquette } from "./etiquette.js";
 import { CoverageRecorder, writeCoverage, type ScanCoverage } from "./coverage.js";
 import { CHECK_TIERS } from "./check-registry.js";
 import { withoutRawTextContent } from "./markup.js";
@@ -113,6 +114,12 @@ export interface ScanOptions {
   baselineScanId?: string;
   /** Eval harness only (see src/eval). Unset in every production path. */
   evalHooks?: EvalScanHooks;
+  /**
+   * Production etiquette (P2-007): identifying user agent and paced loads.
+   * The CLI sets it for every production scan; tests and the eval harness
+   * (whose transport identifies and paces itself) leave it unset.
+   */
+  etiquette?: ScanEtiquette;
 }
 
 /**
@@ -131,6 +138,15 @@ export interface EvalScanHooks {
   submissionStates?: (pageUrl: string, form: FormInfo, states: SubmissionState[]) => SubmissionState[];
 }
 
+export interface ScanEtiquetteReport {
+  user_agent: string;
+  min_delay_ms: number;
+  /** Top-level loads the pacer saw (crawl, checks, reloads) */
+  top_level_loads: number;
+  /** Smallest gap between consecutive loads per host, ms */
+  min_gap_ms: Record<string, number>;
+}
+
 export interface ScanResult {
   scanSession: ScanSession;
   summary: ScanSummary;
@@ -139,6 +155,10 @@ export interface ScanResult {
   pageSnapshots: PageSnapshot[];
   /** Pages skipped because they're hidden from SERPs (meta robots / X-Robots-Tag). */
   excludedByNoindex: Array<{ url: string; source: string }>;
+  /** URLs of a fixed list that robots.txt disallows (P2-007) */
+  excludedByRobots: string[];
+  /** What the scan sent and how it paced itself (null without etiquette) */
+  etiquette: ScanEtiquetteReport | null;
   /** Per-check, per-page outcome (also written to <dataDir>/<scanId>/coverage.json) */
   coverage: ScanCoverage;
 }
@@ -806,6 +826,9 @@ export async function scan(
   const viewport = options.viewport ?? { width: 1280, height: 800, deviceScaleFactor: 1 };
   const reporter = options.reporter ?? new ScanProgressReporter();
   const pageConcurrency = Math.max(1, options.pageConcurrency ?? 4);
+  // Production etiquette (P2-007): every top-level load in this process is paced
+  setActivePacer(options.etiquette?.pacer ?? null);
+  if (options.etiquette) reporter.complete("scan", `User agent: ${options.etiquette.userAgent}`);
   // Check subset (verification rescans); every check runs when unset
   const runs = (check: string): boolean => !options.checks || options.checks.includes(check);
   const envConcurrency = Number(process.env.WCAG_CONCURRENCY);
@@ -883,6 +906,12 @@ export async function scan(
     const crawlResult = await crawl(options.url, {
       scanSessionId: scanId,
       fileStore,
+      userAgent: options.etiquette?.userAgent,
+      pacer: options.etiquette?.pacer,
+      // Production: robots.txt applies in every mode and must be readable.
+      // Otherwise a pinned list is loaded as given (the offline eval harness
+      // and verification tests enforce robots themselves).
+      robots: options.etiquette ? "strict" : options.urls ? "skip" : "lenient",
       maxPages: options.maxPages ?? 50,
       cmsSamples: options.cmsSamples ?? 5,
       viewport,
@@ -965,6 +994,7 @@ export async function scan(
         context = await browser.newContext({
           viewport: { width: viewport.width, height: viewport.height },
           deviceScaleFactor: viewport.deviceScaleFactor,
+          ...(options.etiquette ? { userAgent: options.etiquette.userAgent } : {}),
         });
         // tsx/esbuild (keepNames) wraps named functions in a `__name(fn, "name")`
         // helper. Callbacks passed to page.evaluate are serialized into the
@@ -1305,7 +1335,7 @@ export async function scan(
         await runPool(pageSnapshots, pageConcurrency, async (snapshot, index) => {
           const page = await behavioralContext.newPage();
           try {
-            await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
+            await pacedGoto(page, snapshot.url, { waitUntil: "load", timeout: 30_000 });
             const fullScreenshot = await page.screenshot({ fullPage: true });
 
             const pageResults: CheckResult[] = [];
@@ -1596,7 +1626,7 @@ export async function scan(
                 // not actionable within 5s won't become actionable at 30s.
                 page.setDefaultTimeout(5_000);
                 try {
-                  await page.goto(snapshot.url, { waitUntil: "load", timeout: 30_000 });
+                  await pacedGoto(page, snapshot.url, { waitUntil: "load", timeout: 30_000 });
                   const fullScreenshot = await page.screenshot({ fullPage: true });
 
                   // Forms hidden at load (closed modal, unopened embed) can't be
@@ -2042,6 +2072,20 @@ export async function scan(
     if (renderFailedCount > 0) reporter.warn("render", renderFailedAlert(renderFailedCount, crawledSnapshots.length));
     reporter.complete("scan", `Complete: ${allFindings.length} finding(s)${renderFailedCount > 0 ? ` on ${pageSnapshots.length} of ${crawledSnapshots.length} page(s)` : ""}`);
 
+    let etiquetteReport: ScanEtiquetteReport | null = null;
+    if (options.etiquette) {
+      const pacer = options.etiquette.pacer;
+      const minGaps = pacer.minObservedGapMs();
+      etiquetteReport = {
+        user_agent: options.etiquette.userAgent,
+        min_delay_ms: pacer.intervalFor(new URL(options.url).host),
+        top_level_loads: pacer.log.length,
+        min_gap_ms: minGaps,
+      };
+      const gaps = Object.entries(minGaps).map(([host, ms]) => `${host} ${Number.isFinite(ms) ? `${ms} ms` : "one load"}`).join(", ");
+      reporter.complete("scan", `Pacing: ${pacer.log.length} top-level load(s), smallest gap ${gaps || "n/a"} (minimum ${etiquetteReport.min_delay_ms} ms)`);
+    }
+
     return {
       scanSession,
       summary,
@@ -2049,6 +2093,8 @@ export async function scan(
       criterionResults: reconciledResults,
       pageSnapshots: crawledSnapshots,
       excludedByNoindex,
+      excludedByRobots: crawlResult.excludedByRobots,
+      etiquette: etiquetteReport,
       coverage: coverageData,
     };
   } catch (err) {
@@ -2066,6 +2112,7 @@ export async function scan(
     }
     throw err;
   } finally {
+    setActivePacer(null);
     db.close();
   }
 }

@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { runVerify } from "../../core/verify.js";
+import { DEFAULT_MIN_DELAY_MS, productionEtiquette } from "../../core/etiquette.js";
 import { ScanProgressReporter, QuietProgressReporter } from "../../core/progress.js";
 import { clientSummaryLines } from "../../report/verify-report.js";
 
@@ -15,11 +16,18 @@ export function createVerifyCommand(): Command {
     .option("--all", "Verify every cluster in the baseline, not just the Top fixes")
     .option("--data-dir <path>", "Data directory for results", "./wcag-data")
     .option("--page-concurrency <n>", "Pages loaded and tested in parallel", "4")
+    .option("--min-delay-ms <n>", "Smallest gap between top-level page loads per host; a larger robots.txt Crawl-delay wins", String(DEFAULT_MIN_DELAY_MS))
     .option("--quiet", "Suppress progress output")
-    .action(async (opts: { baseline: string; cluster: string[]; all?: boolean; dataDir: string; pageConcurrency: string; quiet?: boolean }) => {
+    .action(async (opts: { baseline: string; cluster: string[]; all?: boolean; dataDir: string; pageConcurrency: string; minDelayMs: string; quiet?: boolean }) => {
       const pageConcurrency = parseInt(opts.pageConcurrency, 10);
       if (isNaN(pageConcurrency) || pageConcurrency <= 0) {
         console.error("Error: --page-concurrency must be a positive integer");
+        process.exitCode = 1;
+        return;
+      }
+      const minDelayMs = parseInt(opts.minDelayMs, 10);
+      if (isNaN(minDelayMs) || minDelayMs < 0) {
+        console.error("Error: --min-delay-ms must be a non-negative integer");
         process.exitCode = 1;
         return;
       }
@@ -30,6 +38,7 @@ export function createVerifyCommand(): Command {
       }
       try {
         const { result, files } = await runVerify({
+          etiquette: productionEtiquette({ minDelayMs }),
           dataDir: opts.dataDir,
           baselineScanId: opts.baseline,
           clusterIds: opts.cluster,

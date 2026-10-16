@@ -20,6 +20,7 @@ import { renderHtmlReport } from "../report/templates/html-template.js";
 import { renderVerifyMarkdown } from "../report/verify-report.js";
 import { checkForFinding, withPrerequisites, tiersForChecks } from "./check-registry.js";
 import type { ScanCoverage } from "./coverage.js";
+import type { ScanEtiquette } from "./etiquette.js";
 import { scan } from "./scanner.js";
 import type { ProgressReporter } from "./progress.js";
 import type { PromptRunner } from "./prompt-runner.js";
@@ -292,6 +293,8 @@ export interface VerifyOptions {
   pageConcurrency?: number;
   apiKey?: string;
   promptRunner?: PromptRunner;
+  /** Production etiquette for the rescan (P2-007) */
+  etiquette?: ScanEtiquette;
 }
 
 export interface VerifyRun {
@@ -347,6 +350,7 @@ export async function runVerify(options: VerifyOptions, browser?: Browser): Prom
     pageConcurrency: options.pageConcurrency,
     apiKey: options.apiKey,
     promptRunner: options.promptRunner,
+    etiquette: options.etiquette,
   }, browser);
   const rescanId = rescan.scanSession.id;
 
