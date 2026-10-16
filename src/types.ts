@@ -253,6 +253,9 @@ export interface ScanSummary {
   /** Needs-review findings, counted separately from the confirmed ones */
   needs_review_findings: number;
   needs_review_by_severity: SeverityCounts;
+  /** Findings on third-party embed contents, listed separately and not counted above (P2-017) */
+  third_party_findings: number;
+  third_party_by_vendor: Record<string, number>;
   by_confidence: ConfidenceCounts;
   by_category: CategoryCounts;
   human_reviewed_pct: number;

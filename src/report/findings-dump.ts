@@ -3,12 +3,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { Finding, ConfidenceTier, FalsePositiveRisk, Severity, DetectedBy } from "../types.js";
-import { listFindingsByScan, getScanSession, getPageSnapshot } from "../store/db.js";
+import { listFindingsByScan, getScanSession, getPageSnapshot, listPageSnapshots } from "../store/db.js";
 import { loadCoverage, type ScanCoverage } from "../core/coverage.js";
 import { renderCoverageMarkdown } from "./coverage-report.js";
 import { isDeduplicated, pageOccurrences, findingPageUrls } from "./occurrences.js";
 import { clusterFindings, partitionExclusions, type Cluster, type ExcludedFinding } from "./clustering.js";
 import { renderTopFixesMarkdown, renderPageLevelMarkdown, renderExcludedMarkdown } from "./top-fixes-report.js";
+import { buildThirdPartySection, renderThirdPartyMarkdown, type ThirdPartySection } from "./third-party-report.js";
+import { loadThirdPartyReport, thirdPartyTagOf } from "../core/third-party.js";
 import { estimateRemediation, formatEstimate, formatHours, unitHoursFor, type RemediationEstimate } from "./effort.js";
 
 // ---------------------------------------------------------------------------
@@ -252,6 +254,7 @@ function renderFindingJsonl(tf: TriagedFinding, exclusion: ExcludedFinding | und
     failure_type: finding.evidence.measured_values?.failure_type ?? null,
     page_occurrences: pageOccurrences(finding),
     excluded: exclusion ? { reason: exclusion.reason, detail: exclusion.detail } : null,
+    third_party: thirdPartyTagOf(finding),
     also_found_on_urls: findingPageUrls(finding, pageUrl).urls.filter((u) => u !== pageUrl),
     reasoning: finding.analysis.reasoning,
     impact: finding.analysis.impact_description,
@@ -331,6 +334,7 @@ function renderAggregateMarkdown(
   allTriaged: TriagedFinding[],
   coverage: ScanCoverage | null = null,
   platform = "webflow",
+  thirdParty: ThirdPartySection | null = null,
 ): string {
   // Needs-manual-check and third-party findings are listed in their own
   // sections and left out of the buckets, totals and Top fixes.
@@ -359,6 +363,8 @@ function renderAggregateMarkdown(
   lines.push(`Total findings: ${triaged.length}`);
   const needsReview = triaged.filter((tf) => isNeedsReview(tf.finding)).length;
   lines.push(`Confirmed: ${triaged.length - needsReview} · Needs review (not failures): ${needsReview}`);
+  const thirdPartyCount = excluded.filter((ex) => ex.reason === "third_party").length;
+  if (thirdPartyCount > 0) lines.push(`Third-party (listed separately, not counted): ${thirdPartyCount}`);
   if (excluded.length > 0) {
     lines.push(`Excluded from counts: ${excluded.length} (see Needs manual check and Third-party below)`);
   }
@@ -403,6 +409,8 @@ function renderAggregateMarkdown(
   }
 
   lines.push(renderExcludedMarkdown(excluded));
+  const tp = renderThirdPartyMarkdown(thirdParty ?? buildThirdPartySection(excluded, null));
+  if (tp) lines.push(tp);
 
   return lines.join("\n");
 }
@@ -464,12 +472,15 @@ export function dumpFindings(
 
   // Aggregate markdown
   const aggregatePath = join(scanDir, "findings.md");
-  writeFileSync(aggregatePath, renderAggregateMarkdown(scanId, session.url, triaged, loadCoverage(dataDir, scanId), session.platform), "utf8");
+  // Third-party content: containers and sweep stops from third-party.json,
+  // or the stored page DOMs for scans that predate it
+  const excludedAll = partitionExclusions(triaged.map((tf) => ({ finding: tf.finding, pageUrl: tf.pageUrl }))).excluded;
+  const domByUrl = new Map(listPageSnapshots(db, scanId).map((p) => [p.url, p.full_dom]));
+  const thirdParty = buildThirdPartySection(excludedAll, loadThirdPartyReport(dataDir, scanId), (url) => domByUrl.get(url) ?? null);
+  writeFileSync(aggregatePath, renderAggregateMarkdown(scanId, session.url, triaged, loadCoverage(dataDir, scanId), session.platform, thirdParty), "utf8");
 
   // JSONL (every finding; excluded ones are marked)
-  const exclusions = new Map(
-    partitionExclusions(triaged.map((tf) => ({ finding: tf.finding, pageUrl: tf.pageUrl }))).excluded.map((ex) => [ex.finding.id, ex]),
-  );
+  const exclusions = new Map(excludedAll.map((ex) => [ex.finding.id, ex]));
   const jsonlPath = join(scanDir, "findings.jsonl");
   writeFileSync(jsonlPath, triaged.map((tf) => renderFindingJsonl(tf, exclusions.get(tf.finding.id))).join("\n") + "\n", "utf8");
 

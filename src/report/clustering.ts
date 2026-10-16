@@ -3,6 +3,7 @@ import type { Finding, Severity } from "../types.js";
 import { parseContrastMeasurement } from "../core/contrast.js";
 import { buildSpecificRemediation } from "../adapters/webflow.js";
 import { findingPageUrls, pageOccurrences } from "./occurrences.js";
+import { thirdPartyTagOf, vendorForMarkers } from "../core/third-party.js";
 
 // ---------------------------------------------------------------------------
 // Component clustering ("Top fixes")
@@ -202,35 +203,14 @@ export function clusterId(signature: string): string {
 // Exclusions
 // ---------------------------------------------------------------------------
 
-function idAndClassTokens(finding: Finding): string[] {
-  const tag = rootTag(finding.evidence.element_html ?? "");
-  const tokens = [
-    ...(attrValue(tag, "id") ?? "").split(/\s+/),
-    ...(attrValue(tag, "class") ?? "").split(/\s+/),
-    ...Array.from((finding.evidence.element_selector ?? "").matchAll(/[#.]([A-Za-z0-9_-]+)/g), (m) => m[1]),
-  ];
-  return tokens.filter(Boolean);
-}
-
 /**
- * GrowSurf (referral widget) content. One function so every rule lives in
- * one place: the element's own data-grsf-* attribute or grsf- id/class, a
- * grsf- id/class on any ancestor named in its selector path, or a
- * src/href/srcset pointing at GrowSurf. Stored findings keep only the
- * element's own markup, so ancestors are seen through the selector.
+ * GrowSurf (referral widget) content, by the vendor's own markers in
+ * config/third-party-embeds.json (data-grsf-* attributes, grsf- id/class
+ * tokens on the element or an ancestor in its selector path, assets served
+ * from growsurf). Works on stored findings without the page.
  */
 export function isGrowSurfElement(finding: Finding): boolean {
-  const html = finding.evidence.element_html ?? "";
-  const selector = finding.evidence.element_selector ?? "";
-  const tag = rootTag(html);
-  if (/\sdata-grsf[\w-]*(\s*=|[\s>/])/i.test(tag)) return true;
-  if (idAndClassTokens(finding).some((t) => t.startsWith("grsf-"))) return true;
-  if (/\[data-grsf/i.test(selector)) return true;
-  for (const attr of ["src", "href", "srcset"]) {
-    if (/growsurf/i.test(attrValue(tag, attr) ?? "")) return true;
-  }
-  // Attribute selectors such as img[src="https://…growsurf-prod/…"]
-  return /\[(?:src|href|srcset)[^\]]*growsurf/i.test(selector);
+  return vendorForMarkers(finding.evidence.element_selector ?? "", finding.evidence.element_html ?? "")?.id === "growsurf";
 }
 
 /**
@@ -241,7 +221,12 @@ export function isGrowSurfElement(finding: Finding): boolean {
  *   frame → third party.
  */
 export function exclusionFor(finding: Finding): { reason: ExclusionReason; detail: string } | null {
-  if (isGrowSurfElement(finding)) return { reason: "third_party", detail: "GrowSurf" };
+  // Tagged when the finding was created (P2-017): inside a vendor's embed
+  const tag = thirdPartyTagOf(finding);
+  if (tag) return { reason: "third_party", detail: tag.vendor_name };
+  // Scans stored before the tag: the vendor's own markers (GrowSurf)
+  const marker = vendorForMarkers(finding.evidence.element_selector ?? "", finding.evidence.element_html ?? "");
+  if (marker) return { reason: "third_party", detail: marker.name };
   // axe reports results inside an embedded frame against the iframe's
   // selector, with the frame's own markup as the element: content from
   // YouTube, Instagram and similar embeds the site cannot edit.

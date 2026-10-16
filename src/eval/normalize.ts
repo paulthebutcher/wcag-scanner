@@ -66,6 +66,8 @@ export interface FindingKey {
   confidence: string;
   detected_by: string;
   also_found_on: string[];
+  /** Vendor when the finding is on third-party embed content (left out of the identity comparison, P2-023) */
+  third_party: string | null;
 }
 
 export function findingKeys(findings: Finding[], snapshots: PageSnapshot[], pageIdOf: PageIdOf): FindingKey[] {
@@ -84,6 +86,7 @@ export function findingKeys(findings: Finding[], snapshots: PageSnapshot[], page
       confidence: f.confidence.tier,
       detected_by: f.evidence.detected_by,
       also_found_on: also,
+      third_party: typeof (mv.third_party as { vendor?: unknown } | undefined)?.vendor === "string" ? (mv.third_party as { vendor: string }).vendor : null,
     };
   }).sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
 }

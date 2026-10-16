@@ -428,7 +428,8 @@ export async function checkFocusVisibility(
   const minContrast = options?.minContrast ?? 3.0;
   const results: FocusVisibilityResult[] = [];
 
-  const stops = tabSequence.focusStops;
+  // Embed stops (third-party content the sweep stepped over) are not the site's to style
+  const stops = tabSequence.focusStops.filter((s) => !s.embed);
   for (let i = 0; i < stops.length; i++) {
     const stop = stops[i];
     if (!stop.boundingBox) continue;

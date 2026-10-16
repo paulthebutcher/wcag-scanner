@@ -133,6 +133,9 @@ export function openDatabase(dbPath: string): Database.Database {
   if (!summaryCols.has("needs_review_findings")) db.exec("ALTER TABLE scan_summaries ADD COLUMN needs_review_findings INTEGER");
   if (!summaryCols.has("needs_review_by_severity")) db.exec("ALTER TABLE scan_summaries ADD COLUMN needs_review_by_severity TEXT");
   if (!summaryCols.has("wcag_criteria_needs_review")) db.exec("ALTER TABLE scan_summaries ADD COLUMN wcag_criteria_needs_review TEXT");
+  // Third-party embed findings listed separately (P2-017)
+  if (!summaryCols.has("third_party_findings")) db.exec("ALTER TABLE scan_summaries ADD COLUMN third_party_findings INTEGER");
+  if (!summaryCols.has("third_party_by_vendor")) db.exec("ALTER TABLE scan_summaries ADD COLUMN third_party_by_vendor TEXT");
 
   return db;
 }
@@ -418,6 +421,8 @@ function summaryToRow(summary: ScanSummary) {
     by_severity: JSON.stringify(summary.by_severity),
     needs_review_findings: summary.needs_review_findings,
     needs_review_by_severity: JSON.stringify(summary.needs_review_by_severity),
+    third_party_findings: summary.third_party_findings,
+    third_party_by_vendor: JSON.stringify(summary.third_party_by_vendor),
     by_confidence: JSON.stringify(summary.by_confidence),
     by_category: JSON.stringify(summary.by_category),
     human_reviewed_pct: summary.human_reviewed_pct,
@@ -438,6 +443,8 @@ function rowToSummary(row: Record<string, unknown>): ScanSummary {
     needs_review_by_severity: row.needs_review_by_severity
       ? JSON.parse(row.needs_review_by_severity as string) as ScanSummary["needs_review_by_severity"]
       : { critical: 0, major: 0, minor: 0, advisory: 0 },
+    third_party_findings: (row.third_party_findings as number | null) ?? 0,
+    third_party_by_vendor: row.third_party_by_vendor ? JSON.parse(row.third_party_by_vendor as string) as Record<string, number> : {},
     by_confidence: JSON.parse(row.by_confidence as string) as ScanSummary["by_confidence"],
     by_category: JSON.parse(row.by_category as string) as ScanSummary["by_category"],
     human_reviewed_pct: row.human_reviewed_pct as number,
@@ -450,13 +457,15 @@ function rowToSummary(row: Record<string, unknown>): ScanSummary {
 
 export function upsertScanSummary(db: Database.Database, summary: ScanSummary): void {
   db.prepare(`
-    INSERT INTO scan_summaries (scan_session_id, total_findings, by_severity, needs_review_findings, needs_review_by_severity, by_confidence, by_category, human_reviewed_pct, estimated_total_effort, wcag_criteria_failed, wcag_criteria_needs_review, wcag_criteria_passed)
-    VALUES (@scan_session_id, @total_findings, @by_severity, @needs_review_findings, @needs_review_by_severity, @by_confidence, @by_category, @human_reviewed_pct, @estimated_total_effort, @wcag_criteria_failed, @wcag_criteria_needs_review, @wcag_criteria_passed)
+    INSERT INTO scan_summaries (scan_session_id, total_findings, by_severity, needs_review_findings, needs_review_by_severity, third_party_findings, third_party_by_vendor, by_confidence, by_category, human_reviewed_pct, estimated_total_effort, wcag_criteria_failed, wcag_criteria_needs_review, wcag_criteria_passed)
+    VALUES (@scan_session_id, @total_findings, @by_severity, @needs_review_findings, @needs_review_by_severity, @third_party_findings, @third_party_by_vendor, @by_confidence, @by_category, @human_reviewed_pct, @estimated_total_effort, @wcag_criteria_failed, @wcag_criteria_needs_review, @wcag_criteria_passed)
     ON CONFLICT(scan_session_id) DO UPDATE SET
       total_findings = excluded.total_findings,
       by_severity = excluded.by_severity,
       needs_review_findings = excluded.needs_review_findings,
       needs_review_by_severity = excluded.needs_review_by_severity,
+      third_party_findings = excluded.third_party_findings,
+      third_party_by_vendor = excluded.third_party_by_vendor,
       wcag_criteria_needs_review = excluded.wcag_criteria_needs_review,
       by_confidence = excluded.by_confidence,
       by_category = excluded.by_category,

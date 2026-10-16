@@ -19,7 +19,8 @@ import type {
   DetectedBy,
   DetectionManifest,
 } from "../types.js";
-import { openDatabase } from "../store/db.js";
+import {
+  getPageSnapshot, openDatabase } from "../store/db.js";
 import {
   insertScanSession,
   updateScanSession,
@@ -34,6 +35,7 @@ import { runAxeChecks } from "../checks/automated/index.js";
 import { CoverageRecorder, writeCoverage, type ScanCoverage } from "./coverage.js";
 import { CHECK_TIERS } from "./check-registry.js";
 import { withoutRawTextContent } from "./markup.js";
+import { containersOf, isThirdPartyFinding, loadThirdPartyConfig, tagCheckResults, thirdPartyTagOf, writeThirdPartyReport, type EmbedSweepStop } from "./third-party.js";
 import { createImageFetcher } from "../checks/semantic/image-fetch.js";
 import { createFindings } from "./evidence.js";
 import { analyze } from "./analyzer.js";
@@ -214,7 +216,16 @@ export function computeSummary(
   };
 
   let needsReview = 0;
+  // Third-party embed findings are listed separately (P2-017)
+  let thirdParty = 0;
+  const thirdPartyByVendor: Record<string, number> = {};
   for (const f of findings) {
+    const tp = thirdPartyTagOf(f);
+    if (tp) {
+      thirdParty++;
+      thirdPartyByVendor[tp.vendor_name] = (thirdPartyByVendor[tp.vendor_name] ?? 0) + 1;
+      continue;
+    }
     if (isNeedsReview(f)) {
       needsReviewBySeverity[f.severity]++;
       needsReview++;
@@ -225,11 +236,12 @@ export function computeSummary(
     byCategory[f.category]++;
   }
 
+  const own = findings.filter((f) => !isThirdPartyFinding(f));
   const criteriaFailed = [...new Set(
-    findings.filter((f) => !isNeedsReview(f)).map((f) => f.wcag_criterion),
+    own.filter((f) => !isNeedsReview(f)).map((f) => f.wcag_criterion),
   )].sort();
   const criteriaNeedsReview = [...new Set(
-    findings.filter(isNeedsReview).map((f) => f.wcag_criterion),
+    own.filter(isNeedsReview).map((f) => f.wcag_criterion),
   )].filter((c) => !criteriaFailed.includes(c)).sort();
 
   const criteriaPassed = criterionResults
@@ -240,10 +252,13 @@ export function computeSummary(
 
   return {
     scan_session_id: scanSessionId,
-    total_findings: findings.length,
+    // The main findings: third-party embed findings are counted apart
+    total_findings: findings.length - thirdParty,
     by_severity: bySeverity,
     needs_review_findings: needsReview,
     needs_review_by_severity: needsReviewBySeverity,
+    third_party_findings: thirdParty,
+    third_party_by_vendor: thirdPartyByVendor,
     by_confidence: byConfidence,
     by_category: byCategory,
     human_reviewed_pct: 0,
@@ -395,6 +410,14 @@ async function processCheckResults(
 ): Promise<Finding[]> {
   if (checkResults.length === 0) return [];
 
+  // Results on third-party embed contents are tagged (P2-017). axe results
+  // are tagged at axe time from the live page; DOM-string checks here, from
+  // the stored snapshot.
+  if (checkResults.some((r) => !r.measured_values?.third_party)) {
+    const dom = getPageSnapshot(options.db, options.pageSnapshotId)?.full_dom;
+    if (dom) tagCheckResults(checkResults, dom);
+  }
+
   // 1. Create findings with stub analysis/confidence
   const findings = await createFindings(checkResults, {
     scanSessionId: options.scanId,
@@ -519,11 +542,15 @@ function makeCriterionResult(
  * Status of a criterion from its findings (P2-030): failed when at least
  * one finding is confirmed (tier above needs_review), needs_review when
  * every finding needs a manual check. A criterion with findings is never
- * passed.
+ * passed. Null when every finding is on third-party embed content
+ * (P2-017): those are listed separately and leave the status alone.
  */
-export function criterionStatusFromFindings(findings: Finding[]): { status: "failed" | "needs_review"; summary: string } {
-  const confirmed = findings.filter((f) => !isNeedsReview(f)).length;
-  const review = findings.length - confirmed;
+export function criterionStatusFromFindings(findings: Finding[]): { status: "failed" | "needs_review"; summary: string } | null {
+  // Third-party embed findings are listed for awareness and set no status
+  const own = findings.filter((f) => !isThirdPartyFinding(f));
+  if (own.length === 0) return null;
+  const confirmed = own.filter((f) => !isNeedsReview(f)).length;
+  const review = own.length - confirmed;
   if (confirmed > 0) {
     return { status: "failed", summary: `${confirmed} violation(s) found${review > 0 ? `, ${review} more need(s) review` : ""}` };
   }
@@ -550,13 +577,17 @@ export function reconcileInMemory(
     const criterion = cr.wcag_criterion;
     const remaining = findingsByCriterion.get(criterion);
 
-    if (remaining && remaining.length > 0) {
+    const verdict = remaining && remaining.length > 0 ? criterionStatusFromFindings(remaining) : null;
+    if (verdict) {
       // Findings remain after filtering: failed if any is confirmed, else needs_review
-      const { status, summary } = criterionStatusFromFindings(remaining);
-      cr.status = status;
-      cr.tested_by = remaining[0].evidence.detected_by ?? cr.tested_by;
-      cr.finding_ids = remaining.map((f) => f.id);
-      cr.evidence_summary = summary;
+      const own = remaining!.filter((f) => !isThirdPartyFinding(f));
+      cr.status = verdict.status;
+      cr.tested_by = own[0].evidence.detected_by ?? cr.tested_by;
+      cr.finding_ids = own.map((f) => f.id);
+      cr.evidence_summary = verdict.summary;
+    } else if (remaining && remaining.length > 0) {
+      // Only third-party embed findings remain: no evidence either way, so
+      // the stored status stays (never a pass from them)
     } else if (cr.status === "failed") {
       // Criterion was failed but all its findings were filtered out.
       // Flip to "passed": no remaining violations. Keep tested_by.
@@ -599,10 +630,13 @@ function reconcileCriterionResults(
   // it is no longer passed or not_applicable.
   for (const [criterion, critFindings] of findingsByCriterion) {
     const existing = crByCriterion.get(criterion);
-    const { status, summary } = criterionStatusFromFindings(critFindings);
-    const findingIds = critFindings.map((f) => f.id);
+    const verdict = criterionStatusFromFindings(critFindings);
+    if (!verdict) continue; // only third-party embed findings: they set no status (P2-017)
+    const { status, summary } = verdict;
+    const own = critFindings.filter((f) => !isThirdPartyFinding(f));
+    const findingIds = own.map((f) => f.id);
     // Infer tested_by from the actual finding that detected the issue
-    const testedBy = critFindings[0].evidence.detected_by ?? existing?.tested_by ?? "axe_core";
+    const testedBy = own[0].evidence.detected_by ?? existing?.tested_by ?? "axe_core";
     if (existing) {
       existing.status = status;
       existing.tested_by = testedBy;
@@ -830,6 +864,8 @@ export async function scan(
   let pageSnapshots: PageSnapshot[] = [];
   // Per-check, per-page outcomes: ran | failed (error) | skipped (reason)
   const coverage = new CoverageRecorder();
+  // Third-party embeds the keyboard sweep stepped over, per page (P2-034)
+  const embedSweeps = new Map<string, EmbedSweepStop[]>();
   let excludedByNoindex: Array<{ url: string; source: string }> = [];
 
   try {
@@ -1278,6 +1314,7 @@ export async function scan(
             // focus order need its tab sequence)
             if (runs("keyboard") || runs("focus-visible") || runs("focus-order")) try {
               const { results: keyboardResults, tabSequence, partialReason, sweepSummary } = await runKeyboardChecks(page);
+              embedSweeps.set(snapshot.url, tabSequence.embeds);
               if (runs("keyboard")) pageResults.push(...keyboardResults);
               if (partialReason) coverage.record("keyboard", 2, snapshot.url, "partial", partialReason);
               else coverage.record("keyboard", 2, snapshot.url, "ran", sweepSummary);
@@ -1938,6 +1975,22 @@ export async function scan(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       reporter.warn("coverage", `Could not write coverage: ${msg}`);
+    }
+
+    // --- Phase 10c: Third-party content record (P2-017) -------------------------
+    try {
+      writeThirdPartyReport(options.dataDir, {
+        scan_id: scanId,
+        config_version: loadThirdPartyConfig().version,
+        pages: crawledSnapshots.map((p) => ({
+          page_url: p.url,
+          containers: containersOf(p.full_dom),
+          sweep: embedSweeps.has(p.url) ? { embeds_entered: embedSweeps.get(p.url)! } : null,
+        })),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reporter.warn("third-party", `Could not write third-party.json: ${msg}`);
     }
 
     // --- Phase 10: Verbose findings dump --------------------------------------

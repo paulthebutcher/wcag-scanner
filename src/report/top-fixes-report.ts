@@ -189,9 +189,8 @@ export function renderExcludedMarkdown(excluded: ExcludedFinding[]): string {
     }
     lines.push("");
   }
-  const sections: Array<[ExcludedFinding["reason"], string, string]> = [
-    ["third_party", "Third-party", "Elements inside third-party embeds. The site owner cannot change them directly; raise them with the provider. These are not counted as failures."],
-  ];
+  // Third-party findings have their own per-page section (third-party-report.ts)
+  const sections: Array<[ExcludedFinding["reason"], string, string]> = [];
   for (const [reason, title, intro] of sections) {
     const rows = groups.filter((g) => g.reason === reason);
     if (rows.length === 0) continue;
@@ -284,9 +283,8 @@ export function renderExcludedHtml(excluded: ExcludedFinding[]): string {
         </tbody>
       </table>
     </section>`;
-  const sections: Array<[ExcludedFinding["reason"], string, string, string]> = [
-    ["third_party", "third-party", "Third-Party Content", "Elements inside third-party embeds. The site owner cannot change them directly; raise them with the provider. Not counted as failures."],
-  ];
+  // Third-party findings have their own per-page section (third-party-report.ts)
+  const sections: Array<[ExcludedFinding["reason"], string, string, string]> = [];
   return manual + sections.map(([reason, id, title, intro]) => {
     const rows = groups.filter((g) => g.reason === reason);
     if (rows.length === 0) return "";

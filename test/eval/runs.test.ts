@@ -14,7 +14,7 @@ const REPO = join(import.meta.dirname, "..", "..");
 const config = loadEvalConfig(evalPaths(REPO).config);
 
 function key(page: string, check: string, locator: string, severity = "major"): FindingKey {
-  return { page, criterion: "1.1.1", locator, html_sha256: "h", failure_type: "f", check, severity, confidence: "high", detected_by: "axe_core", also_found_on: [] };
+  return { page, criterion: "1.1.1", locator, html_sha256: "h", failure_type: "f", check, severity, confidence: "high", detected_by: "axe_core", also_found_on: [], third_party: null };
 }
 
 function replay(keys: FindingKey[], coverage: CoverageRow[], extra: Partial<SiteReplay["totals"]> = {}): SiteReplay {
@@ -99,5 +99,20 @@ describe("holdout seal and defect log", () => {
     expect(d.id).toBe("P2-008");
     expect(() => appendDefect(paths, { found_in: "r", component: "c", summary: "see https://example.gov/x", affects: [], evidence: "" })).toThrow(/Refusing/);
     expect(readFileSync(paths.phase2Defects, "utf8").trim().split("\n")).toHaveLength(2);
+  });
+});
+
+describe("third-party embed findings and repeatability (P2-023)", () => {
+  it("are counted per repeat but left out of the identity comparison", () => {
+    const own = [key("p001", "axe-core", "img.a")];
+    const r1 = [...own, { ...key("p001", "axe-core", "#instagram-embed-0"), third_party: "instagram" }];
+    const r2 = [...own, { ...key("p001", "axe-core", "#instagram-embed-0"), third_party: "instagram" }, { ...key("p001", "axe-core", "#instagram-embed-3"), third_party: "instagram" }];
+    const r = analyzeRepeatability(config, [[replay(r1, cov())], [replay(r2, cov())]], []);
+    expect(r.non_behavioral_identical).toBe(true);
+    expect(r.checks.find((c) => c.check === "axe-core")?.varying_pairs).toBe(0);
+    expect(r.third_party_per_repeat).toEqual([1, 2]);
+    // The same difference on the page's own content still breaks identity
+    const r3 = [...own, key("p001", "axe-core", "img.extra")];
+    expect(analyzeRepeatability(config, [[replay(r1, cov())], [replay(r3, cov())]], []).non_behavioral_identical).toBe(false);
   });
 });

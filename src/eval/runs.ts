@@ -50,6 +50,8 @@ export interface RepeatabilityReport {
   criterion_statuses_identical: boolean;
   coverage_identical: boolean;
   differing_pairs: Array<{ site: string; page: string; check: string; behavioral: boolean }>;
+  /** Third-party embed findings per repeat: reported, but left out of the identity comparison (their content varies per load, P2-023) */
+  third_party_per_repeat: number[];
 }
 
 export interface ReplayRunResult {
@@ -179,7 +181,7 @@ export async function executeReplayRun(options: ReplayRunOptions): Promise<Repla
   m.extra = {
     ...m.extra,
     repeatability,
-    per_site: replays.map((rep, i) => rep.map((r) => ({ repeat: i + 1, site: r.site, totals: r.totals, findings: r.result.findings.length, model_requests: r.client.requests, har_merge: r.har_merge }))),
+    per_site: replays.map((rep, i) => rep.map((r) => ({ repeat: i + 1, site: r.site, totals: r.totals, findings: r.result.findings.length, third_party_findings: r.normalized.keys.filter((k) => k.third_party).length, model_requests: r.client.requests, har_merge: r.har_merge }))),
   };
   writeJson(join(run.dir, "repeatability.json"), repeatability);
   return { replays, repeatability };
@@ -227,11 +229,15 @@ export function analyzeRepeatability(config: EvalConfig, replays: SiteReplay[][]
   const pairCoverage: Array<Map<PairKey, string>> = [];
   const tested = new Set<PairKey>();
   const allPairs = new Set<PairKey>();
+  const thirdPartyPerRepeat: number[] = [];
   for (const rep of replays) {
     const fmap = new Map<PairKey, string[]>();
     const cmap = new Map<PairKey, string>();
+    let thirdParty = 0;
     for (const r of rep) {
       for (const k of r.normalized.keys) {
+        // Third-party embed content varies per load: counted, not compared
+        if (k.third_party) { thirdParty++; continue; }
         const key = `${r.site}|${k.page}|${k.check ?? "unknown"}`;
         const list = fmap.get(key) ?? [];
         list.push(keyTuple(k));
@@ -257,6 +263,7 @@ export function analyzeRepeatability(config: EvalConfig, replays: SiteReplay[][]
     for (const list of fmap.values()) list.sort();
     pairFindings.push(fmap);
     pairCoverage.push(cmap);
+    thirdPartyPerRepeat.push(thirdParty);
   }
 
   const varying = new Set<PairKey>();
@@ -296,6 +303,7 @@ export function analyzeRepeatability(config: EvalConfig, replays: SiteReplay[][]
     criterion_statuses_identical: critSame,
     coverage_identical: covSame,
     differing_pairs: differing,
+    third_party_per_repeat: thirdPartyPerRepeat,
   };
 }
 

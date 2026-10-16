@@ -91,5 +91,20 @@
       "#nope": "fail (missing target)",
       "#no-tabindex": "fail (focus does not move)"
     }
+  },
+  "keyboard-embed-test": {
+    "platform": "webflow",
+    "defect": "P2-034",
+    "provenance": "Hand-built on the shape of popfly.com blog posts with Instagram embeds (scan 782f7078): the page's own links around an Instagram reel iframe and an instagram-media blockquote. Served by the test's own http server (the iframe src path contains instagram.com)."
+  },
+  "keyboard-cycle-test": {
+    "platform": "webflow",
+    "defect": "P2-034",
+    "provenance": "Hand-built: a script returns focus to the first link when the third is focused, so the sweep cycles before the last link. No embed involved."
+  },
+  "keyboard-embed-trap-test": {
+    "platform": "webflow",
+    "defect": "P2-034",
+    "provenance": "Hand-built: a tiktok-embed blockquote whose focusout handler takes focus back, the case the sweep reports as a possible trap (2.1.2, needs review)."
   }
 }

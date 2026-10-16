@@ -93,6 +93,7 @@ export function createReportCommand(): Command {
             scanId,
             compareId,
             severityFilter,
+            dataDir,
           );
           const pageUrlMap = buildPageUrlMap(db, scanId);
 

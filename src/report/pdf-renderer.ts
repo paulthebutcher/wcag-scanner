@@ -56,8 +56,10 @@ export function buildReportDataWithComparison(
   scanId: string,
   comparisonScanId?: string,
   severityFilter?: Severity[],
+  /** Data dir, for the scan's third-party.json (containers and sweep stops) */
+  dataDir?: string,
 ): ReportData {
-  const data = queryFindings(db, scanId);
+  const data = queryFindings(db, scanId, { dataDir });
 
   // Apply severity filter if provided
   if (severityFilter && severityFilter.length > 0) {
@@ -180,6 +182,7 @@ export async function generatePdfReport(
     scanId,
     options.comparisonScanId,
     options.severityFilter,
+    options.dataDir,
   );
 
   // Build page URL map if not provided

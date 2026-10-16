@@ -14,6 +14,7 @@ import {
   type Cluster,
 } from "../../src/report/clustering.js";
 import { renderTopFixesMarkdown, renderExcludedMarkdown } from "../../src/report/top-fixes-report.js";
+import { buildThirdPartySection, renderThirdPartyMarkdown } from "../../src/report/third-party-report.js";
 import { queryFindings } from "../../src/report/generator.js";
 import { openDatabase, insertScanSession, insertPageSnapshot, insertFinding } from "../../src/store/db.js";
 import { makeTestFinding, contrastReasoning } from "./finding-factory.js";
@@ -217,7 +218,10 @@ describe("exclusions", () => {
     // Grouped per page and reason (P2-030)
     expect(md).toContain("## Needs manual contrast check (1 element, 1 check on 1 page)");
     expect(md).toContain("| /p | gradient | 1 | `h1` |");
-    expect(md).toContain("## Third-party (1)");
+    // Third-party findings have their own per-page section now (P2-017)
+    expect(md).not.toContain("Third-party");
+    expect(excluded.find((e) => e.reason === "third_party")?.detail).toBe("GrowSurf");
+    expect(renderThirdPartyMarkdown(buildThirdPartySection(excluded, null))).toContain("- **GrowSurf**: 0 embed(s), 1 finding(s) listed");
   });
 
   it("leaves excluded findings out of report groups and counts, without changing criterion status", () => {

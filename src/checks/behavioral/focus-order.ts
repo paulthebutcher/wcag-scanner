@@ -118,8 +118,10 @@ export function analyzeFocusOrder(
   const largeGapThreshold = options?.largeGapThresholdPx ?? 500;
   const rowTolerance = options?.rowTolerancePx ?? 30;
 
-  const tabOrder = tabSequence.focusStops.filter((s) => s.boundingBox !== null);
-  const visualOrder = computeVisualOrder(tabSequence.focusStops, rowTolerance);
+  // Embed stops (third-party content the sweep stepped over) have no position of their own
+  const ownStops = tabSequence.focusStops.filter((s) => !s.embed);
+  const tabOrder = ownStops.filter((s) => s.boundingBox !== null);
+  const visualOrder = computeVisualOrder(ownStops, rowTolerance);
   const issues: FocusOrderIssue[] = [];
 
   // Analyze consecutive tab stops for ordering issues

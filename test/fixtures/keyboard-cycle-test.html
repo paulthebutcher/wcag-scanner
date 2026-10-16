@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Keyboard sweep that cycles early</title>
+  <style>a { display: block; margin: 6px; }</style>
+</head>
+<!--
+  No embed involved: a script sends focus back to the first link when the
+  third one is focused, so the sweep closes its lap before links 4-6 were
+  ever reached (P2-034: a cycle before the last control is a truncated sweep,
+  not six unreachable controls).
+-->
+<body>
+  <a id="l1" href="#1">One</a>
+  <a id="l2" href="#2">Two</a>
+  <a id="l3" href="#3">Three</a>
+  <a id="l4" href="#4">Four</a>
+  <a id="l5" href="#5">Five</a>
+  <a id="l6" href="#6">Six</a>
+  <script>
+    document.getElementById("l3").addEventListener("focus", function () {
+      setTimeout(function () { document.getElementById("l1").focus(); }, 0);
+    });
+  </script>
+</body>
+</html>

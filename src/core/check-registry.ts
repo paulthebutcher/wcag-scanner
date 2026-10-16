@@ -40,6 +40,7 @@ export const CHECK_TIERS: Record<string, number> = {
 const CHECK_BY_FAILURE_TYPE: Record<string, string> = {
   unreachable_interactive_element: "keyboard",
   truncated_tab_sweep: "keyboard",
+  possible_embed_focus_trap: "keyboard",
   no_visible_focus_indicator: "focus-visible",
   focus_indicator_low_contrast: "focus-visible",
   focus_on_hidden_element: "focus-visible",

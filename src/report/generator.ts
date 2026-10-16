@@ -15,6 +15,8 @@ import {
   listPageSnapshots,
 } from "../store/db.js";
 import { partitionExclusions, exclusionFor, type ExcludedFinding } from "./clustering.js";
+import { buildThirdPartySection, type ThirdPartySection } from "./third-party-report.js";
+import { loadThirdPartyReport } from "../core/third-party.js";
 import { estimateRemediation, formatEstimate, type RemediationEstimate } from "./effort.js";
 import { WebflowAdapter, getRemediationTemplate, clearRemediationCache, buildSpecificRemediation } from "../adapters/webflow.js";
 import { computeSummary, reconcileInMemory } from "../core/scanner.js";
@@ -59,6 +61,8 @@ export interface ReportData {
   excluded?: ExcludedFinding[];
   /** Remediation estimate from fix units (report/effort.ts) */
   estimate?: RemediationEstimate;
+  /** Third-party embed content per page: embeds, findings inside them, sweep notes (P2-017) */
+  thirdParty?: ThirdPartySection;
 }
 
 /** Diff between two scans */
@@ -327,7 +331,7 @@ export function computeDiff(
 export function queryFindings(
   db: Database.Database,
   scanId: string,
-  opts: { filterNoisy?: boolean } = {},
+  opts: { filterNoisy?: boolean; dataDir?: string } = {},
 ): ReportData {
   // Default behavior: filter low-confidence findings from the client-facing
   // report. Callers that need EVERY finding (verbose dump) pass filterNoisy:false.
@@ -359,13 +363,18 @@ export function queryFindings(
   // never turns a failed criterion into a pass.
   let findings = clientFindings;
   let excluded: ExcludedFinding[] = [];
-  const pageUrls = new Map(listPageSnapshots(db, scanId).map((p) => [p.id, p.url]));
+  const snapshots = listPageSnapshots(db, scanId);
+  const pageUrls = new Map(snapshots.map((p) => [p.id, p.url]));
   const pageUrlOf = (id: string) => pageUrls.get(id) ?? id;
   if (filterNoisy) {
     const parts = partitionExclusions(clientFindings.map((f) => ({ finding: f, pageUrl: pageUrls.get(f.page_snapshot_id) ?? "" })));
     findings = parts.kept.map((p) => p.finding);
     excluded = parts.excluded;
   }
+  // Third-party content section: containers and sweep stops from the scan's
+  // third-party.json when the data dir is known, else from the stored DOMs
+  const domByUrl = new Map(snapshots.map((p) => [p.url, p.full_dom]));
+  const thirdParty = buildThirdPartySection(excluded, opts.dataDir ? loadThirdPartyReport(opts.dataDir, scanId) : null, (url) => domByUrl.get(url) ?? null);
 
   // Group by finding_type_hash
   const groups = groupFindingsByHash(findings);
@@ -423,5 +432,6 @@ export function queryFindings(
     diff,
     excluded,
     estimate,
+    thirdParty,
   };
 }

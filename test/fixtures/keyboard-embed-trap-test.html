@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Embed that keeps focus</title>
+  <style>a { display: block; margin: 6px; }</style>
+</head>
+<!--
+  A TikTok-style blockquote embed whose script takes focus back whenever it
+  leaves the embed. The sweep records it once, tries to move past it, finds
+  focus still inside, and reports a possible trap (2.1.2, needs review).
+-->
+<body>
+  <a id="l1" href="#1">One</a>
+  <blockquote class="tiktok-embed" id="tt" cite="https://www.tiktok.com/@x">
+    <a id="inner" href="https://www.tiktok.com/@x">Watch on TikTok</a>
+  </blockquote>
+  <a id="l2" href="#2">Two</a>
+  <a id="l3" href="#3">Three</a>
+  <script>
+    var bq = document.getElementById("tt");
+    bq.addEventListener("focusout", function (e) {
+      if (!e.relatedTarget || !bq.contains(e.relatedTarget)) setTimeout(function () { document.getElementById("inner").focus(); }, 0);
+    });
+  </script>
+</body>
+</html>

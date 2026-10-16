@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "note": "Third-party embed vendors (P2-017). `containers` are compound CSS selectors (tag, .class, #id, [attr], [attr=v], [attr^=v], [attr$=v], [attr*=v]; no combinators) that identify an embed container: an iframe or the blockquote/div a vendor script fills. Findings on elements strictly inside a container are tagged third_party with the vendor; findings on the container itself (an iframe missing a title, its placement) stay the site's own. `element_markers` tag elements a vendor injects anywhere by their own attributes, id/class token prefix or asset URLs (GrowSurf). Override the file with WCAG_THIRD_PARTY_CONFIG=<path>.",
+  "vendors": [
+    {
+      "id": "instagram",
+      "name": "Instagram",
+      "containers": [
+        "blockquote.instagram-media",
+        "iframe[src*=\"instagram.com\"]",
+        "iframe[id^=\"instagram-embed-\"]",
+        "[id^=\"instagram-embed-\"]"
+      ]
+    },
+    {
+      "id": "tiktok",
+      "name": "TikTok",
+      "containers": [
+        "blockquote.tiktok-embed",
+        "iframe[src*=\"tiktok.com\"]",
+        "iframe[name^=\"__tt_embed__\"]"
+      ]
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "containers": [
+        "iframe[src*=\"youtube.com/embed\"]",
+        "iframe[src*=\"youtube-nocookie.com\"]",
+        "iframe[src*=\"youtu.be\"]"
+      ]
+    },
+    {
+      "id": "vimeo",
+      "name": "Vimeo",
+      "containers": [
+        "iframe[src*=\"player.vimeo.com\"]"
+      ]
+    },
+    {
+      "id": "x",
+      "name": "X (Twitter)",
+      "containers": [
+        "blockquote.twitter-tweet",
+        "iframe[src*=\"platform.twitter.com\"]",
+        "iframe[src*=\"platform.x.com\"]"
+      ]
+    },
+    {
+      "id": "growsurf",
+      "name": "GrowSurf",
+      "containers": [
+        "div.grsf-global",
+        "#grsf-window"
+      ],
+      "element_markers": {
+        "attr_prefix": "data-grsf",
+        "token_prefix": "grsf-",
+        "url_substring": "growsurf"
+      }
+    }
+  ]
+}

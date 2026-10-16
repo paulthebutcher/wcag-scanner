@@ -1,5 +1,6 @@
 import type { Page, ElementHandle } from "playwright";
 import type { CheckResult } from "../../types.js";
+import { vendorSelectorLists, type EmbedSweepStop } from "../../core/third-party.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,6 +22,8 @@ export interface FocusStop {
   outerHtml: string;
   /** Index in the tab sequence (0-based) */
   sequenceIndex: number;
+  /** Set on the single stop recorded for a third-party embed the sweep stepped over (P2-034) */
+  embed?: { vendor: string; vendor_name: string; container: string };
 }
 
 export interface TabSequenceResult {
@@ -38,8 +41,14 @@ export interface TabSequenceResult {
   exitReason: TabSweepExitReason;
   /** Selector of the last element that had focus before the sweep stopped */
   lastFocusedSelector: string | null;
-  /** Keyboard-reachable interactive elements on the page (reached or not) */
+  /** Keyboard-reachable interactive elements on the page (reached or not), embed contents left out */
   candidateCount: number;
+  /** Controls inside third-party embed containers, not counted as candidates */
+  candidatesInsideEmbeds: number;
+  /** The page's last candidate (document order) was focused during the sweep */
+  lastCandidateReached: boolean;
+  /** Third-party embeds the sweep entered, one entry each (P2-034) */
+  embeds: EmbedSweepStop[];
 }
 
 /**
@@ -48,7 +57,8 @@ export interface TabSequenceResult {
  * body_focus: focus landed on <body> MAX_CONSECUTIVE_BODY times in a row.
  * repeat_cap: focus stayed on one element (an embedded frame) too long.
  */
-export type TabSweepExitReason = "cycle" | "max" | "body_focus" | "repeat_cap";
+/** embed_focus: a third-party embed kept focus after the sweep tried to move past it. */
+export type TabSweepExitReason = "cycle" | "max" | "body_focus" | "repeat_cap" | "embed_focus";
 
 export interface UnreachableElement {
   selector: string;
@@ -257,6 +267,11 @@ export async function recordTabSequence(
   const maxTabs = options?.maxTabs ?? 500;
   const focusStops: FocusStop[] = [];
   const visitedSelectors = new Set<string>();
+  // Third-party embeds are stepped over, one stop each (P2-034)
+  const vendors = vendorSelectorLists();
+  const embeds: EmbedSweepStop[] = [];
+  const embedEntries = new Map<string, number>();
+  const MAX_EMBED_REENTRIES = 3;
 
   let endedByCycle = false;
   let endedByMax = false;
@@ -284,11 +299,11 @@ export async function recordTabSequence(
   let consecutiveRepeats = 0;
   const MAX_CONSECUTIVE_REPEATS = 50;
 
-  for (let i = 0; i < maxTabs; i++) {
+  sweep: for (let i = 0; i < maxTabs; i++) {
     await page.keyboard.press("Tab");
     totalTabs++;
 
-    const info = await getFocusedElementInfo(page);
+    let info = await getFocusedElementInfo(page);
 
     if (!info) {
       // Focus is on body — the browser passes through body between laps.
@@ -305,6 +320,54 @@ export async function recordTabSequence(
     }
     consecutiveBodyFocuses = 0;
     lastFocusedSelector = info.selector;
+
+    // A third-party embed (an Instagram or TikTok iframe, a vendor widget):
+    // record it once, then continue from the first control after it instead
+    // of tabbing through its internals (P2-034). Chained embeds are stepped
+    // over one after another.
+    let stepped = false;
+    for (let chained = 0; chained < 10; chained++) {
+      const embed = await stepOverEmbed(page, vendors);
+      if (!embed) break;
+      stepped = true;
+      const key = `embed:${embed.container}`;
+      const entries = (embedEntries.get(key) ?? 0) + 1;
+      embedEntries.set(key, entries);
+      let stop = embeds.find((e) => e.container === embed.container);
+      if (!stop) {
+        stop = { vendor: embed.vendor, vendor_name: embed.vendor_name, container: embed.container, focusables_inside: embed.focusables_inside, kept_focus: false };
+        embeds.push(stop);
+        visitedSelectors.add(key);
+        focusStops.push({
+          selector: embed.container, tagName: embed.tagName, role: null, boundingBox: null, tabIndex: null,
+          outerHtml: embed.opening, sequenceIndex: focusStops.length,
+          embed: { vendor: embed.vendor, vendor_name: embed.vendor_name, container: embed.container },
+        });
+      }
+      if (!embed.moved) {
+        // Nothing focusable after the embed: the lap is complete
+        endedByCycle = true;
+        exitReason = "cycle";
+        break sweep;
+      }
+      if (embed.still_inside || entries > MAX_EMBED_REENTRIES) {
+        // The embed holds on to focus (or keeps taking it back): the rest
+        // of the page was not tested; reported as a possible trap
+        stop.kept_focus = true;
+        exitReason = "embed_focus";
+        break sweep;
+      }
+      info = await getFocusedElementInfo(page);
+      if (!info) break;
+    }
+    if (!info) {
+      lastSelector = null;
+      continue;
+    }
+    if (stepped) {
+      lastSelector = null;
+      lastFocusedSelector = info.selector;
+    }
 
     if (info.selector === lastSelector) {
       // Still inside the same embedded document. Past the cap, focus is
@@ -343,7 +406,7 @@ export async function recordTabSequence(
   }
 
   // Find interactive elements not reached by tabbing
-  const { unreachable: unreachableElements, candidateCount } = await findUnreachableElements(page, visitedSelectors);
+  const { unreachable: unreachableElements, candidateCount, candidatesInsideEmbeds, lastCandidateReached } = await findUnreachableElements(page, visitedSelectors);
 
   return {
     focusStops,
@@ -354,7 +417,84 @@ export async function recordTabSequence(
     exitReason,
     lastFocusedSelector,
     candidateCount,
+    candidatesInsideEmbeds,
+    lastCandidateReached,
+    embeds,
   };
+}
+
+/** What stepOverEmbed found and did for the focused element */
+interface EmbedStep {
+  vendor: string;
+  vendor_name: string;
+  container: string;
+  tagName: string;
+  opening: string;
+  focusables_inside: number | null;
+  /** A keyboard-reachable control after the container existed and was focused */
+  moved: boolean;
+  /** Focus is still inside the container after that */
+  still_inside: boolean;
+}
+
+/**
+ * If the focused element is a third-party embed container or inside one,
+ * move focus to the first keyboard-reachable control after the container
+ * and describe the embed; null when focus is on the page's own content.
+ */
+async function stepOverEmbed(page: Page, vendors: Array<{ id: string; name: string; selector: string }>): Promise<EmbedStep | null> {
+  if (vendors.length === 0) return null;
+  return page.evaluate(async ({ vendors, interactive }) => {
+    const el = document.activeElement;
+    if (!el || el === document.body) return null;
+    let container: Element | null = null;
+    let vendor: { id: string; name: string; selector: string } | null = null;
+    for (const v of vendors) {
+      const c = el.matches(v.selector) ? el : el.closest(v.selector);
+      if (c) { container = c; vendor = v; break; }
+    }
+    if (!container || !vendor) return null;
+    const isFrame = container.tagName === "IFRAME";
+    const focusablesInside = isFrame ? null : container.querySelectorAll(interactive).length;
+    let next: HTMLElement | null = null;
+    for (const cand of Array.from(document.querySelectorAll(interactive)) as HTMLElement[]) {
+      if (container.contains(cand)) continue;
+      if (!(container.compareDocumentPosition(cand) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      if (cand.getAttribute("tabindex") === "-1") continue;
+      if ((cand as HTMLInputElement).disabled) continue;
+      if (cand.closest("[inert], [aria-hidden=\"true\"], [hidden]")) continue;
+      const style = window.getComputedStyle(cand);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (cand.getClientRects().length === 0) continue;
+      next = cand;
+      break;
+    }
+    if (next) {
+      next.focus();
+      // An embed that takes focus back usually does so from a timer
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const active = document.activeElement;
+    const stillInside = !!active && (active === container || container.contains(active));
+    const html = container.outerHTML;
+    const opening = html.slice(0, html.indexOf(">") + 1);
+    let desc: string;
+    if (container.id && document.querySelectorAll(`#${CSS.escape(container.id)}`).length === 1) {
+      desc = `#${CSS.escape(container.id)}`;
+    } else {
+      const name = container.getAttribute("name");
+      const src = container.getAttribute("src");
+      const attr = name ? `[name="${name}"]` : src ? `[src="${src.slice(0, 80)}"]` : "";
+      let classes = "";
+      for (const c of Array.from(container.classList).slice(0, 2)) classes += `.${c}`;
+      desc = `${container.tagName.toLowerCase()}${classes}${attr}`;
+    }
+    return {
+      vendor: vendor.id, vendor_name: vendor.name, container: desc, tagName: container.tagName.toLowerCase(),
+      opening: opening.length > 300 ? `${opening.slice(0, 300)}…` : opening,
+      focusables_inside: focusablesInside, moved: next !== null, still_inside: stillInside,
+    };
+  }, { vendors, interactive: INTERACTIVE_SELECTOR });
 }
 
 /**
@@ -363,12 +503,25 @@ export async function recordTabSequence(
 async function findUnreachableElements(
   page: Page,
   reachedSelectors: Set<string>,
-): Promise<{ unreachable: UnreachableElement[]; candidateCount: number }> {
+): Promise<{ unreachable: UnreachableElement[]; candidateCount: number; candidatesInsideEmbeds: number; lastCandidateReached: boolean }> {
   const interactiveElements = await page.$$(INTERACTIVE_SELECTOR);
   const unreachable: UnreachableElement[] = [];
   let candidateCount = 0;
+  // Controls inside third-party embeds are the vendor's; the sweep steps
+  // over them, so they are neither candidates nor unreachable (P2-034)
+  const embedSelector = vendorSelectorLists().map((v) => v.selector).join(", ");
+  let candidatesInsideEmbeds = 0;
+  let lastCandidateSelector: string | null = null;
 
   for (const handle of interactiveElements) {
+    if (embedSelector) {
+      const inEmbed = await handle.evaluate((el, sel) => el.closest(sel) !== null, embedSelector);
+      if (inEmbed) {
+        candidatesInsideEmbeds++;
+        await handle.dispose();
+        continue;
+      }
+    }
     const reachable = await isKeyboardReachable(handle);
     if (!reachable) {
       await handle.dispose();
@@ -417,6 +570,7 @@ async function findUnreachableElements(
       };
     });
 
+    if (info) lastCandidateSelector = info.selector;
     if (info && !reachedSelectors.has(info.selector)) {
       unreachable.push(info);
     }
@@ -424,7 +578,10 @@ async function findUnreachableElements(
     await handle.dispose();
   }
 
-  return { unreachable, candidateCount };
+  return {
+    unreachable, candidateCount, candidatesInsideEmbeds,
+    lastCandidateReached: lastCandidateSelector === null || reachedSelectors.has(lastCandidateSelector),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +637,9 @@ export async function runKeyboardChecks(
     exit_reason: tabSequence.exitReason,
     last_focused_selector: tabSequence.lastFocusedSelector,
     candidate_count: tabSequence.candidateCount,
+    candidates_inside_embeds: tabSequence.candidatesInsideEmbeds,
+    embeds_entered: tabSequence.embeds.length,
+    embed_vendors: Array.from(new Set(tabSequence.embeds.map((e) => e.vendor))),
     retried,
     ...(firstSweep ? {
       first_sweep_exit_reason: firstSweep.exitReason,
@@ -490,8 +650,30 @@ export async function runKeyboardChecks(
   const firstSweepText = firstSweep
     ? `; first sweep ${firstSweep.exitReason} after ${firstSweep.stops} stops, last focused ${firstSweep.lastFocusedSelector ?? "nothing"}`
     : "";
+  const embedCounts = new Map<string, number>();
+  for (const e of tabSequence.embeds) embedCounts.set(e.vendor_name, (embedCounts.get(e.vendor_name) ?? 0) + 1);
+  const embedsText = tabSequence.embeds.length > 0
+    ? `, stepped over ${tabSequence.embeds.length} third-party embed(s) (${Array.from(embedCounts, ([v, n]) => `${v} ×${n}`).join(", ")}; ${tabSequence.candidatesInsideEmbeds} control(s) inside)`
+    : "";
   const sweepSummary = `sweep ended by ${tabSequence.exitReason} after ${tabSequence.focusStops.length} stops, ` +
-    `last focused ${tabSequence.lastFocusedSelector ?? "nothing"}, retried ${retried ? "yes" : "no"}${firstSweepText}`;
+    `last focused ${tabSequence.lastFocusedSelector ?? "nothing"}, retried ${retried ? "yes" : "no"}${firstSweepText}${embedsText}`;
+
+  // An embed that kept focus after the sweep tried to move past it: a
+  // possible keyboard trap (2.1.2), for review (needs_review in confidence.ts)
+  const trapResults: CheckResult[] = tabSequence.embeds.filter((e) => e.kept_focus).map((e) => ({
+    element_selector: e.container,
+    element_html: tabSequence.focusStops.find((st) => st.embed?.container === e.container)?.outerHtml ?? `<${e.vendor} embed>`,
+    wcag_criterion: "2.1.2",
+    detected_by: "playwright",
+    raw_result: {
+      type: "possible_embed_focus_trap",
+      vendor: e.vendor,
+      vendorName: e.vendor_name,
+      container: e.container,
+      description: `Focus stayed in the ${e.vendor_name} embed after the sweep moved it to the next control; a keyboard user may not be able to leave the embed`,
+    },
+    measured_values: { failure_type: "possible_embed_focus_trap", vendor: e.vendor, container: e.container, exit_reason: tabSequence.exitReason },
+  }));
 
   // Still truncated: the unreached elements were never tested, so report
   // the sweep for review instead of calling them unreachable.
@@ -500,7 +682,7 @@ export async function runKeyboardChecks(
     const partialReason = `tab sweep stopped early (${tabSequence.exitReason}) after ${tabSequence.focusStops.length} stops, ` +
       `${reached} of ${tabSequence.candidateCount} controls reached, last focused ${tabSequence.lastFocusedSelector ?? "nothing"}; retried once${firstSweepText}`;
     return {
-      results: [{
+      results: [...trapResults, {
         element_selector: tabSequence.lastFocusedSelector ?? "body",
         element_html: `<tab-sweep-summary exit-reason="${tabSequence.exitReason}" stops="${tabSequence.focusStops.length}" candidates="${tabSequence.candidateCount}"/>`,
         wcag_criterion: "2.1.1",
@@ -522,7 +704,7 @@ export async function runKeyboardChecks(
     };
   }
 
-  const results: CheckResult[] = [];
+  const results: CheckResult[] = [...trapResults];
 
   // Each unreachable element is a 2.1.1 violation
   for (const unreachable of tabSequence.unreachableElements) {
@@ -547,11 +729,19 @@ export async function runKeyboardChecks(
 
 /**
  * A sweep cut short before a full lap: it stopped on body focus or a stuck
- * element, having reached fewer than half of the page's candidate controls.
+ * element having reached fewer than half of the page's candidate controls,
+ * it closed a lap before the last control was reached, or an embed kept
+ * focus. Unreached controls were never tested, so they are not reported as
+ * unreachable.
  */
 export function isTruncatedSweep(seq: TabSequenceResult): boolean {
-  if (seq.exitReason !== "body_focus" && seq.exitReason !== "repeat_cap") return false;
+  // An embed that kept focus: the rest of the page was not tested
+  if (seq.exitReason === "embed_focus") return true;
   if (seq.candidateCount === 0) return false;
+  // A lap that closed before the page's last control was reached (P2-034):
+  // something sent focus back, so the controls after it were never tested
+  if (seq.exitReason === "cycle") return !seq.lastCandidateReached;
+  if (seq.exitReason !== "body_focus" && seq.exitReason !== "repeat_cap") return false;
   const reached = seq.candidateCount - seq.unreachableElements.length;
   return reached / seq.candidateCount < 0.5;
 }
@@ -654,7 +844,8 @@ export async function detectKeyboardTraps(
  * Find elements on the page that are candidates for keyboard trap testing.
  */
 async function findTrapCandidates(page: Page): Promise<string[]> {
-  return page.evaluate((selector) => {
+  const embeds = vendorSelectorLists().map((v) => v.selector).join(", ");
+  return page.evaluate(({ selector, embeds }) => {
     const elements = document.querySelectorAll(selector);
     const selectors: string[] = [];
 
@@ -670,6 +861,10 @@ async function findTrapCandidates(page: Page): Promise<string[]> {
       // Skip hidden elements
       const style = window.getComputedStyle(el as HTMLElement);
       if (style.display === "none" || style.visibility === "hidden") continue;
+
+      // Third-party embed containers and their contents are not trap
+      // candidates; the keyboard sweep reports an embed that keeps focus
+      if (embeds && (el.matches(embeds) || el.closest(embeds))) continue;
 
       // Build a selector for this element
       let sel: string;
@@ -705,7 +900,7 @@ async function findTrapCandidates(page: Page): Promise<string[]> {
     }
 
     return selectors;
-  }, TRAP_CANDIDATE_SELECTORS);
+  }, { selector: TRAP_CANDIDATE_SELECTORS, embeds });
 }
 
 /**

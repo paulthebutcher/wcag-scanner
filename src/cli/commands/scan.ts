@@ -19,6 +19,7 @@ function formatTable(summary: ScanSummary, scanId: string): string {
   const confirmed = summary.total_findings - (summary.needs_review_findings ?? 0);
   lines.push(`│    Confirmed:    ${String(confirmed).padEnd(28)}│`);
   lines.push(`│    Needs review: ${String(summary.needs_review_findings ?? 0).padEnd(28)}│`);
+  lines.push(`│  Third-party (listed separately): ${String(summary.third_party_findings ?? 0).padEnd(11)}│`);
   lines.push("├──────────────────────────────────────────────┤");
   lines.push("│  Confirmed, by severity:                     │");
   lines.push(`│    Critical: ${String(summary.by_severity.critical).padEnd(32)}│`);

@@ -2,6 +2,7 @@ import { AxeBuilder } from "@axe-core/playwright";
 import type { Page } from "playwright";
 import type { Result as AxeResult, NodeResult } from "axe-core";
 import type { CheckResult, CriterionResult, DetectedBy } from "../../types.js";
+import { vendorSelectorLists, type ThirdPartyTag } from "../../core/third-party.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,10 +110,19 @@ export function nodeToCheckResult(
     ariaAttrs["role"] = roleMatch[1];
   }
 
+  // Content inside an iframe comes back with the frame's selector first and
+  // the element's own last; the finding keeps the frame selector as before
+  // and records the path (P2-017: the frame decides the third-party tag)
+  const parts = (node.target as unknown as Array<string | string[]>).map((t) => (Array.isArray(t) ? t.join(" ") : String(t)));
+  const measured: Record<string, unknown> = {};
+  if (options.incomplete) measured.axe_incomplete = true;
+  if (parts.length > 1) {
+    measured.axe_frame_path = parts.slice(0, -1);
+    measured.axe_element_selector = parts[parts.length - 1];
+  }
+
   return {
-    element_selector: Array.isArray(node.target[0])
-      ? node.target[0].join(" ")
-      : String(node.target[0]),
+    element_selector: parts[0],
     element_html: node.html,
     wcag_criterion: criterion,
     detected_by: detectedBy,
@@ -127,8 +137,49 @@ export function nodeToCheckResult(
     aria_attributes: Object.keys(ariaAttrs).length > 0 ? ariaAttrs : undefined,
     // axe could not decide (P2-030): the marker routes the finding to
     // needs_review in confidence.ts and keeps it from failing its criterion
-    ...(options.incomplete ? { measured_values: { axe_incomplete: true } } : {}),
+    ...(Object.keys(measured).length > 0 ? { measured_values: measured } : {}),
   };
+}
+
+/**
+ * Tag results on third-party embed contents (P2-017). Each result's
+ * selector (the frame's selector for iframe content) is resolved in the
+ * page: iframe content is tagged by its frame's vendor; a main-document
+ * element is tagged only when it sits strictly inside a vendor container.
+ * The container itself (an iframe missing a title) is never tagged.
+ */
+export async function tagAxeResults(page: Page, results: CheckResult[]): Promise<number> {
+  const vendors = vendorSelectorLists();
+  const probes = Array.from(new Set(results.map((r) => r.element_selector)));
+  if (probes.length === 0 || vendors.length === 0) return 0;
+  const verdicts = await page.evaluate(({ probes, vendors }) => probes.map((sel) => {
+    let el: Element | null = null;
+    try { el = document.querySelector(sel); } catch { return null; }
+    if (!el) return null;
+    for (const v of vendors) {
+      if (el.matches(v.selector)) return { vendor: v.id, name: v.name, self: true, container: sel };
+      const anc = el.parentElement ? el.parentElement.closest(v.selector) : null;
+      if (anc) {
+        const classes = String(anc.className ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 2);
+        const desc = anc.id ? `#${anc.id}` : anc.tagName.toLowerCase() + (classes.length ? `.${classes.join(".")}` : "");
+        return { vendor: v.id, name: v.name, self: false, container: desc };
+      }
+    }
+    return null;
+  }), { probes, vendors }).catch(() => null);
+  if (!verdicts) return 0;
+  const byProbe = new Map(probes.map((p, i) => [p, verdicts[i]]));
+  let tagged = 0;
+  for (const r of results) {
+    const v = byProbe.get(r.element_selector);
+    if (!v) continue;
+    const inFrame = Array.isArray(r.measured_values?.axe_frame_path);
+    if (!inFrame && v.self) continue; // the container itself: the site's own finding
+    const tag: ThirdPartyTag = { vendor: v.vendor, vendor_name: v.name, container: v.self ? r.element_selector : v.container, via: inFrame ? "frame" : "dom" };
+    r.measured_values = { ...(r.measured_values ?? {}), third_party: tag };
+    tagged++;
+  }
+  return tagged;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +313,9 @@ export async function runAxeChecks(
       incomplete.push(nodeToCheckResult(node, rule, "axe_core", { incomplete: true }));
     }
   }
+
+  // Third-party embed contents keep their results, tagged (P2-017)
+  await tagAxeResults(page, [...violations, ...incomplete]);
 
   // Map passes: group by criterion
   const passes = passesToCriterionResults(axeResults.passes, scanSessionId);

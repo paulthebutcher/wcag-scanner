@@ -12,6 +12,7 @@ import { renderCoverageHtml, COVERAGE_CSS } from "../coverage-report.js";
 import { findingPageUrls, isDeduplicated, occurrenceTotals } from "../occurrences.js";
 import { clusterFindings, type Cluster } from "../clustering.js";
 import { renderTopFixesHtml, renderPageLevelHtml, renderExcludedHtml, TOP_FIXES_CSS } from "../top-fixes-report.js";
+import { renderThirdPartyHtml } from "../third-party-report.js";
 import { renderVerifyHtml } from "../verify-report.js";
 import { estimateRemediation, fixUnits, formatHours, unitHoursFor, type RemediationEstimate, type FixKind } from "../effort.js";
 import type { VerifyResult } from "../../core/verify.js";
@@ -451,6 +452,7 @@ function renderCover(data: ReportData, executiveSummaryHtml?: string): string {
       <div class="cover-stat"><span class="cover-stat-num" style="color:#ca8a04">${summary.by_severity.minor}</span><span class="cover-stat-label">Minor</span></div>
       <div class="cover-stat"><span class="cover-stat-num" style="color:#6b7280">${summary.by_severity.advisory}</span><span class="cover-stat-label">Advisory</span></div>
       <div class="cover-stat"><span class="cover-stat-num" style="color:#d97706">${summary.needs_review_findings ?? 0}</span><span class="cover-stat-label">Needs Review</span></div>
+      <div class="cover-stat"><span class="cover-stat-num" style="color:#6b7280">${summary.third_party_findings ?? 0}</span><span class="cover-stat-label">Third-Party (listed separately)</span></div>
     </div>` : "";
 
   return `
@@ -1508,6 +1510,7 @@ export function renderHtmlReport(data: ReportData, options: RenderOptions = {}):
     coverage !== undefined ? renderCoverageHtml(coverage) : "",
     renderFindingsByType(data, pageUrlMap, impactDescriptions, dataDir),
     renderExcludedHtml(data.excluded ?? []),
+    renderThirdPartyHtml(data.thirdParty),
     renderAppendixByPage(data, pageUrlMap),
     renderScanScope(data, pageUrlMap),
     renderMethodology(),
