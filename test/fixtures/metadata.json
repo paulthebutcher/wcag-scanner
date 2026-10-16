@@ -106,5 +106,10 @@
     "platform": "webflow",
     "defect": "P2-034",
     "provenance": "Hand-built: a tiktok-embed blockquote whose focusout handler takes focus back, the case the sweep reports as a possible trap (2.1.2, needs review)."
+  },
+  "keyboard-smooth-scroll-test": {
+    "platform": "webflow",
+    "defect": "P2-036",
+    "provenance": "Hand-built: html { scroll-behavior: smooth } with six links 350 px apart in DOM order, so every Tab beyond the first viewport starts a smooth scroll and no step exceeds the large-gap threshold."
   }
 }

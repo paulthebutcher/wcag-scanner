@@ -15,7 +15,7 @@ function makeStop(overrides: Partial<FocusStop> & { selector: string }): FocusSt
   return {
     tagName: "button",
     role: null,
-    boundingBox: null,
+    pagePosition: null,
     tabIndex: null,
     outerHtml: `<button>${overrides.selector}</button>`,
     sequenceIndex: 0,
@@ -40,10 +40,10 @@ function makeTabSequence(stops: FocusStop[]): TabSequenceResult {
 describe("computeVisualOrder", () => {
   it("sorts elements top-to-bottom, left-to-right", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 300, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "d", sequenceIndex: 3, boundingBox: { x: 0, y: 100, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 150, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 300, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "d", sequenceIndex: 3, pagePosition: { x: 0, y: 100, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 150, y: 0, width: 100, height: 30 } }),
     ];
 
     const order = computeVisualOrder(stops);
@@ -52,9 +52,9 @@ describe("computeVisualOrder", () => {
 
   it("groups elements in same row by Y tolerance", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", boundingBox: { x: 0, y: 10, width: 100, height: 30 } }),
-      makeStop({ selector: "b", boundingBox: { x: 200, y: 15, width: 100, height: 30 } }), // Same row (within 30px)
-      makeStop({ selector: "c", boundingBox: { x: 0, y: 100, width: 100, height: 30 } }),   // New row
+      makeStop({ selector: "a", pagePosition: { x: 0, y: 10, width: 100, height: 30 } }),
+      makeStop({ selector: "b", pagePosition: { x: 200, y: 15, width: 100, height: 30 } }), // Same row (within 30px)
+      makeStop({ selector: "c", pagePosition: { x: 0, y: 100, width: 100, height: 30 } }),   // New row
     ];
 
     const order = computeVisualOrder(stops);
@@ -63,9 +63,9 @@ describe("computeVisualOrder", () => {
 
   it("skips elements without bounding boxes", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", boundingBox: null }),
-      makeStop({ selector: "c", boundingBox: { x: 0, y: 50, width: 100, height: 30 } }),
+      makeStop({ selector: "a", pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", pagePosition: null }),
+      makeStop({ selector: "c", pagePosition: { x: 0, y: 50, width: 100, height: 30 } }),
     ];
 
     const order = computeVisualOrder(stops);
@@ -84,9 +84,9 @@ describe("computeVisualOrder", () => {
 describe("analyzeFocusOrder", () => {
   it("reports no issues for correct visual order", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 200, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }),
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 200, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }),
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -96,9 +96,9 @@ describe("analyzeFocusOrder", () => {
 
   it("detects backward jumps (focus moves upward >200px)", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 400, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }), // Jumps back up 350px
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 400, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }), // Jumps back up 350px
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -112,9 +112,9 @@ describe("analyzeFocusOrder", () => {
 
   it("assigns high confidence for large backward jumps (>400px)", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 600, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }), // Jumps back 550px
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 600, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }), // Jumps back 550px
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -125,9 +125,9 @@ describe("analyzeFocusOrder", () => {
 
   it("assigns moderate confidence for smaller backward jumps", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 300, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }), // Jumps back 250px
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 300, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }), // Jumps back 250px
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -138,8 +138,8 @@ describe("analyzeFocusOrder", () => {
 
   it("detects large visual gaps (>500px downward)", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 600, width: 100, height: 30 } }), // 600px gap
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 600, width: 100, height: 30 } }), // 600px gap
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -151,9 +151,9 @@ describe("analyzeFocusOrder", () => {
   it("catches Webflow flexbox reordering pattern", () => {
     // Simulates CSS order property making visual order different from DOM order
     const stops: FocusStop[] = [
-      makeStop({ selector: "card-3", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 300, height: 200 } }),
-      makeStop({ selector: "card-1", sequenceIndex: 1, boundingBox: { x: 0, y: 500, width: 300, height: 200 } }), // Visually below
-      makeStop({ selector: "card-2", sequenceIndex: 2, boundingBox: { x: 0, y: 250, width: 300, height: 200 } }), // Jumps backward
+      makeStop({ selector: "card-3", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 300, height: 200 } }),
+      makeStop({ selector: "card-1", sequenceIndex: 1, pagePosition: { x: 0, y: 500, width: 300, height: 200 } }), // Visually below
+      makeStop({ selector: "card-2", sequenceIndex: 2, pagePosition: { x: 0, y: 250, width: 300, height: 200 } }), // Jumps backward
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -166,9 +166,9 @@ describe("analyzeFocusOrder", () => {
   it("catches absolutely positioned elements out of visual order", () => {
     // Simulates position:absolute elements tabbed in DOM order, not visual order
     const stops: FocusStop[] = [
-      makeStop({ selector: "header-btn", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "footer-btn", sequenceIndex: 1, boundingBox: { x: 0, y: 800, width: 100, height: 30 } }),
-      makeStop({ selector: "abs-positioned", sequenceIndex: 2, boundingBox: { x: 0, y: 100, width: 100, height: 30 } }), // Abs positioned, should be second
+      makeStop({ selector: "header-btn", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "footer-btn", sequenceIndex: 1, pagePosition: { x: 0, y: 800, width: 100, height: 30 } }),
+      makeStop({ selector: "abs-positioned", sequenceIndex: 2, pagePosition: { x: 0, y: 100, width: 100, height: 30 } }), // Abs positioned, should be second
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -177,8 +177,8 @@ describe("analyzeFocusOrder", () => {
 
   it("returns visual order and tab order arrays", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "b", sequenceIndex: 0, boundingBox: { x: 200, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "a", sequenceIndex: 1, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 0, pagePosition: { x: 200, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "a", sequenceIndex: 1, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
     ];
 
     const result = analyzeFocusOrder(makeTabSequence(stops));
@@ -194,9 +194,9 @@ describe("analyzeFocusOrder", () => {
 describe("runFocusOrderChecks", () => {
   it("produces single CheckResult per page for criterion 2.4.3", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 500, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }),
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 500, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }),
     ];
 
     const results = runFocusOrderChecks(makeTabSequence(stops));
@@ -214,9 +214,9 @@ describe("runFocusOrderChecks", () => {
 
   it("returns empty array when focus order matches visual order", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 200, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }),
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 200, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }),
     ];
 
     const results = runFocusOrderChecks(makeTabSequence(stops));
@@ -225,9 +225,9 @@ describe("runFocusOrderChecks", () => {
 
   it("sets confidence high for large jumps, moderate for ambiguous", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 600, width: 100, height: 30 } }),
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }),
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 600, width: 100, height: 30 } }),
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }),
     ];
 
     const results = runFocusOrderChecks(makeTabSequence(stops));
@@ -237,9 +237,9 @@ describe("runFocusOrderChecks", () => {
 
   it("includes backward_jumps and large_gaps counts in measured_values", () => {
     const stops: FocusStop[] = [
-      makeStop({ selector: "a", sequenceIndex: 0, boundingBox: { x: 0, y: 0, width: 100, height: 30 } }),
-      makeStop({ selector: "b", sequenceIndex: 1, boundingBox: { x: 0, y: 800, width: 100, height: 30 } }), // Large gap
-      makeStop({ selector: "c", sequenceIndex: 2, boundingBox: { x: 0, y: 50, width: 100, height: 30 } }), // Backward jump
+      makeStop({ selector: "a", sequenceIndex: 0, pagePosition: { x: 0, y: 0, width: 100, height: 30 } }),
+      makeStop({ selector: "b", sequenceIndex: 1, pagePosition: { x: 0, y: 800, width: 100, height: 30 } }), // Large gap
+      makeStop({ selector: "c", sequenceIndex: 2, pagePosition: { x: 0, y: 50, width: 100, height: 30 } }), // Backward jump
     ];
 
     const results = runFocusOrderChecks(makeTabSequence(stops));

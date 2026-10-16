@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { recordTabSequence, runKeyboardChecks, runTrapChecks, isTruncatedSweep } from "../../src/checks/behavioral/keyboard.js";
+import { analyzeFocusOrder } from "../../src/checks/behavioral/focus-order.js";
 
 const fixture = (name: string) => readFileSync(join(import.meta.dirname, "..", "fixtures", `${name}.html`), "utf8");
 
@@ -28,6 +29,8 @@ describe("keyboard sweep and third-party embeds (P2-034)", () => {
         res.end(fixture("keyboard-cycle-test"));
       } else if (req.url === "/trap") {
         res.end(fixture("keyboard-embed-trap-test"));
+      } else if (req.url === "/smooth") {
+        res.end(fixture("keyboard-smooth-scroll-test"));
       } else {
         res.statusCode = 404;
         res.end("<html><body>no</body></html>");
@@ -106,6 +109,35 @@ describe("keyboard sweep and third-party embeds (P2-034)", () => {
       await page.goto(`${origin}/trap`, { waitUntil: "load" });
       const traps = await runTrapChecks(page);
       expect(traps.filter((t) => /#tt|#inner/.test(t.element_selector))).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("reads stop positions in page coordinates, unchanged by a smooth scroll in progress, so DOM-ordered controls raise no focus-order issue (P2-036)", async () => {
+    const page = await context.newPage();
+    try {
+      await page.goto(`${origin}/smooth`, { waitUntil: "load" });
+      // Document offsets of each control, read with no scroll in progress
+      const expected = await page.evaluate(() => Object.fromEntries(["l1", "l2", "b1", "b2", "l3", "l4", "l5", "l6"].map((id) => {
+        const r = document.getElementById(id)!.getBoundingClientRect();
+        return [id, Math.round(r.y + window.scrollY)];
+      })));
+      expect(expected.l6).toBeGreaterThan(expected.l1 + 1500); // the last controls are well beyond the first viewport
+      const runs = [];
+      for (let i = 0; i < 2; i++) {
+        await page.goto(`${origin}/smooth`, { waitUntil: "load" });
+        const seq = await recordTabSequence(page);
+        runs.push(seq.focusStops.map((s) => [s.selector.replace(/^.*#/, "#"), Math.round(s.pagePosition!.y)]));
+        // Viewport-relative boxes are still recorded for focus-visible crops
+        expect(seq.focusStops.every((s) => s.boundingBox !== null)).toBe(true);
+        const r = analyzeFocusOrder(seq);
+        expect(r.issues.map((i) => `${i.issueType} ${Math.round(i.verticalDelta)}`)).toEqual([]);
+        expect(r.tabOrder.map((s) => s.selector)).toEqual(r.visualOrder.map((s) => s.selector));
+      }
+      expect(runs[0]).toEqual(runs[1]);
+      const byId = Object.fromEntries(runs[0]);
+      for (const id of ["#l1", "#l2", "#b1", "#b2", "#l3", "#l4", "#l5", "#l6"]) expect(Math.abs(byId[id] - expected[id.slice(1)])).toBeLessThanOrEqual(1);
     } finally {
       await page.close();
     }

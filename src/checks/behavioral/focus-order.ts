@@ -57,20 +57,20 @@ export function computeVisualOrder(
   stops: FocusStop[],
   rowTolerancePx: number = 30,
 ): FocusStop[] {
-  // Only include stops with bounding boxes
-  const withBoxes = stops.filter((s) => s.boundingBox !== null);
+  // Only include stops with a page position (P2-036: page coordinates, not viewport)
+  const withBoxes = stops.filter((s) => s.pagePosition !== null);
   if (withBoxes.length === 0) return [];
 
   // Group into rows based on vertical center position
   const rows: FocusStop[][] = [];
 
   for (const stop of withBoxes) {
-    const centerY = stop.boundingBox!.y + stop.boundingBox!.height / 2;
+    const centerY = stop.pagePosition!.y + stop.pagePosition!.height / 2;
     let placed = false;
 
     for (const row of rows) {
       const rowCenterY =
-        row[0].boundingBox!.y + row[0].boundingBox!.height / 2;
+        row[0].pagePosition!.y + row[0].pagePosition!.height / 2;
       if (Math.abs(centerY - rowCenterY) <= rowTolerancePx) {
         row.push(stop);
         placed = true;
@@ -84,11 +84,11 @@ export function computeVisualOrder(
   }
 
   // Sort rows by Y position (top to bottom)
-  rows.sort((a, b) => a[0].boundingBox!.y - b[0].boundingBox!.y);
+  rows.sort((a, b) => a[0].pagePosition!.y - b[0].pagePosition!.y);
 
   // Sort elements within each row by X position (left to right)
   for (const row of rows) {
-    row.sort((a, b) => a.boundingBox!.x - b.boundingBox!.x);
+    row.sort((a, b) => a.pagePosition!.x - b.pagePosition!.x);
   }
 
   return rows.flat();
@@ -120,7 +120,7 @@ export function analyzeFocusOrder(
 
   // Embed stops (third-party content the sweep stepped over) have no position of their own
   const ownStops = tabSequence.focusStops.filter((s) => !s.embed);
-  const tabOrder = ownStops.filter((s) => s.boundingBox !== null);
+  const tabOrder = ownStops.filter((s) => s.pagePosition !== null);
   const visualOrder = computeVisualOrder(ownStops, rowTolerance);
   const issues: FocusOrderIssue[] = [];
 
@@ -129,12 +129,12 @@ export function analyzeFocusOrder(
     const current = tabOrder[i];
     const next = tabOrder[i + 1];
 
-    if (!current.boundingBox || !next.boundingBox) continue;
+    if (!current.pagePosition || !next.pagePosition) continue;
 
-    const currentCenterY = current.boundingBox.y + current.boundingBox.height / 2;
-    const nextCenterY = next.boundingBox.y + next.boundingBox.height / 2;
-    const currentCenterX = current.boundingBox.x + current.boundingBox.width / 2;
-    const nextCenterX = next.boundingBox.x + next.boundingBox.width / 2;
+    const currentCenterY = current.pagePosition.y + current.pagePosition.height / 2;
+    const nextCenterY = next.pagePosition.y + next.pagePosition.height / 2;
+    const currentCenterX = current.pagePosition.x + current.pagePosition.width / 2;
+    const nextCenterX = next.pagePosition.x + next.pagePosition.width / 2;
 
     const verticalDelta = nextCenterY - currentCenterY;
     const horizontalDelta = nextCenterX - currentCenterX;
@@ -236,7 +236,7 @@ export function runFocusOrderChecks(
       backward_jumps: result.issues.filter((i) => i.issueType === "backward_jump").length,
       large_gaps: result.issues.filter((i) => i.issueType === "large_gap").length,
       confidence: hasHighConfidence ? "high" : "moderate",
-      tab_stops_with_boxes: result.tabOrder.length,
+      tab_stops_with_positions: result.tabOrder.length,
       divergence_index: result.issues[0]?.fromStop.sequenceIndex ?? null,
     },
   }];

@@ -15,8 +15,15 @@ export interface FocusStop {
   tagName: string;
   /** ARIA role or implicit role */
   role: string | null;
-  /** Bounding box in viewport coordinates */
+  /** Bounding box in viewport coordinates (focus-visible crops) */
   boundingBox: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * Position in page coordinates (getBoundingClientRect plus scrollX/Y in
+   * one evaluate, read once it holds still for a frame), so focus-order
+   * does not depend on where a smooth scroll was when the stop was read
+   * (P2-036).
+   */
+  pagePosition: { x: number; y: number; width: number; height: number } | null;
   /** tabindex attribute value, or null if not set */
   tabIndex: number | null;
   /** Outer HTML of the element (truncated) */
@@ -151,13 +158,32 @@ async function getFocusedElementInfo(page: Page): Promise<{
   tabIndex: number | null;
   outerHtml: string;
   boundingBox: { x: number; y: number; width: number; height: number } | null;
+  pagePosition: { x: number; y: number; width: number; height: number } | null;
 } | null> {
   const selector = await getElementSelector(page);
   if (selector === "body") return null;
 
-  const info = await page.evaluate(() => {
+  const info = await page.evaluate(async () => {
     const el = document.activeElement;
     if (!el || el === document.body) return null;
+
+    // Page coordinates do not move with the viewport, so a smooth scroll in
+    // progress does not change them; wait only until the element's own
+    // layout holds still for a frame (entrance animations), bounded.
+    const read = () => {
+      const r = el.getBoundingClientRect();
+      return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+    };
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    let pagePosition = read();
+    for (let i = 0; i < 20; i++) {
+      await frame();
+      const next = read();
+      const still = Math.abs(next.x - pagePosition.x) < 0.5 && Math.abs(next.y - pagePosition.y) < 0.5
+        && Math.abs(next.width - pagePosition.width) < 0.5 && Math.abs(next.height - pagePosition.height) < 0.5;
+      pagePosition = next;
+      if (still) break;
+    }
 
     const html = el.outerHTML;
     return {
@@ -167,6 +193,7 @@ async function getFocusedElementInfo(page: Page): Promise<{
         ? parseInt(el.getAttribute("tabindex")!, 10)
         : null,
       outerHtml: html.length > 500 ? html.slice(0, 500) + "..." : html,
+      pagePosition: pagePosition.width > 0 || pagePosition.height > 0 ? pagePosition : null,
     };
   });
 
@@ -340,7 +367,7 @@ export async function recordTabSequence(
         embeds.push(stop);
         visitedSelectors.add(key);
         focusStops.push({
-          selector: embed.container, tagName: embed.tagName, role: null, boundingBox: null, tabIndex: null,
+          selector: embed.container, tagName: embed.tagName, role: null, boundingBox: null, pagePosition: null, tabIndex: null,
           outerHtml: embed.opening, sequenceIndex: focusStops.length,
           embed: { vendor: embed.vendor, vendor_name: embed.vendor_name, container: embed.container },
         });
@@ -396,6 +423,7 @@ export async function recordTabSequence(
       tagName: info.tagName,
       role: info.role,
       boundingBox: info.boundingBox,
+      pagePosition: info.pagePosition,
       tabIndex: info.tabIndex,
       outerHtml: info.outerHtml,
       sequenceIndex: focusStops.length,
