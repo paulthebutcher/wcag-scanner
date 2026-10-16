@@ -41,9 +41,3 @@ Some prompts include page content that changes on every load, so the same elemen
 The crawl collects every link in a page's HTML, including links inside hidden elements (a menu item hidden with a `hide` class, `hidden` or `aria-hidden` containers). A scan can therefore check pages that visitors cannot reach from the pages scanned. On popfly.com a hidden mobile-menu link leads to `/archive/pricing` from 73 of 75 pages; that page is noindex, so it only appears in scans run with `--include-noindex`.
 
 **Possible improvement:** discover links from the rendered page, skip links whose element is not rendered, and log the skipped targets.
-
-## Focus-order findings move with scroll timing on smooth-scrolling sites (P2-036)
-
-The focus-order check (2.4.3) reads each tab stop's position relative to the viewport right after the Tab press. When the site scrolls smoothly (popfly.com sets `scroll-behavior: smooth`), a stop below the first viewport is measured while the page is still scrolling, so the "backward jump" and "large gap" distances depend on timing rather than on the layout. The same page can gain or lose a `focus_order_mismatch` finding after an unrelated change to how long each tab step takes; on the frozen corpus 14 such findings moved when the keyboard sweep started stepping over embeds, two of them on pages with no embed. The flake-rate entries P2-027 and P2-029 are most likely the same mechanism.
-
-**Possible improvement:** read positions as page coordinates (`getBoundingClientRect` plus `scrollX`/`scrollY` in one evaluate) once the scroll has settled, or inject `html { scroll-behavior: auto !important }` for the duration of the keyboard sweep so focus scrolls instantly. Check first that the injection does not change the skip-link check, which depends on Webflow's script-driven smooth scroll, not on the CSS property (P2-013).
