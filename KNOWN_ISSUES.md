@@ -18,12 +18,6 @@ For a before/after comparison, scan the same URL list both times (`wcag scan --u
 
 **Possible improvement:** size the default from the sitemap (every non-CMS page plus N samples per collection), report the page-set difference against the baseline in every report, and let a rescan pin a baseline's page list.
 
-## Instagram embeds are not treated as third-party (P2-017)
-
-Links inside an embedded Instagram post (`blockquote.instagram-media` and its iframe) use Instagram's own colours, so axe reports `link-in-text-block` (1.4.1) on them: 22 findings on two blog posts in scan 6d4e82fe. The site owner cannot change those styles.
-
-**Possible improvement:** add Instagram embeds to the third-party matcher in `src/report/clustering.ts` (`exclusionFor`), as was done for GrowSurf.
-
 ## Review verdicts do not carry forward (P2-018)
 
 A finding marked as a false positive in `wcag review` is not remembered by the next scan. The decorative `.new-cta-test` image (empty alt, a lifestyle photo in a call-to-action card) is flagged as informative by the alt-text model on 49 pages in every scan.
@@ -48,8 +42,8 @@ The crawl collects every link in a page's HTML, including links inside hidden el
 
 **Possible improvement:** discover links from the rendered page, skip links whose element is not rendered, and log the skipped targets.
 
-## Keyboard sweeps stuck in an embed report unreachable controls (P2-034)
+## Focus-order findings move with scroll timing on smooth-scrolling sites (P2-036)
 
-When the keyboard check's Tab sweep enters a third-party embed (an Instagram post, for example) and cycles inside it, the sweep is treated as complete. Every control after the embed is then reported as unreachable, as a critical failure of 2.1.1. On popfly.com this produced 30 such findings on one blog post in one scan and none in the scans before it.
+The focus-order check (2.4.3) reads each tab stop's position relative to the viewport right after the Tab press. When the site scrolls smoothly (popfly.com sets `scroll-behavior: smooth`), a stop below the first viewport is measured while the page is still scrolling, so the "backward jump" and "large gap" distances depend on timing rather than on the layout. The same page can gain or lose a `focus_order_mismatch` finding after an unrelated change to how long each tab step takes; on the frozen corpus 14 such findings moved when the keyboard sweep started stepping over embeds, two of them on pages with no embed. The flake-rate entries P2-027 and P2-029 are most likely the same mechanism.
 
-**Possible improvement:** treat a sweep that ends by cycling inside an iframe like a truncated sweep: retry, and if it still cycles, record one needs-review note instead of per-control failures.
+**Possible improvement:** read positions as page coordinates (`getBoundingClientRect` plus `scrollX`/`scrollY` in one evaluate) once the scroll has settled, or inject `html { scroll-behavior: auto !important }` for the duration of the keyboard sweep so focus scrolls instantly. Check first that the injection does not change the skip-link check, which depends on Webflow's script-driven smooth scroll, not on the CSS property (P2-013).
