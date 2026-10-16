@@ -1,5 +1,6 @@
 import type { PromptTemplate, ModelRoute } from "../core/prompt-runner.js";
 import type { ConfidenceCalibration } from "./element-evaluation.js";
+import { redactVolatile } from "../core/redact.js";
 
 // ---------------------------------------------------------------------------
 // Synthesis family system prompt
@@ -159,7 +160,7 @@ export function buildImpactUserPrompt(params: {
   reasoning: string;
   instanceCount: number;
 }): string {
-  return `Generate an impact description for this accessibility finding.
+  return redactVolatile(`Generate an impact description for this accessibility finding.
 
 WCAG Criterion: ${params.wcagCriterion}
 Failure Type: ${params.failureType}
@@ -170,7 +171,7 @@ Element HTML:
 ${params.elementHtml}
 
 Violation analysis:
-${params.reasoning}`;
+${params.reasoning}`);
 }
 
 export function buildExecutiveSummaryUserPrompt(params: {
@@ -191,7 +192,7 @@ export function buildExecutiveSummaryUserPrompt(params: {
     .map(([k, v]) => `  ${k}: ${v}`)
     .join("\n");
 
-  return `Generate an executive summary for this WCAG 2.1 AA accessibility audit.
+  return redactVolatile(`Generate an executive summary for this WCAG 2.1 AA accessibility audit.
 
 Site: ${params.siteUrl}
 Pages scanned: ${params.totalPages}
@@ -205,7 +206,7 @@ Findings by category:
 ${categoryStr}
 
 Failed criteria: ${params.criteriaFailed.join(", ") || "(none)"}
-Passed criteria: ${params.criteriaPassed.join(", ") || "(none)"}`;
+Passed criteria: ${params.criteriaPassed.join(", ") || "(none)"}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import type { PromptTemplate, ModelRoute } from "../core/prompt-runner.js";
 import type { ConfidenceCalibration } from "./element-evaluation.js";
+import { redactVolatile } from "../core/redact.js";
 
 // ---------------------------------------------------------------------------
 // Form Interaction family system prompt
@@ -178,7 +179,7 @@ export function buildErrorMessageUserPrompt(params: {
     .map((e) => `  Field: "${e.fieldName}" → "${e.message}" (programmatically associated: ${e.associated})`)
     .join("\n");
 
-  return `Evaluate form error messages for WCAG 3.3.1 and 3.3.3 compliance.
+  return redactVolatile(`Evaluate form error messages for WCAG 3.3.1 and 3.3.3 compliance.
 
 Form markup after submission, its error regions and a bounded context around it (the header line records what was sent):
 ${params.formHtml}
@@ -186,7 +187,7 @@ ${params.formHtml}
 Error messages found:
 ${errorList || "  (none visible)"}
 
-Total form fields: ${params.totalFields}`;
+Total form fields: ${params.totalFields}`);
 }
 
 export function buildHighRiskFormUserPrompt(params: {
@@ -196,7 +197,7 @@ export function buildHighRiskFormUserPrompt(params: {
   hasConfirmation: boolean;
   hasReviewStep: boolean;
 }): string {
-  return `Evaluate this form for WCAG 3.3.4 error prevention requirements.
+  return redactVolatile(`Evaluate this form for WCAG 3.3.4 error prevention requirements.
 
 Form HTML:
 ${params.formHtml}
@@ -206,7 +207,7 @@ Submit button text: "${params.submitButtonText}"
 Has confirmation dialog: ${params.hasConfirmation}
 Has review/preview step: ${params.hasReviewStep}
 
-Determine if this is a high-risk form (financial, legal, or data commitment) and whether adequate safeguards exist.`;
+Determine if this is a high-risk form (financial, legal, or data commitment) and whether adequate safeguards exist.`);
 }
 
 export function buildInputPurposeUserPrompt(params: {
@@ -215,7 +216,7 @@ export function buildInputPurposeUserPrompt(params: {
   autocompleteValue: string | null;
   inputType: string;
 }): string {
-  return `Evaluate this input field's autocomplete attribute for WCAG 1.3.5 compliance.
+  return redactVolatile(`Evaluate this input field's autocomplete attribute for WCAG 1.3.5 compliance.
 
 Element HTML:
 ${params.elementHtml}
@@ -224,7 +225,7 @@ Label text: "${params.labelText}"
 Current autocomplete value: ${params.autocompleteValue ? `"${params.autocompleteValue}"` : "(not set)"}
 Input type: "${params.inputType}"
 
-Determine if the autocomplete attribute is present and correct for this field's purpose.`;
+Determine if the autocomplete attribute is present and correct for this field's purpose.`);
 }
 
 // ---------------------------------------------------------------------------

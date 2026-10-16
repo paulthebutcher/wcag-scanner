@@ -1,5 +1,6 @@
 import type { PromptTemplate, ModelRoute } from "../core/prompt-runner.js";
 import type { ConfidenceCalibration } from "./element-evaluation.js";
+import { redactVolatile } from "../core/redact.js";
 
 // ---------------------------------------------------------------------------
 // Remediation family system prompt
@@ -144,7 +145,7 @@ export function buildRemediationUserPrompt(params: {
   platform: string;
   platformVersion: string;
 }): string {
-  return `Generate remediation instructions for this accessibility violation.
+  return redactVolatile(`Generate remediation instructions for this accessibility violation.
 
 WCAG Criterion: ${params.wcagCriterion}
 Failure Type: ${params.failureType}
@@ -154,7 +155,7 @@ Element HTML:
 ${params.elementHtml}
 
 Violation reasoning:
-${params.reasoning}`;
+${params.reasoning}`);
 }
 
 export function buildVerificationUserPrompt(params: {
@@ -163,7 +164,7 @@ export function buildVerificationUserPrompt(params: {
   fixDescription: string;
   fixedHtml: string;
 }): string {
-  return `Verify that this accessibility fix was correctly applied.
+  return redactVolatile(`Verify that this accessibility fix was correctly applied.
 
 WCAG Criterion: ${params.wcagCriterion}
 
@@ -174,7 +175,7 @@ Applied fix:
 ${params.fixDescription}
 
 Element after fix:
-${params.fixedHtml}`;
+${params.fixedHtml}`);
 }
 
 // ---------------------------------------------------------------------------

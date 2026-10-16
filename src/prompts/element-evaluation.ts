@@ -1,4 +1,5 @@
 import type { PromptTemplate, ModelRoute } from "../core/prompt-runner.js";
+import { redactVolatile } from "../core/redact.js";
 
 // ---------------------------------------------------------------------------
 // Shared base system prompt for Element Evaluation family (Prompts 1-8)
@@ -322,7 +323,7 @@ export function buildAltTextUserPrompt(params: {
     : params.imageAttached
       ? "\n\nThe image is attached. Compare the alt text with what the image shows."
       : "\n\nNo image is attached. Judge from the HTML and context only; if the verdict depends on what the image shows, return needs_review instead of fail.";
-  return `Evaluate this image's alt text for WCAG 1.1.1 compliance.
+  return redactVolatile(`Evaluate this image's alt text for WCAG 1.1.1 compliance.
 
 Element HTML:
 ${params.elementHtml}
@@ -330,7 +331,7 @@ ${params.elementHtml}
 Alt text: "${params.altText}"
 
 Surrounding context:
-${params.surroundingContext}${imageNote}`;
+${params.surroundingContext}${imageNote}`);
 }
 
 export function buildLinkTextUserPrompt(params: {
@@ -338,7 +339,7 @@ export function buildLinkTextUserPrompt(params: {
   linkText: string;
   surroundingContext: string;
 }): string {
-  return `Evaluate this link's text for WCAG 2.4.4 compliance.
+  return redactVolatile(`Evaluate this link's text for WCAG 2.4.4 compliance.
 
 Element HTML:
 ${params.elementHtml}
@@ -346,7 +347,7 @@ ${params.elementHtml}
 Visible link text: "${params.linkText}"
 
 Surrounding context:
-${params.surroundingContext}`;
+${params.surroundingContext}`);
 }
 
 export function buildHeadingStructureUserPrompt(params: {
@@ -357,12 +358,12 @@ export function buildHeadingStructureUserPrompt(params: {
     .map((h) => `  h${h.level}: "${h.text}"`)
     .join("\n");
 
-  return `Evaluate the heading structure on this page for WCAG 2.4.6 compliance.
+  return redactVolatile(`Evaluate the heading structure on this page for WCAG 2.4.6 compliance.
 
 Page title: "${params.pageTitle}"
 
 Headings (in document order):
-${headingList}`;
+${headingList}`);
 }
 
 export function buildUseOfColorUserPrompt(params: {
@@ -374,7 +375,7 @@ export function buildUseOfColorUserPrompt(params: {
     .map(([k, v]) => `  ${k}: ${v}`)
     .join("\n");
 
-  return `Evaluate whether this element uses color as the sole means of conveying information (WCAG 1.4.1).
+  return redactVolatile(`Evaluate whether this element uses color as the sole means of conveying information (WCAG 1.4.1).
 
 Element HTML:
 ${params.elementHtml}
@@ -383,7 +384,7 @@ Computed styles:
 ${styles}
 
 Context:
-${params.context}`;
+${params.context}`);
 }
 
 export function buildConsistentNavUserPrompt(params: {
@@ -393,10 +394,10 @@ export function buildConsistentNavUserPrompt(params: {
     .map((p) => `  ${p.url}: [${p.navItems.map((i) => `"${i}"`).join(", ")}]`)
     .join("\n");
 
-  return `Evaluate navigation consistency across pages for WCAG 3.2.3 compliance.
+  return redactVolatile(`Evaluate navigation consistency across pages for WCAG 3.2.3 compliance.
 
 Navigation items per page (in order):
-${pageList}`;
+${pageList}`);
 }
 
 export function buildConsistentIdUserPrompt(params: {
@@ -406,10 +407,10 @@ export function buildConsistentIdUserPrompt(params: {
     .map((c) => `  Page: ${c.page}, Label: "${c.label}", Role: ${c.role}\n    HTML: ${c.html}`)
     .join("\n");
 
-  return `Evaluate component identification consistency across pages for WCAG 3.2.4 compliance.
+  return redactVolatile(`Evaluate component identification consistency across pages for WCAG 3.2.4 compliance.
 
 Components with similar functionality:
-${compList}`;
+${compList}`);
 }
 
 export function buildLabelsUserPrompt(params: {
@@ -422,7 +423,7 @@ export function buildLabelsUserPrompt(params: {
     .map(([k, v]) => `  ${k}: "${v}"`)
     .join("\n");
 
-  return `Evaluate this form input's label and instructions for WCAG 3.3.2 compliance.
+  return redactVolatile(`Evaluate this form input's label and instructions for WCAG 3.3.2 compliance.
 
 Element HTML:
 ${params.elementHtml}
@@ -431,7 +432,7 @@ Visible label: "${params.labelText}"
 Placeholder: "${params.placeholderText}"
 
 ARIA attributes:
-${ariaList || "  (none)"}`;
+${ariaList || "  (none)"}`);
 }
 
 export function buildHoverFocusUserPrompt(params: {
@@ -440,7 +441,7 @@ export function buildHoverFocusUserPrompt(params: {
   interactionType: "hover" | "focus";
   dismissable: boolean;
 }): string {
-  return `Evaluate this hover/focus content for WCAG 1.4.13 compliance.
+  return redactVolatile(`Evaluate this hover/focus content for WCAG 1.4.13 compliance.
 
 Trigger element:
 ${params.triggerHtml}
@@ -449,7 +450,7 @@ Popup/tooltip content:
 ${params.popupHtml}
 
 Interaction type: ${params.interactionType}
-Dismissable by Escape: ${params.dismissable}`;
+Dismissable by Escape: ${params.dismissable}`);
 }
 
 // ---------------------------------------------------------------------------
