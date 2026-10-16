@@ -1,0 +1,142 @@
+{
+  "run_id": "compare-20261016T163429Z-4effef",
+  "base": "replay-20261016T151847Z-f03013",
+  "head": "replay-20261016T162145Z-2870fd",
+  "exit": 1,
+  "invalid": [],
+  "regressions": [
+    {
+      "kind": "false_pass",
+      "detail": "t01 3.1.1 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: axe-core:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 3.3.2 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: axe-core:not_recorded"
+    }
+  ],
+  "existing_blockers": [
+    {
+      "kind": "static_broken",
+      "detail": "LS-010: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-011: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-012: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "static_broken",
+      "detail": "LS-014: fails in both (flagged although expected clean)"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 1.4.1 pass_with_unestablished_checks: 2 (page, check) pair(s) not established: axe-core:not_recorded, form-submission:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 1.4.4 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: axe-core:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 1.4.12 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: axe-core:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 2.1.1 pass_with_unestablished_checks: 2 (page, check) pair(s) not established: keyboard:not_recorded, axe-core:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 2.1.2 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: keyboard-trap:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 2.4.2 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: axe-core:not_recorded"
+    },
+    {
+      "kind": "false_pass",
+      "detail": "t01 3.2.3 pass_with_unestablished_checks: 1 (page, check) pair(s) not established: consistent-nav:not_recorded"
+    }
+  ],
+  "report": {
+    "findings_added": {
+      "1.1.1|image-alt": 1
+    },
+    "findings_removed": {
+      "1.1.1|image-alt": 1
+    },
+    "criterion_transitions": [
+      {
+        "site": "t01",
+        "criterion": "1.3.6",
+        "base": "not_tested",
+        "head": "absent"
+      },
+      {
+        "site": "t01",
+        "criterion": "3.1.1",
+        "base": "not_applicable",
+        "head": "passed"
+      },
+      {
+        "site": "t01",
+        "criterion": "3.3.2",
+        "base": "not_applicable",
+        "head": "passed"
+      }
+    ],
+    "case_changes": [],
+    "severity_disagreements": {
+      "base": 0,
+      "head": 0
+    },
+    "unlabeled": {
+      "base": 881,
+      "head": 881
+    },
+    "coverage_changes": [],
+    "coverage_comparison": "compared",
+    "tooling_errors": {
+      "base": 0,
+      "head": 0
+    },
+    "ambiguities": {
+      "base": 0,
+      "head": 0
+    },
+    "flake_rates": {
+      "base": [
+        {
+          "check": "focus-order",
+          "flake_rate": 0
+        },
+        {
+          "check": "focus-visible",
+          "flake_rate": 0
+        },
+        {
+          "check": "keyboard",
+          "flake_rate": 0
+        },
+        {
+          "check": "keyboard-trap",
+          "flake_rate": 0
+        },
+        {
+          "check": "modal",
+          "flake_rate": 0
+        },
+        {
+          "check": "skip-nav",
+          "flake_rate": 0
+        }
+      ],
+      "head": []
+    },
+    "shared_pages": 48,
+    "unanchored": []
+  },
+  "label_snapshot_sha256": "ea107108732f81d1bb035271829705221b201c42735a3ed63da9ef47b92dc1d3"
+}

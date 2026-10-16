@@ -41,3 +41,9 @@ Some prompts include page content that changes on every load, so the same elemen
 The crawl collects every link in a page's HTML, including links inside hidden elements (a menu item hidden with a `hide` class, `hidden` or `aria-hidden` containers). A scan can therefore check pages that visitors cannot reach from the pages scanned. On popfly.com a hidden mobile-menu link leads to `/archive/pricing` from 73 of 75 pages; that page is noindex, so it only appears in scans run with `--include-noindex`.
 
 **Possible improvement:** discover links from the rendered page, skip links whose element is not rendered, and log the skipped targets.
+
+## A pinned URL that is not scanned leaves no record (P2-038)
+
+With `--urls`, a page that the crawler decides not to scan — because it redirects onto a page already captured, is a duplicate, is noindex, is disallowed by robots.txt or fails to load — can vanish from the scan without a line in the log, the summary or the report. On the frozen corpus `/overland` is listed on every run and never scanned, and the evaluation harness then treats it as a page no check reached.
+
+**Possible improvement:** record every unscanned entry with its reason in the scan session, the CLI summary and the report's scope section, and let the harness drop such pages from its coverage denominator.
